@@ -21,6 +21,41 @@ Follow existing project conventions before introducing new patterns.
 
 ---
 
+# Development environment
+
+Use `uv` to manage the backend Python environment and dependencies.
+
+Install `uv` with the official installer if it is not already available:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+From the `backend/` directory, create the virtual environment and install the
+development dependencies:
+
+```bash
+uv venv
+uv sync --extra dev
+```
+
+Run backend commands through `uv` so they use the project environment:
+
+```bash
+uv run uvicorn app.main:app --reload
+uv run alembic upgrade head
+uv run pytest -q
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy app
+```
+
+The project requires Python 3.13 or newer. To select a specific installed
+Python version when creating the environment, use `uv venv --python 3.13`.
+
+
+---
+
 # Backend structure
 
 Expected responsibilities:
