@@ -7,6 +7,7 @@ tools:
   - search
   - edit
   - execute
+include-custom-instructions: true
 ---
 
 # Frontend Agent
