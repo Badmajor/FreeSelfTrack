@@ -37,5 +37,15 @@ async def client() -> AsyncIterator[AsyncClient]:
 
 
 @pytest_asyncio.fixture
+async def db_session(client: AsyncClient) -> AsyncIterator[AsyncSession]:
+    session_generator = app.dependency_overrides[get_session]()
+    session = await anext(session_generator)
+    try:
+        yield session
+    finally:
+        await session_generator.aclose()
+
+
+@pytest_asyncio.fixture
 async def user_ids() -> tuple[UUID, UUID]:
     return uuid4(), uuid4()
