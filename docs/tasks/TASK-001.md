@@ -89,56 +89,56 @@ The task's status must belong to the same project as the task.
 
 ### Organization
 
-* [ ] An organization can be persisted.
-* [ ] An organization can own multiple projects.
-* [ ] Project access is isolated by organization.
+* [x] An organization can be persisted.
+* [x] An organization can own multiple projects.
+* [x] Project access is isolated by organization.
 
 ### Project
 
-* [ ] A project belongs to one organization.
-* [ ] A project can have multiple statuses.
-* [ ] Projects belonging to different organizations remain isolated.
+* [x] A project belongs to one organization.
+* [x] A project can have multiple statuses.
+* [x] Projects belonging to different organizations remain isolated.
 
 ### ProjectStatus
 
-* [ ] A project can have multiple statuses.
-* [ ] Status order is persisted.
-* [ ] Statuses belonging to different projects are isolated.
-* [ ] Status names are stored as project data rather than hardcoded application values.
-* [ ] The API returns statuses in project workflow order.
+* [x] A project can have multiple statuses.
+* [x] Status order is persisted.
+* [x] Statuses belonging to different projects are isolated.
+* [x] Status names are stored as project data rather than hardcoded application values.
+* [x] The API returns statuses in project workflow order.
 
 ### Task
 
-* [ ] A task belongs to one project.
-* [ ] A task references a project status.
-* [ ] A task can be created using a status belonging to its project.
-* [ ] Creating a task with a status belonging to another project is rejected.
-* [ ] Retrieving a task enforces project/organization authorization.
+* [x] A task belongs to one project.
+* [x] A task references a project status.
+* [x] A task can be created using a status belonging to its project.
+* [x] Creating a task with a status belonging to another project is rejected.
+* [x] Retrieving a task enforces project/organization authorization.
 
 ### API
 
-* [ ] API endpoints use explicit Pydantic schemas.
-* [ ] API does not expose SQLAlchemy models directly.
-* [ ] Appropriate HTTP status codes are returned.
-* [ ] Validation errors are handled consistently.
+* [x] API endpoints use explicit Pydantic schemas.
+* [x] API does not expose SQLAlchemy models directly.
+* [x] Appropriate HTTP status codes are returned.
+* [x] Validation errors are handled consistently.
 
 ### Database
 
-* [ ] SQLAlchemy models exist for the required entities.
-* [ ] Foreign keys enforce the required relationships.
-* [ ] Appropriate indexes and constraints exist.
-* [ ] Alembic migration creates the required schema.
-* [ ] The migration can be applied to an empty database.
+* [x] SQLAlchemy models exist for the required entities.
+* [x] Foreign keys enforce the required relationships.
+* [x] Appropriate indexes and constraints exist.
+* [x] Alembic migration creates the required schema.
+* [x] The migration can be applied to an empty database.
 
 ### Tests
 
-* [ ] Organization creation is tested.
-* [ ] Project creation is tested.
-* [ ] Project status creation is tested.
-* [ ] Task creation is tested.
-* [ ] Cross-project status assignment is rejected.
-* [ ] Cross-organization/project access is rejected.
-* [ ] Relevant API validation errors are tested.
+* [x] Organization creation is tested.
+* [x] Project creation is tested.
+* [x] Project status creation is tested.
+* [x] Task creation is tested.
+* [x] Cross-project status assignment is rejected.
+* [x] Cross-organization/project access is rejected.
+* [x] Relevant API validation errors are tested.
 
 ---
 
@@ -363,24 +363,24 @@ Use the actual project commands if they differ.
 
 ## Definition of Done
 
-* [ ] Organization model implemented.
-* [ ] Project model implemented.
-* [ ] ProjectStatus model implemented.
-* [ ] Task model implemented.
-* [ ] Relationships implemented.
-* [ ] Database constraints implemented.
-* [ ] Alembic migration created.
-* [ ] Repositories implemented.
-* [ ] Services implemented.
-* [ ] API endpoints implemented.
-* [ ] Authorization implemented.
-* [ ] Cross-project status protection implemented.
-* [ ] Tests implemented.
-* [ ] Relevant validation passes.
-* [ ] API documentation is consistent.
-* [ ] No global Status entity introduced.
-* [ ] No KanbanColumn entity introduced.
-* [ ] No unrelated refactoring introduced.
+* [x] Organization model implemented.
+* [x] Project model implemented.
+* [x] ProjectStatus model implemented.
+* [x] Task model implemented.
+* [x] Relationships implemented.
+* [x] Database constraints implemented.
+* [x] Alembic migration created.
+* [x] Repositories implemented.
+* [x] Services implemented.
+* [x] API endpoints implemented.
+* [x] Authorization implemented.
+* [x] Cross-project status protection implemented.
+* [x] Tests implemented.
+* [x] Relevant validation passes.
+* [x] API documentation is consistent.
+* [x] No global Status entity introduced.
+* [x] No KanbanColumn entity introduced.
+* [x] No unrelated refactoring introduced.
 
 ---
 
@@ -398,17 +398,17 @@ If an architectural decision is required that changes the documented architectur
 
 ## Status
 
-* Status: TODO
-* Started:
-* Completed:
+* Status: DONE
+* Started: 2026-09-27
+* Completed: 2026-09-27
 
 ### Progress
 
-* [ ] Analysis
-* [ ] Implementation
-* [ ] Tests
-* [ ] Validation
-* [ ] Review
+* [x] Analysis
+* [x] Implementation
+* [x] Tests
+* [x] Validation
+* [x] Review
 
 ### Known issues
 
