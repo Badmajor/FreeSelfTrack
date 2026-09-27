@@ -6,6 +6,7 @@ tools:
   - read
   - search
   - execute
+include-custom-instructions: true
 ---
 
 # Reviewer Agent
