@@ -5,6 +5,7 @@ description: Проектирует архитектуру и разбивает
 tools:
   - read
   - search
+
 include-custom-instructions: true
 ---
 
