@@ -1,36 +1,11 @@
-# Frontend Agent Instructions
 
-This file contains frontend-specific rules.
+These instructions apply to all files under `frontend/`.
 
-The root `AGENTS.md` remains authoritative for project-wide
-architecture, domain rules, security and Definition of Done.
+The repository root `AGENTS.md` applies in addition to these instructions.
 
 ---
 
-# 1. Frontend responsibility
-
-The frontend is responsible for:
-
-- user interface;
-- navigation;
-- forms;
-- Kanban board;
-- task views;
-- project views;
-- filters;
-- notifications UI;
-- client-side interaction;
-- presentation state.
-
-The frontend is NOT the source of truth for business rules.
-
-Backend API is authoritative.
-
----
-
-# 2. Technology
-
-Use:
+# Frontend stack
 
 - TypeScript
 - React
@@ -38,520 +13,327 @@ Use:
 - React Router
 - TanStack Query
 - ESLint
-- strict TypeScript
 
-Use existing project dependencies before adding new libraries.
-
----
-
-# 3. Expected structure
-
-Expected structure:
-
-    frontend/
-    ├── src/
-    │   ├── app/
-    │   ├── components/
-    │   ├── features/
-    │   ├── pages/
-    │   ├── api/
-    │   ├── hooks/
-    │   ├── lib/
-    │   └── types/
-    │
-    └── tests/
-
-The exact structure may evolve.
-
-Do not reorganize the whole frontend
-for a single feature.
+Use the existing project configuration and conventions.
 
 ---
 
-# 4. TypeScript
+# TypeScript
 
 Use strict TypeScript.
 
-Do not use:
-
-    any
-
-unless there is a documented technical reason.
+Avoid `any`.
 
 Prefer:
 
-- explicit types;
-- generated API types;
-- discriminated unions;
-- reusable domain types.
+- explicit domain types;
+- discriminated unions where appropriate;
+- type-safe API clients;
+- narrow types;
+- reusable interfaces/types for shared concepts.
 
-Avoid duplicated interfaces when the API contract already provides
-the required type.
+Do not silence type errors with unnecessary casts.
 
----
+Avoid:
 
-# 5. Backend API is authoritative
+```ts
+as any
+````
 
-Frontend must follow the backend API contract.
-
-Do not invent endpoints.
-
-Do not assume response fields that are not documented.
-
-Do not silently transform API semantics.
-
-If the frontend needs data that the backend does not provide,
-identify the API gap instead of inventing client-side state.
+unless there is a documented and unavoidable reason.
 
 ---
 
-# 6. API client
+# Backend API is the source of truth
 
-Prefer the project's configured API client.
+The frontend must treat the backend API as authoritative for:
 
-If OpenAPI-generated types/client are available,
-use them instead of manually duplicating endpoint definitions.
+* domain data;
+* permissions;
+* workflow;
+* task status;
+* project configuration;
+* validation.
 
-Do not create multiple API clients for the same backend.
+Do not duplicate backend business rules unnecessarily.
 
----
+Frontend validation exists primarily for user experience.
 
-# 7. Server state
-
-Server state should use the configured query/data-fetching layer.
-
-Examples:
-
-- project;
-- project statuses;
-- tasks;
-- comments;
-- watchers;
-- filters.
-
-Do not copy server data into multiple independent React states
-without a concrete reason.
-
-Avoid manually implementing a second caching system.
+The backend must still validate all important rules.
 
 ---
 
-# 8. Local UI state
+# API client
 
-Local state is appropriate for:
+Keep API communication centralized and consistent.
 
-- modal visibility;
-- input values;
-- temporary drag state;
-- expanded/collapsed UI;
-- column resizing before persistence;
-- purely visual preferences.
+Do not scatter raw HTTP requests throughout unrelated components.
 
-Do not use local state as a replacement for server state.
+Use the project's configured API client and generated types when available.
 
----
+When the API contract changes:
 
-# 9. Authentication
+1. update the backend contract;
+2. regenerate API types/client if applicable;
+3. update frontend consumers;
+4. update relevant tests.
 
-Frontend may know whether a user appears authenticated,
-but backend authorization remains authoritative.
-
-Do not hide security behind UI conditions.
-
-For example:
-
-    if (!canEdit) {
-        hideButton();
-    }
-
-is useful UX,
-
-but backend must still reject:
-
-    PATCH /tasks/{id}
-
-when the user lacks permission.
+Do not manually create frontend types that contradict the backend API.
 
 ---
 
-# 10. Authorization UI
+# State management
 
-Permission-aware UI should improve user experience.
+Separate server state from local UI state.
 
-Examples:
+Use TanStack Query for server state where appropriate.
 
-- hide unavailable actions;
-- disable controls;
-- show permission errors.
+Local component state should be used for:
 
-However, never assume that hidden UI is security.
+* temporary UI state;
+* form state;
+* visual preferences;
+* interaction state.
 
-Every protected operation must be enforced by backend.
-
----
-
-# 11. Project workflow
-
-The frontend must treat ProjectStatus as dynamic data.
-
-Example API result:
-
-    statuses = [
-        {
-            id: "...",
-            name: "Backlog",
-            position: 0
-        },
-        {
-            id: "...",
-            name: "Development",
-            position: 1
-        }
-    ]
-
-Render these values dynamically.
-
-Never hardcode:
-
-    Backlog
-    Todo
-    In Progress
-    Done
-
-as the universal workflow.
+Do not duplicate large amounts of server state in global frontend state without a concrete reason.
 
 ---
 
-# 12. Kanban
+# Routing
 
-Kanban columns are derived from ProjectStatus.
+Use React Router according to the existing application structure.
 
-Conceptually:
+Routes should be predictable and composable.
 
-    Project
-       ↓
-    ProjectStatus[]
-       ↓
-    KanbanColumn[]
+Do not put business logic directly into route configuration.
 
-The frontend may create a view-model
-for rendering, but it must not create an independent workflow model.
+Route-level authorization should improve UX, but backend authorization remains authoritative.
 
 ---
 
-# 13. Kanban ordering
+# Components
 
-Column order comes from backend data.
+Prefer small focused components.
 
-Task order comes from task position/order data.
+A component should generally handle:
 
-Do not use:
+* rendering;
+* user interaction;
+* local UI state.
 
-- database ID;
-- array insertion order;
-- task creation timestamp
+Complex domain operations should be handled through appropriate hooks/services/API abstractions.
 
-as a substitute for explicit ordering
-when the API provides an order field.
-
----
-
-# 14. Drag and drop
-
-Moving a task should result in an API operation.
-
-Conceptually:
-
-    drag task
-        ↓
-    determine target status
-        ↓
-    call backend
-        ↓
-    update/query invalidation
-        ↓
-    render server state
-
-The backend decides whether the operation is valid.
+Avoid putting large business workflows inside presentational components.
 
 ---
 
-# 15. Optimistic updates
+# Project workflow and Kanban
 
-Optimistic UI updates are allowed
-when they improve user experience.
+The backend provides the project's workflow through `ProjectStatus`.
 
-However:
+The frontend must derive Kanban columns from project statuses.
 
-- rollback must be implemented;
-- failed API calls must be visible;
-- server state must eventually be synchronized.
+Do not hardcode:
 
-Do not leave the UI in an optimistic state after a failed request.
+* status names;
+* status IDs;
+* number of columns;
+* workflow order.
 
----
+The conceptual structure is:
 
-# 16. Column resizing
+```text
+Project
+  └── ProjectStatus[]
+        └── Task[]
+```
 
-Kanban column width is a user preference.
+A Kanban column represents one `ProjectStatus`.
 
-Do not modify ProjectStatus to store user-specific width.
-
-Conceptually:
-
-    ProjectStatus
-        ↓
-    shared workflow
-
-    User + Project + Status
-        ↓
-    personal column width
-
-Column width should be persisted through the appropriate backend API
-when persistence is supported.
+Do not create a separate frontend domain concept that implies an independent backend `KanbanColumn` entity.
 
 ---
 
-# 17. Forms
+# Kanban ordering
+
+There are two independent ordering concepts:
+
+1. Project status order.
+2. Task order within a status.
+
+Do not mix them.
+
+Changing task order must not change status order.
+
+Moving a task to another status must preserve the project's workflow.
+
+Use the backend API as the final authority for persisted ordering.
+
+Optimistic UI updates may be used when appropriate, but failed mutations must be reconciled with the server state.
+
+---
+
+# Column resizing
+
+Kanban column width is a user-specific preference.
+
+Column width must not modify:
+
+* ProjectStatus;
+* workflow order;
+* task status;
+* project configuration.
+
+Persist column-width preferences using the appropriate user/project settings mechanism when persistence is required.
+
+Do not store user-specific UI preferences in project-wide workflow configuration.
+
+---
+
+# Forms
 
 Forms should:
 
-- provide immediate useful validation;
-- show server validation errors;
-- prevent accidental duplicate submissions;
-- clearly indicate loading state.
+* provide clear validation feedback;
+* show loading states;
+* handle server-side validation errors;
+* prevent duplicate submissions where appropriate;
+* preserve accessible labels and controls.
 
-Frontend validation improves UX.
-
-Backend validation remains authoritative.
-
----
-
-# 18. Error handling
-
-UI must explicitly handle:
-
-- loading;
-- success;
-- empty;
-- error;
-- unauthorized;
-- forbidden;
-- not found.
-
-Avoid generic messages such as:
-
-    "Something went wrong"
-
-when a useful API error can be displayed.
-
-Do not expose internal backend stack traces.
+Do not rely solely on client-side validation.
 
 ---
 
-# 19. Loading states
+# Loading and errors
 
-Every async user operation should have an understandable state.
+Every asynchronous UI operation should have an appropriate state for:
 
-Examples:
+* loading;
+* success;
+* empty result;
+* error.
 
-- loading spinner;
-- skeleton;
-- disabled submit button;
-- progress indication;
-- optimistic state.
+Errors returned by the backend should be displayed in a user-understandable way.
 
-Do not allow repeated clicks to trigger duplicate operations
-unless the API operation is intentionally idempotent.
+Do not expose raw stack traces or internal backend details.
 
 ---
 
-# 20. Components
+# Search and filters
 
-Prefer focused components.
+Search and filtering should use backend APIs for server-side data.
 
-Good:
+Do not download an entire dataset to the browser solely to perform filtering when the backend supports the operation.
 
-    TaskCard
-    KanbanColumn
-    TaskEditor
-    ProjectHeader
-    StatusSettings
+URL state may be used for shareable or navigable filters when appropriate.
 
-Avoid huge components containing all project functionality.
-
-If a component becomes difficult to understand,
-split it by responsibility.
+Saved filters are persisted backend resources and must not be treated as purely local UI state.
 
 ---
 
-# 21. Business logic
+# Notifications
 
-Do not duplicate backend business rules.
+Notifications are server-owned data.
 
-Bad:
+The frontend is responsible for:
 
-    if (statusName === "Done") {
-        ...
-    }
+* displaying notifications;
+* showing unread state;
+* providing appropriate navigation;
+* triggering relevant mutations.
 
-when the behavior actually depends on configurable project workflow.
-
-Prefer explicit API data such as:
-
-    status.is_final
-
-if such domain behavior is required.
-
-Display names must not be used as stable identifiers.
+Do not fabricate notification state that contradicts the backend.
 
 ---
 
-# 22. Accessibility
+# File uploads
 
-Interactive UI must be accessible.
-
-Use:
-
-- semantic HTML;
-- labels;
-- keyboard interaction;
-- focus management;
-- accessible names;
-- appropriate ARIA attributes.
-
-Drag-and-drop functionality must have a usable keyboard or
-alternative interaction where practical.
-
-Do not make essential functionality mouse-only.
-
----
-
-# 23. Routing
-
-Use the project's configured router.
-
-Routes should correspond to product concepts.
-
-Examples:
-
-    /projects
-    /projects/:projectId
-    /projects/:projectId/board
-    /projects/:projectId/tasks/:taskId
-
-Do not duplicate routing mechanisms.
-
----
-
-# 24. URL state
-
-Use URL parameters/query parameters when state should be:
-
-- shareable;
-- bookmarkable;
-- restorable after reload.
-
-Examples:
-
-- project;
-- filters;
-- search;
-- selected task;
-- board view.
-
-Do not keep shareable navigation state only in React memory.
-
----
-
-# 25. Search and filters
-
-The backend performs actual search/filtering.
-
-Frontend sends filter parameters to the API.
-
-Do not fetch the complete task database
-and perform large-scale filtering in JavaScript.
-
----
-
-# 26. Saved filters
-
-Saved filters are server-side entities.
-
-The frontend should treat them as API resources.
-
-Do not store saved filters only in localStorage.
-
-Local UI preferences may use localStorage
-when the product explicitly defines them as local.
-
----
-
-# 27. Notifications
-
-Notifications should reflect server state.
-
-The frontend should not invent notification events.
+Use the backend's file-upload contract.
 
 Handle:
 
-- unread state;
-- loading;
-- pagination;
-- marking read;
-- errors.
+* upload progress where supported;
+* validation errors;
+* failed uploads;
+* retry behavior where appropriate.
+
+Do not assume that a successful browser-side upload means the backend operation has completed successfully.
 
 ---
 
-# 28. File uploads
+# Accessibility
 
-File uploads must follow backend constraints.
+Interactive UI must be accessible.
 
-Frontend may validate:
+Pay attention to:
 
-- size;
-- type;
-- filename;
+* keyboard navigation;
+* focus management;
+* labels;
+* semantic HTML;
+* accessible names;
+* dialogs;
+* drag-and-drop alternatives.
 
-for user feedback.
-
-Backend must validate again.
-
-Do not assume MIME type supplied by the browser is trustworthy.
-
----
-
-# 29. Tests
-
-Test observable behavior.
-
-Important scenarios:
-
-- project loads;
-- statuses load;
-- Kanban renders dynamic columns;
-- tasks appear in correct columns;
-- task can be moved;
-- failed move rolls back;
-- task creation works;
-- validation errors appear;
-- permission errors appear;
-- filters update results.
-
-Avoid tests that depend heavily on component internals.
+Kanban interactions must have a usable non-drag interaction where appropriate.
 
 ---
 
-# 30. Frontend Definition of Done
+# Testing
 
-Before reporting completion:
+Frontend tests should focus on user-visible behavior and important domain interactions.
 
-    make lint
-    make typecheck
-    make test-frontend
-    make build-frontend
+Depending on the change, test:
 
-The agent must report which commands were actually executed.
+* rendering;
+* user interaction;
+* loading state;
+* error state;
+* successful mutation;
+* authorization-related UI;
+* Kanban behavior;
+* status changes;
+* task ordering;
+* column resizing;
+* filtering/search.
 
-Never claim a check passed if it was not executed.
+Avoid tests that merely duplicate implementation details.
+
+For Kanban tests, verify that columns are derived from the provided project statuses rather than hardcoded values.
+
+---
+
+# Validation
+
+For frontend changes, run the relevant configured checks.
+
+Typical checks include:
+
+```text
+npm run lint
+npm run typecheck
+npm test
+npm run build
+```
+
+Use the actual commands defined by the project.
+
+Do not claim validation passed if the command was not actually run.
+
+---
+
+# Frontend completion checklist
+
+Before considering a frontend task complete, verify:
+
+* [ ] Backend API remains the source of truth.
+* [ ] No workflow values are hardcoded.
+* [ ] ProjectStatus is used as the Kanban column source.
+* [ ] Server state and UI state are separated appropriately.
+* [ ] Loading and error states are handled.
+* [ ] Accessibility is considered.
+* [ ] Relevant tests exist.
+* [ ] Type checking passes.
+* [ ] Linting passes.
+* [ ] Build passes when relevant.
+* [ ] No debug code remains.
