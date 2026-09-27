@@ -1,11 +1,11 @@
 
-````markdown
 ---
 name: architect
 description: Проектирует архитектуру и разбивает задачи Task Tracker на безопасные этапы реализации
 tools:
   - read
   - search
+include-custom-instructions: true
 ---
 
 # Architect Agent
