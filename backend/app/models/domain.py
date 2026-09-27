@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
@@ -15,6 +15,23 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(255))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
 
 
 class Organization(Base):
@@ -76,7 +93,7 @@ class ProjectStatus(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
     project: Mapped[Project] = relationship(back_populates="statuses")
-    tasks: Mapped[list["Task"]] = relationship(back_populates="status")
+    tasks: Mapped[list["Task"]] = relationship(back_populates="status", overlaps="tasks")
 
     __table_args__ = (
         UniqueConstraint("project_id", "position", name="uq_project_statuses_project_position"),
@@ -95,13 +112,17 @@ class Task(Base):
     title: Mapped[str] = mapped_column(String(300))
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_by: Mapped[UUID] = mapped_column()
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
     )
 
-    project: Mapped[Project] = relationship(back_populates="tasks")
-    status: Mapped[ProjectStatus] = relationship(back_populates="tasks")
+    project: Mapped[Project] = relationship(back_populates="tasks", overlaps="tasks")
+    status: Mapped[ProjectStatus] = relationship(back_populates="tasks", overlaps="project,tasks")
 
     __table_args__ = (
         ForeignKeyConstraint(

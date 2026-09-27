@@ -8,11 +8,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_session
 from app.dependencies.auth import current_user_id
 from app.schemas.domain import (
+    LoginRequest,
+    LoginResponse,
     OrganizationCreate,
     OrganizationResponse,
     ProjectCreate,
     ProjectResponse,
     ProjectUpdate,
+    RegisterRequest,
     StatusCreate,
     StatusReorder,
     StatusResponse,
@@ -20,7 +23,9 @@ from app.schemas.domain import (
     TaskCreate,
     TaskResponse,
     TaskUpdate,
+    UserResponse,
 )
+from app.services.auth import AuthService
 from app.services.domain import DomainService
 from app.services.errors import DomainError
 
@@ -39,6 +44,17 @@ def translate_errors(operation: Callable[..., Awaitable[Any]]) -> Callable[..., 
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
     return wrapped
+
+
+@router.post("/auth/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+async def register(data: RegisterRequest, session: AsyncSession = Depends(get_session)) -> Any:
+    return await translate_errors(AuthService(session).register)(data)
+
+
+@router.post("/auth/login", response_model=LoginResponse)
+async def login(data: LoginRequest, session: AsyncSession = Depends(get_session)) -> Any:
+    access_token, user = await translate_errors(AuthService(session).login)(data)
+    return LoginResponse(access_token=access_token, user=user)
 
 
 @router.post(

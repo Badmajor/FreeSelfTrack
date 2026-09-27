@@ -59,6 +59,42 @@ from:
 
 ---
 
+## Authentication Endpoints
+
+Public authentication endpoints:
+
+```http
+POST /api/auth/register
+POST /api/auth/login
+```
+
+Registration accepts an email and password and returns the public user representation.
+It never returns the password or password hash.
+
+Login returns a bearer access token and public user representation:
+
+```json
+{
+  "access_token": "token-value",
+  "token_type": "bearer",
+  "user": {
+    "id": "user-uuid",
+    "email": "user@example.com",
+    "is_active": true
+  }
+}
+```
+
+Protected endpoints require:
+
+```http
+Authorization: Bearer <access-token>
+```
+
+Invalid credentials and invalid or missing tokens return `401 Unauthorized`. Duplicate registration email returns `409 Conflict`. Login errors use one generic message and must not disclose whether an email is registered.
+
+---
+
 # 4. Authorization
 
 Authorization must be enforced server-side.

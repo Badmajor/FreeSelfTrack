@@ -1,0 +1,156 @@
+:root {
+  color: #16324f;
+  background: #eef4f7;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 32px 20px;
+  background:
+    linear-gradient(135deg, rgba(221, 236, 239, 0.88), rgba(248, 250, 248, 0.92)),
+    #eef4f7;
+}
+
+.auth-panel,
+.welcome-panel {
+  width: min(100%, 440px);
+  padding: 40px;
+  border: 1px solid #d4e0e5;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 18px 50px rgba(22, 50, 79, 0.12);
+}
+
+.eyebrow {
+  color: #2c7a7b;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+h1 {
+  margin: 14px 0 8px;
+  color: #102a43;
+  font-size: 2.3rem;
+  line-height: 1.08;
+}
+
+.muted {
+  margin: 0 0 28px;
+  color: #627d98;
+  line-height: 1.55;
+}
+
+.mode-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin-bottom: 28px;
+  border-bottom: 1px solid #d9e2ec;
+}
+
+.tab {
+  min-height: 42px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: #627d98;
+  background: transparent;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.tab.active {
+  border-bottom-color: #2c7a7b;
+  color: #102a43;
+}
+
+form {
+  display: grid;
+  gap: 10px;
+}
+
+label {
+  margin-top: 8px;
+  color: #334e68;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+input {
+  width: 100%;
+  min-height: 48px;
+  padding: 0 14px;
+  border: 1px solid #bcccdc;
+  border-radius: 5px;
+  color: #102a43;
+  background: #fff;
+}
+
+input:focus {
+  border-color: #2c7a7b;
+  outline: 3px solid rgba(44, 122, 123, 0.18);
+}
+
+.button {
+  min-height: 48px;
+  margin-top: 18px;
+  border: 0;
+  border-radius: 5px;
+  color: #fff;
+  background: #2c7a7b;
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.button:hover {
+  background: #205e60;
+}
+
+.button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.button.secondary {
+  width: 100%;
+  color: #16324f;
+  background: #d9e2ec;
+}
+
+.notice,
+.error {
+  margin: 10px 0 0;
+  padding: 11px 12px;
+  border-radius: 5px;
+  font-size: 0.9rem;
+}
+
+.notice {
+  color: #22543d;
+  background: #c6f6d5;
+}
+
+.error {
+  color: #9b2c2c;
+  background: #fed7d7;
+}
+
