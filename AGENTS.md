@@ -1034,3 +1034,16 @@ List commands actually executed and their results.
 Mention unresolved issues, assumptions, or follow-up work.
 
 Do not claim successful validation if it was not actually executed.
+
+
+## Domain terminology
+
+The canonical domain terminology is defined in:
+
+`docs/product/glossary.md`
+
+Agents MUST read the glossary when working on domain models, API contracts,
+business logic, tasks, frontend domain components, or documentation.
+
+The glossary is the source of truth for domain terminology.
+Do not introduce synonyms for core domain entities without updating the glossary.
