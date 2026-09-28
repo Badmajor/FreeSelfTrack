@@ -688,3 +688,23 @@ Deletion is soft and requires explicit confirmation:
 Organization deletion marks the organization and all its projects deleted. Restoration is separate: restoring an organization does not restore its projects, and a project cannot be restored while its organization is deleted. Deleted resources are hidden from ordinary list, retrieve, and mutation operations.
 
 Organizations and projects expose `owner_id` and nullable `deleted_at` in their response representations.
+
+
+# Kanban API
+
+Project statuses are the Kanban columns. New projects receive the active `Backlog`, `In Progress`, and `Done` statuses in that order.
+
+```http
+GET /api/projects/{project_id}/board?limit=500
+GET /api/projects/{project_id}/board/columns/{status_id}/tasks?limit=500&cursor=...
+```
+
+Board columns include `status`, up to `limit` tasks, and an independent `next_cursor`. The column endpoint loads one column page without loading other columns. Tasks are ordered by `updated_at DESC, id DESC`; limits are bounded from 1 to 500 and cursors are opaque.
+
+Task status changes are available to project members and are recorded transactionally:
+
+```http
+GET /api/tasks/{task_id}/history?limit=500&cursor=...
+```
+
+History is returned newest first using `created_at DESC, id DESC`. Status configuration remains owner-only. Archived statuses use `is_active=false` and are exposed to the project owner through `GET /api/projects/{project_id}/statuses/archive`; restore uses `POST /api/projects/{project_id}/statuses/{status_id}/restore`. A non-empty status and the last active status cannot be archived.

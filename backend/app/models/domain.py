@@ -131,6 +131,9 @@ class Task(Base):
 
     project: Mapped[Project] = relationship(back_populates="tasks", overlaps="tasks")
     status: Mapped[ProjectStatus] = relationship(back_populates="tasks", overlaps="project,tasks")
+    history: Mapped[list["TaskHistory"]] = relationship(
+        back_populates="task", cascade="all, delete-orphan"
+    )
 
     __table_args__ = (
         ForeignKeyConstraint(
@@ -140,3 +143,24 @@ class Task(Base):
             name="fk_tasks_project_status_same_project",
         ),
     )
+
+
+class TaskHistory(Base):
+    __tablename__ = "task_history"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    task_id: Mapped[UUID] = mapped_column(ForeignKey("tasks.id", ondelete="CASCADE"), index=True)
+    changed_by: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    from_status_id: Mapped[UUID] = mapped_column(
+        ForeignKey("project_statuses.id", ondelete="RESTRICT")
+    )
+    to_status_id: Mapped[UUID] = mapped_column(
+        ForeignKey("project_statuses.id", ondelete="RESTRICT")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), index=True
+    )
+
+    task: Mapped[Task] = relationship(back_populates="history")
+
+    __table_args__ = (Index("ix_task_history_task_created_at_id", "task_id", "created_at", "id"),)

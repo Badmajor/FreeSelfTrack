@@ -1,11 +1,16 @@
+import binascii
+import json
 from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Organization, Project, ProjectStatus, Task, User
+from app.core.cursor import decode_cursor, encode_cursor
+from app.models import Organization, Project, ProjectStatus, Task, TaskHistory, User
 from app.repositories.domain import DomainRepository
 from app.schemas.domain import (
+    BoardColumnResponse,
+    BoardResponse,
     ConfirmRequest,
     MembershipRequest,
     OrganizationCreate,
@@ -13,8 +18,13 @@ from app.schemas.domain import (
     ProjectUpdate,
     StatusCreate,
     StatusReorder,
+    StatusResponse,
     StatusUpdate,
     TaskCreate,
+    TaskHistoryPageResponse,
+    TaskHistoryResponse,
+    TaskPageResponse,
+    TaskResponse,
     TaskUpdate,
 )
 from app.services.errors import (
@@ -23,6 +33,8 @@ from app.services.errors import (
     NotFoundError,
     PermissionDeniedError,
 )
+
+DEFAULT_STATUSES = ("Backlog", "In Progress", "Done")
 
 
 def normalized_email(email: str) -> str:
@@ -67,6 +79,8 @@ class DomainService:
         self.session.add(project)
         await self.session.flush()
         await self.repository.add_project_member(project.id, user_id)
+        for position, name in enumerate(DEFAULT_STATUSES):
+            self.session.add(ProjectStatus(project_id=project.id, name=name, position=position))
         await self.session.commit()
         return project
 
@@ -215,14 +229,15 @@ class DomainService:
     async def create_status(
         self, user_id: UUID, project_id: UUID, data: StatusCreate
     ) -> ProjectStatus:
-        await self.get_project(user_id, project_id)
+        project = await self.get_project(user_id, project_id)
+        self._require_owner(user_id, project.owner_id)
         statuses = await self.repository.list_statuses(project_id)
         position = len(statuses) if data.position is None else min(data.position, len(statuses))
+        if not data.is_active:
+            archived_statuses = await self.repository.list_archived_statuses(project_id)
+            position = -(len(archived_statuses) + 1000)
         project_status = ProjectStatus(
-            project_id=project_id,
-            name=data.name,
-            position=position,
-            is_active=data.is_active,
+            project_id=project_id, name=data.name, position=position, is_active=data.is_active
         )
         self.session.add(project_status)
         statuses.insert(position, project_status)
@@ -234,17 +249,23 @@ class DomainService:
         await self.get_project(user_id, project_id)
         return await self.repository.list_statuses(project_id)
 
+    async def list_archived_statuses(self, user_id: UUID, project_id: UUID) -> list[ProjectStatus]:
+        project = await self.get_project(user_id, project_id)
+        self._require_owner(user_id, project.owner_id)
+        return await self.repository.list_archived_statuses(project_id)
+
     async def update_status(
         self, user_id: UUID, project_id: UUID, status_id: UUID, data: StatusUpdate
     ) -> ProjectStatus:
-        await self.get_project(user_id, project_id)
-        project_status = await self.repository.get_status(status_id)
-        if project_status is None or project_status.project_id != project_id:
-            raise NotFoundError("Status not found")
+        project = await self.get_project(user_id, project_id)
+        self._require_owner(user_id, project.owner_id)
+        project_status = await self._get_project_status(project_id, status_id)
+        if data.is_active is False:
+            return await self.archive_status(user_id, project_id, status_id)
+        if data.is_active is True and not project_status.is_active:
+            return await self.restore_status(user_id, project_id, status_id)
         if data.name is not None:
             project_status.name = data.name
-        if data.is_active is not None:
-            project_status.is_active = data.is_active
         if data.position is not None and data.position != project_status.position:
             statuses = await self.repository.list_statuses(project_id)
             statuses.remove(project_status)
@@ -256,23 +277,66 @@ class DomainService:
     async def reorder_statuses(
         self, user_id: UUID, project_id: UUID, data: StatusReorder
     ) -> list[ProjectStatus]:
-        await self.get_project(user_id, project_id)
+        project = await self.get_project(user_id, project_id)
+        self._require_owner(user_id, project.owner_id)
         statuses = await self.repository.list_statuses(project_id)
         current_ids = {project_status.id for project_status in statuses}
-        requested_ids = data.status_ids
-        if len(requested_ids) != len(set(requested_ids)) or set(requested_ids) != current_ids:
-            raise InvalidWorkflowError("status_ids must contain every project status exactly once")
+        if len(data.status_ids) != len(set(data.status_ids)) or set(data.status_ids) != current_ids:
+            raise InvalidWorkflowError(
+                "status_ids must contain every active project status exactly once"
+            )
         by_id = {project_status.id: project_status for project_status in statuses}
-        ordered = [by_id[status_id] for status_id in requested_ids]
+        ordered = [by_id[status_id] for status_id in data.status_ids]
         await self._renumber(ordered)
         await self.session.commit()
         return ordered
 
+    async def archive_status(
+        self, user_id: UUID, project_id: UUID, status_id: UUID
+    ) -> ProjectStatus:
+        project = await self.get_project(user_id, project_id)
+        self._require_owner(user_id, project.owner_id)
+        project_status = await self._get_project_status(project_id, status_id)
+        if not project_status.is_active:
+            return project_status
+        if await self.repository.has_tasks_for_status(status_id):
+            raise ConflictError("Move all tasks before archiving this status")
+        if len(await self.repository.list_statuses(project_id)) <= 1:
+            raise ConflictError("At least one active status must remain")
+        project_status.is_active = False
+        archived_statuses = await self.repository.list_archived_statuses(project_id)
+        project_status.position = -(len(archived_statuses) + 1000)
+        await self.session.flush()
+        active_statuses = await self.repository.list_statuses(project_id)
+        await self._renumber(active_statuses)
+        await self.session.commit()
+        return project_status
+
+    async def restore_status(
+        self, user_id: UUID, project_id: UUID, status_id: UUID
+    ) -> ProjectStatus:
+        project = await self.get_project(user_id, project_id)
+        self._require_owner(user_id, project.owner_id)
+        project_status = await self._get_project_status(project_id, status_id)
+        if project_status.is_active:
+            return project_status
+        project_status.is_active = True
+        active_statuses = await self.repository.list_statuses(project_id)
+        project_status.position = len(active_statuses)
+        active_statuses.append(project_status)
+        await self._renumber(active_statuses)
+        await self.session.commit()
+        return project_status
+
     async def create_task(self, user_id: UUID, project_id: UUID, data: TaskCreate) -> Task:
         await self.get_project(user_id, project_id)
         project_status = await self.repository.get_status(data.status_id)
-        if project_status is None or project_status.project_id != project_id:
-            raise InvalidWorkflowError("Task status must belong to the task project")
+        if (
+            project_status is None
+            or project_status.project_id != project_id
+            or not project_status.is_active
+        ):
+            raise InvalidWorkflowError("Task status must be an active status of the task project")
         task = Task(
             project_id=project_id,
             status_id=project_status.id,
@@ -296,13 +360,94 @@ class DomainService:
             task.title = data.title
         if "description" in data.model_fields_set:
             task.description = data.description
-        if data.status_id is not None:
+        if data.status_id is not None and data.status_id != task.status_id:
             project_status = await self.repository.get_status(data.status_id)
-            if project_status is None or project_status.project_id != task.project_id:
-                raise InvalidWorkflowError("Task status must belong to the task project")
+            if (
+                project_status is None
+                or project_status.project_id != task.project_id
+                or not project_status.is_active
+            ):
+                raise InvalidWorkflowError(
+                    "Task status must be an active status of the task project"
+                )
+            self.session.add(
+                TaskHistory(
+                    task_id=task.id,
+                    changed_by=user_id,
+                    from_status_id=task.status_id,
+                    to_status_id=project_status.id,
+                )
+            )
             task.status_id = project_status.id
         await self.session.commit()
         return task
+
+    async def get_board(self, user_id: UUID, project_id: UUID, limit: int) -> BoardResponse:
+        await self.get_project(user_id, project_id)
+        columns = []
+        for project_status in await self.repository.list_statuses(project_id):
+            tasks = await self.repository.list_tasks_for_status(
+                project_id, project_status.id, limit
+            )
+            next_cursor = None
+            if len(tasks) > limit:
+                tasks = tasks[:limit]
+                next_cursor = encode_cursor(tasks[-1].updated_at, tasks[-1].id)
+            columns.append(
+                BoardColumnResponse(
+                    status=StatusResponse.model_validate(project_status),
+                    tasks=[TaskResponse.model_validate(task) for task in tasks],
+                    next_cursor=next_cursor,
+                )
+            )
+        return BoardResponse(project_id=project_id, columns=columns)
+
+    async def get_column_tasks(
+        self, user_id: UUID, project_id: UUID, status_id: UUID, limit: int, cursor: str | None
+    ) -> TaskPageResponse:
+        await self.get_project(user_id, project_id)
+        project_status = await self._get_project_status(project_id, status_id)
+        if not project_status.is_active:
+            raise NotFoundError("Status not found")
+        page = await self.repository.list_tasks_for_status(
+            project_id, status_id, limit, self._decode_cursor(cursor) if cursor else None
+        )
+        next_cursor = None
+        if len(page) > limit:
+            page = page[:limit]
+            next_cursor = encode_cursor(page[-1].updated_at, page[-1].id)
+        return TaskPageResponse(
+            tasks=[TaskResponse.model_validate(task) for task in page], next_cursor=next_cursor
+        )
+
+    async def get_task_history(
+        self, user_id: UUID, task_id: UUID, limit: int, cursor: str | None
+    ) -> TaskHistoryPageResponse:
+        await self.get_task(user_id, task_id)
+        page = await self.repository.list_task_history(
+            task_id, limit, self._decode_cursor(cursor) if cursor else None
+        )
+        next_cursor = None
+        if len(page) > limit:
+            page = page[:limit]
+            next_cursor = encode_cursor(page[-1].created_at, page[-1].id)
+        return TaskHistoryPageResponse(
+            entries=[TaskHistoryResponse.model_validate(item) for item in page],
+            next_cursor=next_cursor,
+        )
+
+    async def _get_project_status(self, project_id: UUID, status_id: UUID) -> ProjectStatus:
+        project_status = await self.repository.get_status(status_id)
+        if project_status is None or project_status.project_id != project_id:
+            raise NotFoundError("Status not found")
+        return project_status
+
+    @staticmethod
+    def _decode_cursor(cursor: str) -> tuple[datetime, UUID]:
+        try:
+            return decode_cursor(cursor)
+        except (ValueError, KeyError, TypeError, binascii.Error, json.JSONDecodeError) as exc:
+            raise InvalidWorkflowError("Invalid cursor") from exc
 
     async def _find_user(self, email: str) -> User:
         user = await self.repository.get_user_by_email(normalized_email(str(email)))

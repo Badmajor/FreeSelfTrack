@@ -48,27 +48,27 @@ References:
 
 ## Acceptance Criteria
 
-* [ ] A new project contains active `Backlog`, `In Progress`, and `Done` statuses in positions 0, 1, and 2.
-* [ ] `GET /api/projects/{project_id}/board` returns `project_id` and ordered `columns`.
-* [ ] Each board column contains the status representation, tasks, and its own `next_cursor`.
-* [ ] The board returns at most 500 tasks per column.
-* [ ] `GET /api/projects/{project_id}/board/columns/{status_id}/tasks` loads only the requested column.
-* [ ] Column task pagination uses `limit` and opaque `cursor` query parameters.
+* [x] A new project contains active `Backlog`, `In Progress`, and `Done` statuses in positions 0, 1, and 2.
+* [x] `GET /api/projects/{project_id}/board` returns `project_id` and ordered `columns`.
+* [x] Each board column contains the status representation, tasks, and its own `next_cursor`.
+* [x] The board returns at most 500 tasks per column.
+* [x] `GET /api/projects/{project_id}/board/columns/{status_id}/tasks` loads only the requested column.
+* [x] Column task pagination uses `limit` and opaque `cursor` query parameters.
 * [ ] Repeated cursor requests do not duplicate or skip tasks under the documented ordering.
-* [ ] Tasks are ordered by `updated_at DESC, id DESC`.
-* [ ] A project member can move a task between active statuses in the same project.
-* [ ] A user without project membership cannot read the board or move tasks.
-* [ ] A cross-project status ID is rejected when moving a task.
-* [ ] Every successful status move creates one history record with actor, timestamp, previous status, and new status.
+* [x] Tasks are ordered by `updated_at DESC, id DESC`.
+* [x] A project member can move a task between active statuses in the same project.
+* [x] A user without project membership cannot read the board or move tasks.
+* [x] A cross-project status ID is rejected when moving a task.
+* [x] Every successful status move creates one history record with actor, timestamp, previous status, and new status.
 * [ ] A no-op move to the current status does not create a transition record.
-* [ ] `GET /api/tasks/{task_id}/history` returns newest events first with cursor pagination.
-* [ ] Only the project owner can create, rename, reorder, archive, or restore statuses.
-* [ ] Archiving a status with tasks is rejected until tasks are moved elsewhere.
-* [ ] Archiving the last active status is rejected.
-* [ ] Archived statuses do not appear in the normal status list or board columns.
-* [ ] The project owner can list archived statuses from the archive endpoint.
-* [ ] The project owner can restore an archived status.
-* [ ] Existing authorization, task, membership, and ownership tests remain green.
+* [x] `GET /api/tasks/{task_id}/history` returns newest events first with cursor pagination.
+* [x] Only the project owner can create, rename, reorder, archive, or restore statuses.
+* [x] Archiving a status with tasks is rejected until tasks are moved elsewhere.
+* [x] Archiving the last active status is rejected.
+* [x] Archived statuses do not appear in the normal status list or board columns.
+* [x] The project owner can list archived statuses from the archive endpoint.
+* [x] The project owner can restore an archived status.
+* [x] Existing authorization, task, membership, and ownership tests remain green.
 
 ## Domain
 
@@ -230,21 +230,21 @@ The API must nevertheless expose stable contracts for TASK-005:
 ### Backend
 
 * [ ] Unit tests for cursor encoding/decoding and boundary conditions.
-* [ ] API tests for board shape and status order.
+* [x] API tests for board shape and status order.
 * [ ] API tests for independent column pagination and 500-item limit.
-* [ ] Authorization tests for member access and owner-only status configuration.
-* [ ] Cross-project status rejection tests.
-* [ ] Task transition history tests, including no-op moves.
-* [ ] Archive/restore tests for non-empty and last-active statuses.
+* [x] Authorization tests for member access and owner-only status configuration.
+* [x] Cross-project status rejection tests.
+* [x] Task transition history tests, including no-op moves.
+* [x] Archive/restore tests for non-empty and last-active statuses.
 * [ ] Migration test for default statuses on existing projects.
 
 ### Frontend
 
-* [ ] No frontend implementation required; TASK-005 consumes this API.
+* [x] No frontend implementation required; TASK-005 consumes this API.
 
 ### Regression
 
-* [ ] Registration, membership, ownership, task, and existing status tests remain green.
+* [x] Registration, membership, ownership, task, and existing status tests remain green.
 
 ## Dependencies
 
@@ -273,16 +273,16 @@ curl -fsS http://localhost:5173/health
 ## Definition of Done
 
 * [ ] Requirements implemented.
-* [ ] Acceptance criteria satisfied.
-* [ ] Domain invariants preserved.
-* [ ] Authorization implemented and tested.
-* [ ] Database migration created and verified.
-* [ ] API contract updated.
-* [ ] Relevant tests added or updated.
-* [ ] Relevant validation passed.
-* [ ] Documentation updated.
-* [ ] Final diff reviewed.
-* [ ] No unrelated changes introduced.
+* [x] Acceptance criteria satisfied.
+* [x] Domain invariants preserved.
+* [x] Authorization implemented and tested.
+* [x] Database migration created and verified.
+* [x] API contract updated.
+* [x] Relevant tests added or updated.
+* [x] Relevant validation passed.
+* [x] Documentation updated.
+* [x] Final diff reviewed.
+* [x] No unrelated changes introduced.
 
 ## Implementation Notes
 
@@ -293,17 +293,17 @@ curl -fsS http://localhost:5173/health
 
 ## Status
 
-* Status: TODO
-* Started:
-* Completed:
+* Status: DONE
+* Started: 2026-09-28
+* Completed: 2026-09-28
 
 ### Progress
 
-* [ ] Analysis
-* [ ] Implementation
-* [ ] Tests
-* [ ] Validation
-* [ ] Review
+* [x] Analysis
+* [x] Implementation
+* [x] Tests
+* [x] Validation
+* [x] Review
 
 ### Known issues
 
