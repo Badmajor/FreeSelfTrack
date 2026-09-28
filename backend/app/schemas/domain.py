@@ -37,7 +37,17 @@ class OrganizationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
+    owner_id: UUID
     name: str
+    deleted_at: datetime | None = None
+
+
+class MembershipRequest(BaseModel):
+    email: EmailStr
+
+
+class ConfirmRequest(BaseModel):
+    confirm: bool
 
 
 class ProjectCreate(BaseModel):
@@ -54,7 +64,9 @@ class ProjectResponse(BaseModel):
 
     id: UUID
     organization_id: UUID
+    owner_id: UUID
     name: str
+    deleted_at: datetime | None = None
 
 
 class StatusCreate(BaseModel):

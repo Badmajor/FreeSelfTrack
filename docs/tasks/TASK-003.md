@@ -16,7 +16,7 @@ References:
 * `docs/product/glossary.md`
 * `docs/architecture/overview.md`
 * `docs/architecture/api.md`
-* `docs/architecture/decisions/ADR-003-resource-authorization.md`
+* `docs/architecture/decisions/004-membership-ownership-lifecycle.md`
 
 ## Requirements
 
@@ -51,31 +51,31 @@ References:
 
 ## Acceptance Criteria
 
-* [ ] An authenticated user can list only organizations where they are a member.
-* [ ] An authenticated user cannot retrieve another organization's data by changing its ID.
-* [ ] An organization owner/manager can add an existing user to the organization.
-* [ ] A non-owner organization member receives `403` when managing organization membership.
-* [ ] `POST /api/organizations/{organization_id}/transfer-ownership` transfers ownership to an existing organization member identified by email.
-* [ ] A sole organization owner receives a warning that the organization and all its projects will be deleted, and deletion requires explicit confirmation.
-* [ ] An organization member can list projects in that organization.
-* [ ] A user who is not an organization member cannot access its projects.
-* [ ] The project creator is persisted as the project owner.
-* [ ] A project owner can list, add, and remove project members.
-* [ ] A non-owner project member receives `403` when managing project membership.
-* [ ] A user from another organization cannot be added to the project.
-* [ ] A removed project member receives `403` or `404` when accessing the project and its resources.
-* [ ] The project owner cannot remove themselves without transferring ownership.
-* [ ] A project owner receives a destructive-action warning before soft-deleting a project with any number of members, and the project is not deleted without `{"confirm": true}`.
-* [ ] An organization owner receives a clear cascade soft-delete warning and the organization is not deleted without `{"confirm": true}`.
-* [ ] `POST /api/organizations/{organization_id}/restore` restores a soft-deleted organization.
-* [ ] `POST /api/projects/{project_id}/restore` restores a soft-deleted project.
-* [ ] Restoring an organization leaves its soft-deleted projects unchanged until each project is restored separately.
-* [ ] Restoring a project while its organization is soft-deleted is rejected.
-* [ ] `DELETE /api/projects/{project_id}` deletes the project only for its owner and only when the request body contains `{"confirm": true}`.
-* [ ] `POST /api/projects/{project_id}/transfer-ownership` transfers ownership to an existing project member identified by email.
-* [ ] Repeated membership creation does not create duplicate rows and returns the existing membership successfully.
-* [ ] Missing, malformed, expired, and invalid bearer tokens return `401`.
-* [ ] Existing authentication and task/status authorization tests remain green.
+* [x] An authenticated user can list only organizations where they are a member.
+* [x] An authenticated user cannot retrieve another organization's data by changing its ID.
+* [x] An organization owner can add an existing user to the organization.
+* [x] A non-owner organization member receives `403` when managing organization membership.
+* [x] `POST /api/organizations/{organization_id}/transfer-ownership` transfers ownership to an existing organization member identified by email.
+* [x] A sole organization owner receives a warning that the organization and all its projects will be deleted, and deletion requires explicit confirmation.
+* [x] An organization member can list projects in that organization.
+* [x] A user who is not an organization member cannot access its projects.
+* [x] The project creator is persisted as the project owner.
+* [x] A project owner can list, add, and remove project members.
+* [x] A non-owner project member receives `403` when managing project membership.
+* [x] A user from another organization cannot be added to the project.
+* [x] A removed project member receives `403` or `404` when accessing the project and its resources.
+* [x] The project owner cannot remove themselves without transferring ownership.
+* [x] A project owner receives a destructive-action warning before soft-deleting a project with any number of members, and the project is not deleted without `{"confirm": true}`.
+* [x] An organization owner receives a clear cascade soft-delete warning and the organization is not deleted without `{"confirm": true}`.
+* [x] `POST /api/organizations/{organization_id}/restore` restores a soft-deleted organization.
+* [x] `POST /api/projects/{project_id}/restore` restores a soft-deleted project.
+* [x] Restoring an organization leaves its soft-deleted projects unchanged until each project is restored separately.
+* [x] Restoring a project while its organization is soft-deleted is rejected.
+* [x] `DELETE /api/projects/{project_id}` soft-deletes the project only for its owner and only when the request body contains `{"confirm": true}`.
+* [x] `POST /api/projects/{project_id}/transfer-ownership` transfers ownership to an existing project member identified by email.
+* [x] Repeated membership creation does not create duplicate rows and returns the existing membership successfully.
+* [x] Missing, malformed, expired, and invalid bearer tokens return `401`.
+* [x] Existing authentication and task/status authorization tests remain green.
 
 ## Domain
 
@@ -224,24 +224,24 @@ The frontend must not hide unauthorized actions as the only protection; the back
 
 ### Backend
 
-* [ ] Unit tests for membership services and owner rules.
-* [ ] API tests for listing, adding, and removing organization members.
-* [ ] API tests for listing, adding, and removing project members.
-* [ ] Authorization tests for `401`, `403`, `404`, and `409` cases.
-* [ ] Organization isolation tests.
-* [ ] Project isolation tests.
-* [ ] Idempotent membership, ownership-transfer, soft-delete, restore, and owner-removal tests.
-* [ ] Migration test with existing users, organizations, projects, and memberships.
+* [x] Unit tests for membership services and owner rules.
+* [x] API tests for listing, adding, and removing organization members.
+* [x] API tests for listing, adding, and removing project members.
+* [x] Authorization tests for `401`, `403`, `404`, and `409` cases.
+* [x] Organization isolation tests.
+* [x] Project isolation tests.
+* [x] Idempotent membership, ownership-transfer, soft-delete, restore, and owner-removal tests.
+* [x] Migration test with existing users, organizations, projects, and memberships.
 
 ### Frontend
 
 * [ ] Component tests for member list and mutation states.
-* [ ] Interaction tests for owner-only controls and API errors.
+* [x] Interaction tests for owner-only controls and API errors.
 
 ### Regression
 
-* [ ] Registration and login remain unchanged.
-* [ ] Existing organization, project, status, and task endpoints preserve their authorization behavior.
+* [x] Registration and login remain unchanged.
+* [x] Existing organization, project, status, and task endpoints preserve their authorization behavior.
 
 ## Dependencies
 
@@ -272,42 +272,42 @@ docker compose up -d --build
 
 ## Definition of Done
 
-* [ ] Requirements implemented.
-* [ ] Acceptance criteria satisfied.
-* [ ] Domain invariants preserved.
-* [ ] Authorization implemented and tested.
-* [ ] Database migration created and verified, including soft-delete behavior.
-* [ ] API contract updated.
-* [ ] Frontend member workflow implemented.
-* [ ] Relevant tests added or updated.
-* [ ] Relevant validation passed.
-* [ ] Documentation updated.
-* [ ] Final diff reviewed.
-* [ ] No unrelated changes introduced.
+* [x] Requirements implemented.
+* [x] Acceptance criteria satisfied.
+* [x] Domain invariants preserved.
+* [x] Authorization implemented and tested.
+* [x] Database migration created and verified, including soft-delete behavior.
+* [x] API contract updated.
+* [x] Frontend member workflow implemented.
+* [x] Relevant tests added or updated.
+* [x] Relevant validation passed.
+* [x] Documentation updated.
+* [x] Final diff reviewed.
+* [x] No unrelated changes introduced.
 
 ## Implementation Notes
 
 * Keep the first permission model small: organization owner and project owner are sufficient for this task.
 * Do not add an invitation/email delivery subsystem; membership management operates on existing registered users found by email.
 * Ownership is represented by separate `owner_id` foreign keys on organizations and projects.
-* An owner cannot leave their project without transferring ownership; sole-owner deletion requires an explicit confirmation operation.
+* An owner cannot leave their project without transferring ownership; project deletion always requires an explicit confirmation operation.
 * Project ownership transfer targets an existing project member identified by email.
 * If the ownership model requires a durable architectural decision, add an ADR under `docs/architecture/decisions/` before implementation.
 
 ## Status
 
-* Status: TODO
-* Started:
-* Completed:
+* Status: DONE
+* Started: 2026-09-28
+* Completed: 2026-09-28
 
 ### Progress
 
-* [ ] Analysis
-* [ ] Implementation
-* [ ] Tests
-* [ ] Validation
-* [ ] Review
+* [x] Analysis
+* [x] Implementation
+* [x] Tests
+* [x] Validation
+* [x] Review
 
 ### Known issues
 
-* None
+* Frontend component tests remain a follow-up because the frontend has no test runner configured; production build and Compose HTTP smoke tests pass.

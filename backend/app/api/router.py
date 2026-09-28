@@ -2,14 +2,16 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
 from app.dependencies.auth import current_user_id
 from app.schemas.domain import (
+    ConfirmRequest,
     LoginRequest,
     LoginResponse,
+    MembershipRequest,
     OrganizationCreate,
     OrganizationResponse,
     ProjectCreate,
@@ -84,6 +86,84 @@ async def get_organization(
     return await translate_errors(service(session).get_organization)(user_id, organization_id)
 
 
+@router.get("/organizations/{organization_id}/projects", response_model=list[ProjectResponse])
+async def list_organization_projects(
+    organization_id: UUID,
+    user_id: UUID = Depends(current_user_id),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    return await translate_errors(service(session).list_projects)(user_id, organization_id)
+
+
+@router.get("/organizations/{organization_id}/members", response_model=list[UserResponse])
+async def list_organization_members(
+    organization_id: UUID,
+    user_id: UUID = Depends(current_user_id),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    return await translate_errors(service(session).list_organization_members)(
+        user_id, organization_id
+    )
+
+
+@router.post("/organizations/{organization_id}/members", response_model=UserResponse)
+async def add_organization_member(
+    organization_id: UUID,
+    data: MembershipRequest,
+    user_id: UUID = Depends(current_user_id),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    return await translate_errors(service(session).add_organization_member)(
+        user_id, organization_id, data
+    )
+
+
+@router.delete("/organizations/{organization_id}/members/{member_id}", response_model=UserResponse)
+async def remove_organization_member(
+    organization_id: UUID,
+    member_id: UUID,
+    user_id: UUID = Depends(current_user_id),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    return await translate_errors(service(session).remove_organization_member)(
+        user_id, organization_id, member_id
+    )
+
+
+@router.post(
+    "/organizations/{organization_id}/transfer-ownership", response_model=OrganizationResponse
+)
+async def transfer_organization_ownership(
+    organization_id: UUID,
+    data: MembershipRequest,
+    user_id: UUID = Depends(current_user_id),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    return await translate_errors(service(session).transfer_organization_ownership)(
+        user_id, organization_id, data
+    )
+
+
+@router.delete("/organizations/{organization_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_organization(
+    organization_id: UUID,
+    data: ConfirmRequest,
+    user_id: UUID = Depends(current_user_id),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    await translate_errors(service(session).delete_organization)(user_id, organization_id, data)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/organizations/{organization_id}/restore", response_model=OrganizationResponse)
+async def restore_organization(
+    organization_id: UUID,
+    user_id: UUID = Depends(current_user_id),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    return await translate_errors(service(session).restore_organization)(user_id, organization_id)
+
+
 @router.post("/projects", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
 async def create_project(
     data: ProjectCreate,
@@ -110,6 +190,69 @@ async def update_project(
     session: AsyncSession = Depends(get_session),
 ) -> Any:
     return await translate_errors(service(session).update_project)(user_id, project_id, data)
+
+
+@router.get("/projects/{project_id}/members", response_model=list[UserResponse])
+async def list_project_members(
+    project_id: UUID,
+    user_id: UUID = Depends(current_user_id),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    return await translate_errors(service(session).list_project_members)(user_id, project_id)
+
+
+@router.post("/projects/{project_id}/members", response_model=UserResponse)
+async def add_project_member(
+    project_id: UUID,
+    data: MembershipRequest,
+    user_id: UUID = Depends(current_user_id),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    return await translate_errors(service(session).add_project_member)(user_id, project_id, data)
+
+
+@router.delete("/projects/{project_id}/members/{member_id}", response_model=UserResponse)
+async def remove_project_member(
+    project_id: UUID,
+    member_id: UUID,
+    user_id: UUID = Depends(current_user_id),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    return await translate_errors(service(session).remove_project_member)(
+        user_id, project_id, member_id
+    )
+
+
+@router.post("/projects/{project_id}/transfer-ownership", response_model=ProjectResponse)
+async def transfer_project_ownership(
+    project_id: UUID,
+    data: MembershipRequest,
+    user_id: UUID = Depends(current_user_id),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    return await translate_errors(service(session).transfer_project_ownership)(
+        user_id, project_id, data
+    )
+
+
+@router.delete("/projects/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_project(
+    project_id: UUID,
+    data: ConfirmRequest,
+    user_id: UUID = Depends(current_user_id),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    await translate_errors(service(session).delete_project)(user_id, project_id, data)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/projects/{project_id}/restore", response_model=ProjectResponse)
+async def restore_project(
+    project_id: UUID,
+    user_id: UUID = Depends(current_user_id),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    return await translate_errors(service(session).restore_project)(user_id, project_id)
 
 
 @router.post(

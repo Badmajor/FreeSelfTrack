@@ -134,3 +134,149 @@ async def test_protected_endpoint_requires_bearer_token(client: AsyncClient) -> 
         headers={"X-User-ID": str(uuid4())},
     )
     assert response.status_code == 401
+
+
+async def test_membership_authorization_ownership_and_soft_delete_lifecycle(
+    client: AsyncClient, user_ids: tuple[UUID, UUID]
+) -> None:
+    owner_headers = await authenticate(client, user_ids[0])
+    member_headers = await authenticate(client, user_ids[1])
+    outsider_id = uuid4()
+    outsider_headers = await authenticate(client, outsider_id)
+    member_email = f"{user_ids[1]}@example.com"
+    outsider_email = f"{outsider_id}@example.com"
+
+    organization = await create_organization(client, owner_headers, "Acme")
+    organization_id = organization["id"]
+    add_member = await client.post(
+        f"/api/organizations/{organization_id}/members",
+        json={"email": member_email},
+        headers=owner_headers,
+    )
+    assert add_member.status_code == 200
+    assert add_member.json()["email"] == member_email
+    member_user_id = add_member.json()["id"]
+
+    duplicate_member = await client.post(
+        f"/api/organizations/{organization_id}/members",
+        json={"email": member_email.upper()},
+        headers=owner_headers,
+    )
+    assert duplicate_member.status_code == 200
+
+    denied_add = await client.post(
+        f"/api/organizations/{organization_id}/members",
+        json={"email": outsider_email},
+        headers=member_headers,
+    )
+    assert denied_add.status_code == 403
+
+    outsider_view = await client.get(
+        f"/api/organizations/{organization_id}", headers=outsider_headers
+    )
+    assert outsider_view.status_code == 404
+
+    project = await create_project(client, owner_headers, organization_id, "Private project")
+    project_id = project["id"]
+    project_member = await client.post(
+        f"/api/projects/{project_id}/members",
+        json={"email": member_email},
+        headers=owner_headers,
+    )
+    assert project_member.status_code == 200
+
+    member_project_view = await client.get(f"/api/projects/{project_id}", headers=member_headers)
+    assert member_project_view.status_code == 200
+    non_owner_manage = await client.post(
+        f"/api/projects/{project_id}/members",
+        json={"email": outsider_email},
+        headers=member_headers,
+    )
+    assert non_owner_manage.status_code == 403
+
+    transfer_project = await client.post(
+        f"/api/projects/{project_id}/transfer-ownership",
+        json={"email": member_email},
+        headers=owner_headers,
+    )
+    assert transfer_project.status_code == 200
+    assert transfer_project.json()["owner_id"] == member_user_id
+
+    transfer_organization = await client.post(
+        f"/api/organizations/{organization_id}/transfer-ownership",
+        json={"email": member_email},
+        headers=owner_headers,
+    )
+    assert transfer_organization.status_code == 200
+    assert transfer_organization.json()["owner_id"] == member_user_id
+
+    add_outsider_to_org = await client.post(
+        f"/api/organizations/{organization_id}/members",
+        json={"email": outsider_email},
+        headers=member_headers,
+    )
+    assert add_outsider_to_org.status_code == 200
+    add_outsider_to_project = await client.post(
+        f"/api/projects/{project_id}/members",
+        json={"email": outsider_email},
+        headers=member_headers,
+    )
+    assert add_outsider_to_project.status_code == 200
+
+    remove_old_owner = await client.delete(
+        f"/api/projects/{project_id}/members/{project['owner_id']}", headers=member_headers
+    )
+    assert remove_old_owner.status_code == 200
+    removed_owner_view = await client.get(f"/api/projects/{project_id}", headers=owner_headers)
+    assert removed_owner_view.status_code == 404
+
+    missing_confirmation = await client.request(
+        "DELETE", f"/api/projects/{project_id}", json={"confirm": False}, headers=member_headers
+    )
+    assert missing_confirmation.status_code == 422
+    deleted_project = await client.request(
+        "DELETE", f"/api/projects/{project_id}", json={"confirm": True}, headers=member_headers
+    )
+    assert deleted_project.status_code == 204
+    hidden_project = await client.get(f"/api/projects/{project_id}", headers=member_headers)
+    assert hidden_project.status_code == 404
+
+    restored_project = await client.post(
+        f"/api/projects/{project_id}/restore", headers=member_headers
+    )
+    assert restored_project.status_code == 200
+
+    deleted_organization = await client.request(
+        "DELETE",
+        f"/api/organizations/{organization_id}",
+        json={"confirm": True},
+        headers=member_headers,
+    )
+    assert deleted_organization.status_code == 204
+    hidden_organization = await client.get(
+        f"/api/organizations/{organization_id}", headers=member_headers
+    )
+    assert hidden_organization.status_code == 404
+    restore_organization = await client.post(
+        f"/api/organizations/{organization_id}/restore", headers=member_headers
+    )
+    assert restore_organization.status_code == 200
+
+    await client.request(
+        "DELETE", f"/api/projects/{project_id}", json={"confirm": True}, headers=member_headers
+    )
+    await client.request(
+        "DELETE",
+        f"/api/organizations/{organization_id}",
+        json={"confirm": True},
+        headers=member_headers,
+    )
+    restore_while_organization_deleted = await client.post(
+        f"/api/projects/{project_id}/restore", headers=member_headers
+    )
+    assert restore_while_organization_deleted.status_code == 409
+    await client.post(f"/api/organizations/{organization_id}/restore", headers=member_headers)
+    restored_after_parent = await client.post(
+        f"/api/projects/{project_id}/restore", headers=member_headers
+    )
+    assert restored_after_parent.status_code == 200

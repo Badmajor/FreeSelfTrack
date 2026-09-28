@@ -1,10 +1,13 @@
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Organization, Project, ProjectStatus, Task
+from app.models import Organization, Project, ProjectStatus, Task, User
 from app.repositories.domain import DomainRepository
 from app.schemas.domain import (
+    ConfirmRequest,
+    MembershipRequest,
     OrganizationCreate,
     ProjectCreate,
     ProjectUpdate,
@@ -14,7 +17,16 @@ from app.schemas.domain import (
     TaskCreate,
     TaskUpdate,
 )
-from app.services.errors import InvalidWorkflowError, NotFoundError
+from app.services.errors import (
+    ConflictError,
+    InvalidWorkflowError,
+    NotFoundError,
+    PermissionDeniedError,
+)
+
+
+def normalized_email(email: str) -> str:
+    return email.strip().casefold()
 
 
 class DomainService:
@@ -23,7 +35,7 @@ class DomainService:
         self.repository = DomainRepository(session)
 
     async def create_organization(self, user_id: UUID, data: OrganizationCreate) -> Organization:
-        organization = Organization(name=data.name)
+        organization = Organization(owner_id=user_id, name=data.name)
         self.session.add(organization)
         await self.session.flush()
         await self.repository.add_organization_member(organization.id, user_id)
@@ -35,16 +47,23 @@ class DomainService:
 
     async def get_organization(self, user_id: UUID, organization_id: UUID) -> Organization:
         organization = await self.repository.get_organization(organization_id)
-        if organization is None or not await self.repository.has_organization_access(
-            organization_id, user_id
-        ):
+        if organization is None or organization.deleted_at is not None:
+            raise NotFoundError("Organization not found")
+        if not await self.repository.has_organization_access(organization_id, user_id):
             raise NotFoundError("Organization not found")
         return organization
 
+    async def list_projects(self, user_id: UUID, organization_id: UUID) -> list[Project]:
+        await self.get_organization(user_id, organization_id)
+        return await self.repository.list_projects_for_organization(organization_id)
+
     async def create_project(self, user_id: UUID, data: ProjectCreate) -> Project:
-        if not await self.repository.has_organization_access(data.organization_id, user_id):
-            raise NotFoundError("Organization not found")
-        project = Project(organization_id=data.organization_id, name=data.name)
+        await self.get_organization(user_id, data.organization_id)
+        project = Project(
+            organization_id=data.organization_id,
+            owner_id=user_id,
+            name=data.name,
+        )
         self.session.add(project)
         await self.session.flush()
         await self.repository.add_project_member(project.id, user_id)
@@ -53,7 +72,11 @@ class DomainService:
 
     async def get_project(self, user_id: UUID, project_id: UUID) -> Project:
         project = await self.repository.get_project(project_id)
-        if project is None or not await self.repository.has_project_access(project_id, user_id):
+        if (
+            project is None
+            or project.deleted_at is not None
+            or not await self.repository.has_project_access(project_id, user_id)
+        ):
             raise NotFoundError("Project not found")
         return project
 
@@ -64,20 +87,148 @@ class DomainService:
         await self.session.commit()
         return project
 
+    async def list_organization_members(self, user_id: UUID, organization_id: UUID) -> list[User]:
+        await self.get_organization(user_id, organization_id)
+        return await self.repository.list_organization_members(organization_id)
+
+    async def add_organization_member(
+        self, user_id: UUID, organization_id: UUID, data: MembershipRequest
+    ) -> User:
+        organization = await self.get_organization(user_id, organization_id)
+        self._require_owner(user_id, organization.owner_id)
+        member_user = await self._find_user(data.email)
+        await self.repository.add_organization_member(organization_id, member_user.id)
+        await self.session.commit()
+        return member_user
+
+    async def remove_organization_member(
+        self, user_id: UUID, organization_id: UUID, member_id: UUID
+    ) -> User:
+        organization = await self.get_organization(user_id, organization_id)
+        self._require_owner(user_id, organization.owner_id)
+        if member_id == organization.owner_id:
+            raise ConflictError("Organization owner must transfer ownership first")
+        member = await self.repository.get_organization_member(organization_id, member_id)
+        if member is None:
+            raise NotFoundError("Organization member not found")
+        member_user = await self.repository.get_user(member_id)
+        if member_user is None:
+            raise NotFoundError("Organization member not found")
+        await self.repository.remove_organization_member(organization_id, member_id)
+        await self.session.commit()
+        return member_user
+
+    async def transfer_organization_ownership(
+        self, user_id: UUID, organization_id: UUID, data: MembershipRequest
+    ) -> Organization:
+        organization = await self.get_organization(user_id, organization_id)
+        self._require_owner(user_id, organization.owner_id)
+        target = await self._find_user(data.email)
+        if await self.repository.get_organization_member(organization_id, target.id) is None:
+            raise ConflictError("New owner must be an organization member")
+        organization.owner_id = target.id
+        await self.session.commit()
+        return organization
+
+    async def delete_organization(
+        self, user_id: UUID, organization_id: UUID, data: ConfirmRequest
+    ) -> None:
+        organization = await self.get_organization(user_id, organization_id)
+        self._require_owner(user_id, organization.owner_id)
+        self._require_confirmation(data)
+        deleted_at = datetime.now(UTC)
+        organization.deleted_at = deleted_at
+        projects = await self.repository.list_projects_for_organization(organization_id)
+        for project in projects:
+            project.deleted_at = deleted_at
+        await self.session.commit()
+
+    async def restore_organization(self, user_id: UUID, organization_id: UUID) -> Organization:
+        organization = await self._get_deleted_organization(organization_id)
+        self._require_owner(user_id, organization.owner_id)
+        organization.deleted_at = None
+        await self.session.commit()
+        return organization
+
+    async def list_project_members(self, user_id: UUID, project_id: UUID) -> list[User]:
+        await self.get_project(user_id, project_id)
+        return await self.repository.list_project_members(project_id)
+
+    async def add_project_member(
+        self, user_id: UUID, project_id: UUID, data: MembershipRequest
+    ) -> User:
+        project = await self.get_project(user_id, project_id)
+        self._require_owner(user_id, project.owner_id)
+        member_user = await self._find_user(data.email)
+        if not await self.repository.has_organization_access(
+            project.organization_id, member_user.id
+        ):
+            raise ConflictError("Project member must belong to the project organization")
+        await self.repository.add_project_member(project_id, member_user.id)
+        await self.session.commit()
+        return member_user
+
+    async def remove_project_member(self, user_id: UUID, project_id: UUID, member_id: UUID) -> User:
+        project = await self.get_project(user_id, project_id)
+        self._require_owner(user_id, project.owner_id)
+        if member_id == project.owner_id:
+            raise ConflictError("Project owner must transfer ownership first")
+        member = await self.repository.get_project_member(project_id, member_id)
+        if member is None:
+            raise NotFoundError("Project member not found")
+        member_user = await self.repository.get_user(member_id)
+        if member_user is None:
+            raise NotFoundError("Project member not found")
+        await self.repository.remove_project_member(project_id, member_id)
+        await self.session.commit()
+        return member_user
+
+    async def transfer_project_ownership(
+        self, user_id: UUID, project_id: UUID, data: MembershipRequest
+    ) -> Project:
+        project = await self.get_project(user_id, project_id)
+        self._require_owner(user_id, project.owner_id)
+        target = await self._find_user(data.email)
+        if await self.repository.get_project_member(project_id, target.id) is None:
+            raise ConflictError("New owner must be a project member")
+        project.owner_id = target.id
+        await self.session.commit()
+        return project
+
+    async def delete_project(self, user_id: UUID, project_id: UUID, data: ConfirmRequest) -> None:
+        project = await self.get_project(user_id, project_id)
+        self._require_owner(user_id, project.owner_id)
+        self._require_confirmation(data)
+        project.deleted_at = datetime.now(UTC)
+        await self.session.commit()
+
+    async def restore_project(self, user_id: UUID, project_id: UUID) -> Project:
+        project = await self._get_deleted_project(project_id)
+        self._require_owner(user_id, project.owner_id)
+        organization = await self.repository.get_organization(project.organization_id)
+        if organization is None or organization.deleted_at is not None:
+            raise ConflictError("Restore the project organization first")
+        project.deleted_at = None
+        await self.session.commit()
+        return project
+
     async def create_status(
         self, user_id: UUID, project_id: UUID, data: StatusCreate
     ) -> ProjectStatus:
         await self.get_project(user_id, project_id)
         statuses = await self.repository.list_statuses(project_id)
         position = len(statuses) if data.position is None else min(data.position, len(statuses))
-        status = ProjectStatus(
-            project_id=project_id, name=data.name, position=position, is_active=data.is_active
+        project_status = ProjectStatus(
+            project_id=project_id,
+            name=data.name,
+            position=position,
+            is_active=data.is_active,
         )
-        self.session.add(status)
-        statuses.insert(position, status)
+        self.session.add(project_status)
+        statuses.insert(position, project_status)
         await self._renumber(statuses)
         await self.session.commit()
-        return status
+        return project_status
 
     async def list_statuses(self, user_id: UUID, project_id: UUID) -> list[ProjectStatus]:
         await self.get_project(user_id, project_id)
@@ -87,31 +238,31 @@ class DomainService:
         self, user_id: UUID, project_id: UUID, status_id: UUID, data: StatusUpdate
     ) -> ProjectStatus:
         await self.get_project(user_id, project_id)
-        status = await self.repository.get_status(status_id)
-        if status is None or status.project_id != project_id:
+        project_status = await self.repository.get_status(status_id)
+        if project_status is None or project_status.project_id != project_id:
             raise NotFoundError("Status not found")
         if data.name is not None:
-            status.name = data.name
+            project_status.name = data.name
         if data.is_active is not None:
-            status.is_active = data.is_active
-        if data.position is not None and data.position != status.position:
+            project_status.is_active = data.is_active
+        if data.position is not None and data.position != project_status.position:
             statuses = await self.repository.list_statuses(project_id)
-            statuses.remove(status)
-            statuses.insert(min(data.position, len(statuses)), status)
+            statuses.remove(project_status)
+            statuses.insert(min(data.position, len(statuses)), project_status)
             await self._renumber(statuses)
         await self.session.commit()
-        return status
+        return project_status
 
     async def reorder_statuses(
         self, user_id: UUID, project_id: UUID, data: StatusReorder
     ) -> list[ProjectStatus]:
         await self.get_project(user_id, project_id)
         statuses = await self.repository.list_statuses(project_id)
-        current_ids = {status.id for status in statuses}
+        current_ids = {project_status.id for project_status in statuses}
         requested_ids = data.status_ids
         if len(requested_ids) != len(set(requested_ids)) or set(requested_ids) != current_ids:
             raise InvalidWorkflowError("status_ids must contain every project status exactly once")
-        by_id = {status.id: status for status in statuses}
+        by_id = {project_status.id: project_status for project_status in statuses}
         ordered = [by_id[status_id] for status_id in requested_ids]
         await self._renumber(ordered)
         await self.session.commit()
@@ -119,12 +270,12 @@ class DomainService:
 
     async def create_task(self, user_id: UUID, project_id: UUID, data: TaskCreate) -> Task:
         await self.get_project(user_id, project_id)
-        status = await self.repository.get_status(data.status_id)
-        if status is None or status.project_id != project_id:
+        project_status = await self.repository.get_status(data.status_id)
+        if project_status is None or project_status.project_id != project_id:
             raise InvalidWorkflowError("Task status must belong to the task project")
         task = Task(
             project_id=project_id,
-            status_id=status.id,
+            status_id=project_status.id,
             title=data.title,
             description=data.description,
             created_by=user_id,
@@ -146,18 +297,45 @@ class DomainService:
         if "description" in data.model_fields_set:
             task.description = data.description
         if data.status_id is not None:
-            status = await self.repository.get_status(data.status_id)
-            if status is None or status.project_id != task.project_id:
+            project_status = await self.repository.get_status(data.status_id)
+            if project_status is None or project_status.project_id != task.project_id:
                 raise InvalidWorkflowError("Task status must belong to the task project")
-            task.status_id = status.id
+            task.status_id = project_status.id
         await self.session.commit()
         return task
 
+    async def _find_user(self, email: str) -> User:
+        user = await self.repository.get_user_by_email(normalized_email(str(email)))
+        if user is None or not user.is_active:
+            raise NotFoundError("User not found")
+        return user
+
+    async def _get_deleted_organization(self, organization_id: UUID) -> Organization:
+        organization = await self.repository.get_organization(organization_id)
+        if organization is None or organization.deleted_at is None:
+            raise NotFoundError("Organization not found")
+        return organization
+
+    async def _get_deleted_project(self, project_id: UUID) -> Project:
+        project = await self.repository.get_project(project_id)
+        if project is None or project.deleted_at is None:
+            raise NotFoundError("Project not found")
+        return project
+
+    @staticmethod
+    def _require_owner(user_id: UUID, owner_id: UUID) -> None:
+        if user_id != owner_id:
+            raise PermissionDeniedError("Only the owner can perform this operation")
+
+    @staticmethod
+    def _require_confirmation(data: ConfirmRequest) -> None:
+        if not data.confirm:
+            raise InvalidWorkflowError("Explicit confirmation is required")
+
     async def _renumber(self, statuses: list[ProjectStatus]) -> None:
-        # A temporary negative range avoids collisions with the unique position constraint.
-        for index, status in enumerate(statuses):
-            status.position = -(index + 1)
+        for index, project_status in enumerate(statuses):
+            project_status.position = -(index + 1)
         await self.session.flush()
-        for index, status in enumerate(statuses):
-            status.position = index
+        for index, project_status in enumerate(statuses):
+            project_status.position = index
         await self.session.flush()

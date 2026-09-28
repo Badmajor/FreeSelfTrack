@@ -40,10 +40,104 @@ class DomainRepository:
         result = await self.session.scalars(
             select(Organization)
             .join(OrganizationMember, OrganizationMember.organization_id == Organization.id)
-            .where(OrganizationMember.user_id == user_id)
+            .where(
+                OrganizationMember.user_id == user_id,
+                Organization.deleted_at.is_(None),
+            )
             .order_by(Organization.name)
         )
         return list(result)
+
+    async def list_projects_for_organization(self, organization_id: UUID) -> list[Project]:
+        result = await self.session.scalars(
+            select(Project)
+            .where(
+                Project.organization_id == organization_id,
+                Project.deleted_at.is_(None),
+            )
+            .order_by(Project.name)
+        )
+        return list(result)
+
+    async def list_organization_members(self, organization_id: UUID) -> list[User]:
+        result = await self.session.scalars(
+            select(User)
+            .join(OrganizationMember, OrganizationMember.user_id == User.id)
+            .where(OrganizationMember.organization_id == organization_id)
+            .order_by(User.email)
+        )
+        return list(result)
+
+    async def list_project_members(self, project_id: UUID) -> list[User]:
+        result = await self.session.scalars(
+            select(User)
+            .join(ProjectMember, ProjectMember.user_id == User.id)
+            .where(ProjectMember.project_id == project_id)
+            .order_by(User.email)
+        )
+        return list(result)
+
+    async def get_organization_member(
+        self, organization_id: UUID, user_id: UUID
+    ) -> OrganizationMember | None:
+        return await self.session.get(
+            OrganizationMember, {"organization_id": organization_id, "user_id": user_id}
+        )
+
+    async def get_project_member(self, project_id: UUID, user_id: UUID) -> ProjectMember | None:
+        return await self.session.get(ProjectMember, {"project_id": project_id, "user_id": user_id})
+
+    async def has_organization_access(self, organization_id: UUID, user_id: UUID) -> bool:
+        result = await self.session.scalar(
+            select(OrganizationMember.organization_id)
+            .join(Organization, Organization.id == OrganizationMember.organization_id)
+            .where(
+                OrganizationMember.organization_id == organization_id,
+                OrganizationMember.user_id == user_id,
+                Organization.deleted_at.is_(None),
+            )
+        )
+        return result is not None
+
+    async def has_project_access(self, project_id: UUID, user_id: UUID) -> bool:
+        result = await self.session.scalar(
+            select(ProjectMember.project_id)
+            .join(Project, Project.id == ProjectMember.project_id)
+            .join(Organization, Organization.id == Project.organization_id)
+            .where(
+                ProjectMember.project_id == project_id,
+                ProjectMember.user_id == user_id,
+                Project.deleted_at.is_(None),
+                Organization.deleted_at.is_(None),
+            )
+        )
+        return result is not None
+
+    async def add_organization_member(
+        self, organization_id: UUID, user_id: UUID
+    ) -> OrganizationMember:
+        member = await self.get_organization_member(organization_id, user_id)
+        if member is None:
+            member = OrganizationMember(organization_id=organization_id, user_id=user_id)
+            self.session.add(member)
+        return member
+
+    async def add_project_member(self, project_id: UUID, user_id: UUID) -> ProjectMember:
+        member = await self.get_project_member(project_id, user_id)
+        if member is None:
+            member = ProjectMember(project_id=project_id, user_id=user_id)
+            self.session.add(member)
+        return member
+
+    async def remove_organization_member(self, organization_id: UUID, user_id: UUID) -> None:
+        member = await self.get_organization_member(organization_id, user_id)
+        if member is not None:
+            await self.session.delete(member)
+
+    async def remove_project_member(self, project_id: UUID, user_id: UUID) -> None:
+        member = await self.get_project_member(project_id, user_id)
+        if member is not None:
+            await self.session.delete(member)
 
     async def list_statuses(self, project_id: UUID) -> list[ProjectStatus]:
         result = await self.session.scalars(
@@ -53,26 +147,5 @@ class DomainRepository:
         )
         return list(result)
 
-    async def has_organization_access(self, organization_id: UUID, user_id: UUID) -> bool:
-        result = await self.session.scalar(
-            select(OrganizationMember.organization_id).where(
-                OrganizationMember.organization_id == organization_id,
-                OrganizationMember.user_id == user_id,
-            )
-        )
-        return result is not None
-
-    async def has_project_access(self, project_id: UUID, user_id: UUID) -> bool:
-        result = await self.session.scalar(
-            select(ProjectMember.project_id).where(
-                ProjectMember.project_id == project_id,
-                ProjectMember.user_id == user_id,
-            )
-        )
-        return result is not None
-
-    async def add_organization_member(self, organization_id: UUID, user_id: UUID) -> None:
-        self.session.add(OrganizationMember(organization_id=organization_id, user_id=user_id))
-
-    async def add_project_member(self, project_id: UUID, user_id: UUID) -> None:
-        self.session.add(ProjectMember(project_id=project_id, user_id=user_id))
+    async def has_active_project_access(self, project_id: UUID, user_id: UUID) -> bool:
+        return await self.has_project_access(project_id, user_id)

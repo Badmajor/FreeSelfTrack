@@ -646,3 +646,45 @@ API changes should update:
 13. Return stable error codes for domain errors where useful.
 14. Keep API behavior consistent across resources.
 15. Update tests and OpenAPI whenever behavior changes.
+
+
+# 26. Membership and Resource Lifecycle
+
+Organization and project membership endpoints require a bearer token. Membership writes are authorized by the corresponding owner. Adding an existing member again is idempotent and returns the current public user representation.
+
+```http
+GET    /api/organizations/{organization_id}/members
+POST   /api/organizations/{organization_id}/members
+DELETE /api/organizations/{organization_id}/members/{user_id}
+POST   /api/organizations/{organization_id}/transfer-ownership
+DELETE /api/organizations/{organization_id}
+POST   /api/organizations/{organization_id}/restore
+GET    /api/organizations/{organization_id}/projects
+
+GET    /api/projects/{project_id}/members
+POST   /api/projects/{project_id}/members
+DELETE /api/projects/{project_id}/members/{user_id}
+POST   /api/projects/{project_id}/transfer-ownership
+DELETE /api/projects/{project_id}
+POST   /api/projects/{project_id}/restore
+```
+
+Member mutation bodies identify an existing registered user by email:
+
+```json
+{
+  "email": "user@example.com"
+}
+```
+
+Deletion is soft and requires explicit confirmation:
+
+```json
+{
+  "confirm": true
+}
+```
+
+Organization deletion marks the organization and all its projects deleted. Restoration is separate: restoring an organization does not restore its projects, and a project cannot be restored while its organization is deleted. Deleted resources are hidden from ordinary list, retrieve, and mutation operations.
+
+Organizations and projects expose `owner_id` and nullable `deleted_at` in their response representations.
