@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import and_, desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
@@ -10,6 +10,7 @@ from app.models import (
     ProjectMember,
     ProjectStatus,
     Task,
+    TaskHistory,
     User,
 )
 
@@ -142,8 +143,59 @@ class DomainRepository:
     async def list_statuses(self, project_id: UUID) -> list[ProjectStatus]:
         result = await self.session.scalars(
             select(ProjectStatus)
-            .where(ProjectStatus.project_id == project_id)
+            .where(ProjectStatus.project_id == project_id, ProjectStatus.is_active.is_(True))
             .order_by(ProjectStatus.position)
+        )
+        return list(result)
+
+    async def list_archived_statuses(self, project_id: UUID) -> list[ProjectStatus]:
+        result = await self.session.scalars(
+            select(ProjectStatus)
+            .where(ProjectStatus.project_id == project_id, ProjectStatus.is_active.is_(False))
+            .order_by(ProjectStatus.position)
+        )
+        return list(result)
+
+    async def list_tasks_for_status(
+        self,
+        project_id: UUID,
+        status_id: UUID,
+        limit: int,
+        cursor: tuple[object, UUID] | None = None,
+    ) -> list[Task]:
+        query = select(Task).where(Task.project_id == project_id, Task.status_id == status_id)
+        if cursor is not None:
+            timestamp, item_id = cursor
+            query = query.where(
+                or_(
+                    Task.updated_at < timestamp,
+                    and_(Task.updated_at == timestamp, Task.id < item_id),
+                )
+            )
+        result = await self.session.scalars(
+            query.order_by(desc(Task.updated_at), desc(Task.id)).limit(limit + 1)
+        )
+        return list(result)
+
+    async def has_tasks_for_status(self, status_id: UUID) -> bool:
+        return (
+            await self.session.scalar(select(Task.id).where(Task.status_id == status_id).limit(1))
+        ) is not None
+
+    async def list_task_history(
+        self, task_id: UUID, limit: int, cursor: tuple[object, UUID] | None = None
+    ) -> list[TaskHistory]:
+        query = select(TaskHistory).where(TaskHistory.task_id == task_id)
+        if cursor is not None:
+            timestamp, item_id = cursor
+            query = query.where(
+                or_(
+                    TaskHistory.created_at < timestamp,
+                    and_(TaskHistory.created_at == timestamp, TaskHistory.id < item_id),
+                )
+            )
+        result = await self.session.scalars(
+            query.order_by(desc(TaskHistory.created_at), desc(TaskHistory.id)).limit(limit + 1)
         )
         return list(result)
 

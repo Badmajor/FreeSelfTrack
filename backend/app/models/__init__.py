@@ -5,6 +5,7 @@ from app.models.domain import (
     ProjectMember,
     ProjectStatus,
     Task,
+    TaskHistory,
     User,
 )
 
@@ -15,5 +16,6 @@ __all__ = [
     "ProjectMember",
     "ProjectStatus",
     "Task",
+    "TaskHistory",
     "User",
 ]

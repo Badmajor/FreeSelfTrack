@@ -118,3 +118,35 @@ class TaskResponse(BaseModel):
     created_by: UUID
     created_at: datetime
     updated_at: datetime
+
+
+class BoardColumnResponse(BaseModel):
+    status: StatusResponse
+    tasks: list[TaskResponse]
+    next_cursor: str | None = None
+
+
+class BoardResponse(BaseModel):
+    project_id: UUID
+    columns: list[BoardColumnResponse]
+
+
+class TaskPageResponse(BaseModel):
+    tasks: list[TaskResponse]
+    next_cursor: str | None = None
+
+
+class TaskHistoryPageResponse(BaseModel):
+    entries: list["TaskHistoryResponse"]
+    next_cursor: str | None = None
+
+
+class TaskHistoryResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    task_id: UUID
+    changed_by: UUID
+    from_status_id: UUID
+    to_status_id: UUID
+    created_at: datetime

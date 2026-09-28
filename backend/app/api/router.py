@@ -2,12 +2,13 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
 from app.dependencies.auth import current_user_id
 from app.schemas.domain import (
+    BoardResponse,
     ConfirmRequest,
     LoginRequest,
     LoginResponse,
@@ -23,6 +24,8 @@ from app.schemas.domain import (
     StatusResponse,
     StatusUpdate,
     TaskCreate,
+    TaskHistoryPageResponse,
+    TaskPageResponse,
     TaskResponse,
     TaskUpdate,
     UserResponse,
@@ -255,6 +258,32 @@ async def restore_project(
     return await translate_errors(service(session).restore_project)(user_id, project_id)
 
 
+@router.get("/projects/{project_id}/board", response_model=BoardResponse)
+async def get_board(
+    project_id: UUID,
+    limit: int = Query(default=500, ge=1, le=500),
+    user_id: UUID = Depends(current_user_id),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    return await translate_errors(service(session).get_board)(user_id, project_id, limit)
+
+
+@router.get(
+    "/projects/{project_id}/board/columns/{status_id}/tasks", response_model=TaskPageResponse
+)
+async def get_column_tasks(
+    project_id: UUID,
+    status_id: UUID,
+    limit: int = Query(default=500, ge=1, le=500),
+    cursor: str | None = None,
+    user_id: UUID = Depends(current_user_id),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    return await translate_errors(service(session).get_column_tasks)(
+        user_id, project_id, status_id, limit, cursor
+    )
+
+
 @router.post(
     "/projects/{project_id}/statuses",
     response_model=StatusResponse,
@@ -286,6 +315,35 @@ async def reorder_statuses(
     session: AsyncSession = Depends(get_session),
 ) -> Any:
     return await translate_errors(service(session).reorder_statuses)(user_id, project_id, data)
+
+
+@router.get("/projects/{project_id}/statuses/archive", response_model=list[StatusResponse])
+async def list_archived_statuses(
+    project_id: UUID,
+    user_id: UUID = Depends(current_user_id),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    return await translate_errors(service(session).list_archived_statuses)(user_id, project_id)
+
+
+@router.delete("/projects/{project_id}/statuses/{status_id}", response_model=StatusResponse)
+async def archive_status(
+    project_id: UUID,
+    status_id: UUID,
+    user_id: UUID = Depends(current_user_id),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    return await translate_errors(service(session).archive_status)(user_id, project_id, status_id)
+
+
+@router.post("/projects/{project_id}/statuses/{status_id}/restore", response_model=StatusResponse)
+async def restore_status(
+    project_id: UUID,
+    status_id: UUID,
+    user_id: UUID = Depends(current_user_id),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    return await translate_errors(service(session).restore_status)(user_id, project_id, status_id)
 
 
 @router.patch("/projects/{project_id}/statuses/{status_id}", response_model=StatusResponse)
@@ -330,3 +388,16 @@ async def update_task(
     session: AsyncSession = Depends(get_session),
 ) -> Any:
     return await translate_errors(service(session).update_task)(user_id, task_id, data)
+
+
+@router.get("/tasks/{task_id}/history", response_model=TaskHistoryPageResponse)
+async def get_task_history(
+    task_id: UUID,
+    limit: int = Query(default=500, ge=1, le=500),
+    cursor: str | None = None,
+    user_id: UUID = Depends(current_user_id),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    return await translate_errors(service(session).get_task_history)(
+        user_id, task_id, limit, cursor
+    )

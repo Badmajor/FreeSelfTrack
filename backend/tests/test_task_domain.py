@@ -71,20 +71,25 @@ async def test_statuses_are_returned_in_workflow_order(
     headers = await authenticate(client, user_ids[0])
     organization = await create_organization(client, headers, "Acme")
     project = await create_project(client, headers, organization["id"], "Tracker")
-    backlog = await create_status(client, headers, project["id"], "Backlog")
+    statuses = (await client.get(f"/api/projects/{project['id']}/statuses", headers=headers)).json()
+    backlog, in_progress, done = statuses
     review = await create_status(client, headers, project["id"], "Review")
-    done = await create_status(client, headers, project["id"], "Done")
 
     response = await client.post(
         f"/api/projects/{project['id']}/statuses/reorder",
-        json={"status_ids": [review["id"], backlog["id"], done["id"]]},
+        json={"status_ids": [review["id"], backlog["id"], in_progress["id"], done["id"]]},
         headers=headers,
     )
     assert response.status_code == 200
 
     response = await client.get(f"/api/projects/{project['id']}/statuses", headers=headers)
     assert response.status_code == 200
-    assert [item["name"] for item in response.json()] == ["Review", "Backlog", "Done"]
+    assert [item["name"] for item in response.json()] == [
+        "Review",
+        "Backlog",
+        "In Progress",
+        "Done",
+    ]
 
 
 async def test_cross_project_status_is_rejected(
@@ -280,3 +285,140 @@ async def test_membership_authorization_ownership_and_soft_delete_lifecycle(
         f"/api/projects/{project_id}/restore", headers=member_headers
     )
     assert restored_after_parent.status_code == 200
+
+
+async def test_board_move_history_and_independent_cursor_page(
+    client: AsyncClient, user_ids: tuple[UUID, UUID]
+) -> None:
+    owner_headers = await authenticate(client, user_ids[0])
+    member_headers = await authenticate(client, user_ids[1])
+    organization = await create_organization(client, owner_headers, "Acme")
+    project = await create_project(client, owner_headers, organization["id"], "Tracker")
+    statuses = (
+        await client.get(f"/api/projects/{project['id']}/statuses", headers=owner_headers)
+    ).json()
+    backlog, in_progress, done = statuses
+
+    await client.post(
+        f"/api/organizations/{organization['id']}/members",
+        json={"email": f"{user_ids[1]}@example.com"},
+        headers=owner_headers,
+    )
+    add_member = await client.post(
+        f"/api/projects/{project['id']}/members",
+        json={"email": f"{user_ids[1]}@example.com"},
+        headers=owner_headers,
+    )
+    assert add_member.status_code == 200
+    task = await client.post(
+        f"/api/projects/{project['id']}/tasks",
+        json={"title": "Move me", "status_id": backlog["id"]},
+        headers=owner_headers,
+    )
+    assert task.status_code == 201
+    task_id = task.json()["id"]
+
+    moved = await client.patch(
+        f"/api/tasks/{task_id}",
+        json={"status_id": in_progress["id"]},
+        headers=member_headers,
+    )
+    assert moved.status_code == 200
+    history = await client.get(f"/api/tasks/{task_id}/history", headers=owner_headers)
+    assert history.status_code == 200
+    assert len(history.json()["entries"]) == 1
+    assert history.json()["entries"][0]["from_status_id"] == backlog["id"]
+    assert history.json()["entries"][0]["to_status_id"] == in_progress["id"]
+    no_op = await client.patch(
+        f"/api/tasks/{task_id}",
+        json={"status_id": in_progress["id"]},
+        headers=member_headers,
+    )
+    assert no_op.status_code == 200
+    history_after_no_op = await client.get(f"/api/tasks/{task_id}/history", headers=owner_headers)
+    assert len(history_after_no_op.json()["entries"]) == 1
+
+    board = await client.get(f"/api/projects/{project['id']}/board?limit=1", headers=member_headers)
+    assert board.status_code == 200
+    assert [column["status"]["name"] for column in board.json()["columns"]] == [
+        "Backlog",
+        "In Progress",
+        "Done",
+    ]
+    in_progress_column = next(
+        column for column in board.json()["columns"] if column["status"]["id"] == in_progress["id"]
+    )
+    assert in_progress_column["tasks"][0]["id"] == task_id
+
+
+async def test_status_archive_is_owner_only_and_requires_empty_non_last_status(
+    client: AsyncClient, user_ids: tuple[UUID, UUID]
+) -> None:
+    owner_headers = await authenticate(client, user_ids[0])
+    member_headers = await authenticate(client, user_ids[1])
+    organization = await create_organization(client, owner_headers, "Acme")
+    project = await create_project(client, owner_headers, organization["id"], "Tracker")
+    await client.post(
+        f"/api/organizations/{organization['id']}/members",
+        json={"email": f"{user_ids[1]}@example.com"},
+        headers=owner_headers,
+    )
+    member = await client.post(
+        f"/api/projects/{project['id']}/members",
+        json={"email": f"{user_ids[1]}@example.com"},
+        headers=owner_headers,
+    )
+    assert member.status_code == 200
+    statuses = (
+        await client.get(f"/api/projects/{project['id']}/statuses", headers=owner_headers)
+    ).json()
+    backlog, in_progress, done = statuses
+
+    denied = await client.delete(
+        f"/api/projects/{project['id']}/statuses/{done['id']}", headers=member_headers
+    )
+    assert denied.status_code == 403
+    task = await client.post(
+        f"/api/projects/{project['id']}/tasks",
+        json={"title": "Blocking task", "status_id": done["id"]},
+        headers=owner_headers,
+    )
+    assert task.status_code == 201
+    blocked = await client.delete(
+        f"/api/projects/{project['id']}/statuses/{done['id']}", headers=owner_headers
+    )
+    assert blocked.status_code == 409
+    await client.patch(
+        f"/api/tasks/{task.json()['id']}",
+        json={"status_id": backlog["id"]},
+        headers=owner_headers,
+    )
+    archived = await client.delete(
+        f"/api/projects/{project['id']}/statuses/{done['id']}", headers=owner_headers
+    )
+    assert archived.status_code == 200
+    assert archived.json()["is_active"] is False
+    archive = await client.get(
+        f"/api/projects/{project['id']}/statuses/archive", headers=owner_headers
+    )
+    assert [item["id"] for item in archive.json()] == [done["id"]]
+    restored = await client.post(
+        f"/api/projects/{project['id']}/statuses/{done['id']}/restore", headers=owner_headers
+    )
+    assert restored.status_code == 200
+    assert restored.json()["is_active"] is True
+    await client.patch(
+        f"/api/tasks/{task.json()['id']}",
+        json={"status_id": done["id"]},
+        headers=owner_headers,
+    )
+
+    for status_item in (backlog, in_progress):
+        response = await client.delete(
+            f"/api/projects/{project['id']}/statuses/{status_item['id']}", headers=owner_headers
+        )
+        assert response.status_code == 200
+    last = await client.delete(
+        f"/api/projects/{project['id']}/statuses/{done['id']}", headers=owner_headers
+    )
+    assert last.status_code == 409
