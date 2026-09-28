@@ -7,16 +7,37 @@ export type AuthUser = {
   created_at?: string;
 };
 
+export type Organization = {
+  id: string;
+  owner_id: string;
+  name: string;
+  deleted_at?: string | null;
+};
+
+export type Project = {
+  id: string;
+  organization_id: string;
+  owner_id: string;
+  name: string;
+  deleted_at?: string | null;
+};
+
 type LoginResponse = {
   access_token: string;
   token_type: string;
   user: AuthUser;
 };
 
-async function request<T>(path: string, options: RequestInit): Promise<T> {
+function authHeaders(): HeadersInit {
+  const token = localStorage.getItem("freeselftrack.access_token");
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(`${API_URL}${path}`, {
     ...options,
     headers: {
+      ...authHeaders(),
       "Content-Type": "application/json",
       ...options.headers,
     },
@@ -50,3 +71,39 @@ export async function login(email: string, password: string): Promise<LoginRespo
   });
 }
 
+export async function listOrganizations(): Promise<Organization[]> {
+  return request<Organization[]>("/organizations");
+}
+
+export async function listProjects(organizationId: string): Promise<Project[]> {
+  return request<Project[]>(`/organizations/${organizationId}/projects`);
+}
+
+export async function listProjectMembers(projectId: string): Promise<AuthUser[]> {
+  return request<AuthUser[]>(`/projects/${projectId}/members`);
+}
+
+export async function addProjectMember(projectId: string, email: string): Promise<AuthUser> {
+  return request<AuthUser>(`/projects/${projectId}/members`, {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
+}
+
+export async function removeProjectMember(projectId: string, memberId: string): Promise<AuthUser> {
+  return request<AuthUser>(`/projects/${projectId}/members/${memberId}`, { method: "DELETE" });
+}
+
+export async function transferProjectOwnership(projectId: string, email: string): Promise<Project> {
+  return request<Project>(`/projects/${projectId}/transfer-ownership`, {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
+}
+
+export async function deleteProject(projectId: string): Promise<void> {
+  await request<unknown>(`/projects/${projectId}`, {
+    method: "DELETE",
+    body: JSON.stringify({ confirm: true }),
+  });
+}
