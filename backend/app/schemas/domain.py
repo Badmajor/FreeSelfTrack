@@ -95,16 +95,27 @@ class StatusReorder(BaseModel):
     status_ids: list[UUID] = Field(min_length=1)
 
 
+class UserSummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    email: EmailStr
+
+
 class TaskCreate(BaseModel):
     title: str = Field(min_length=1, max_length=300)
     description: str | None = None
     status_id: UUID
+    reporter_id: UUID | None = None
+    assignee_id: UUID | None = None
 
 
 class TaskUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=300)
     description: str | None = None
     status_id: UUID | None = None
+    reporter_id: UUID | None = None
+    assignee_id: UUID | None = None
 
 
 class TaskResponse(BaseModel):
@@ -116,6 +127,9 @@ class TaskResponse(BaseModel):
     title: str
     description: str | None
     created_by: UUID
+    reporter_id: UUID
+    assignee_id: UUID | None
+    watchers: list[UserSummary] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 
@@ -150,3 +164,24 @@ class TaskHistoryResponse(BaseModel):
     from_status_id: UUID
     to_status_id: UUID
     created_at: datetime
+
+
+class WatcherRequest(BaseModel):
+    user_id: UUID | None = None
+
+
+class NotificationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    recipient_id: UUID
+    task_id: UUID | None
+    event_type: str
+    message: str
+    event_data: str | None
+    created_at: datetime
+    read_at: datetime | None
+
+
+class UnreadCountResponse(BaseModel):
+    count: int

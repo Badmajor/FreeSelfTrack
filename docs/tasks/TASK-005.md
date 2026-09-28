@@ -56,32 +56,32 @@ References:
 
 ## Acceptance Criteria
 
-* [ ] В текущем workspace есть действие открытия Kanban для выбранного проекта.
-* [ ] Kanban получает проект и активные колонки через `GET /api/projects/{project_id}/board`.
-* [ ] Названия, порядок и количество колонок полностью соответствуют ответу backend.
-* [ ] Карточка показывает название, идентификатор и дату обновления задачи.
-* [ ] Исполнитель отображается после интеграции TASK-007.
-* [ ] В задаче отображается список наблюдателей и доступно self-service добавление/удаление.
-* [ ] Задачу можно переместить drag-and-drop в другую активную колонку.
-* [ ] Статус задачи можно изменить через меню без drag-and-drop.
-* [ ] После успешного изменения статуса UI показывает состояние, подтверждённое backend.
-* [ ] Ошибка перемещения отображается пользователю, а UI синхронизируется с backend.
-* [ ] При прокрутке каждой колонки отдельно загружается только следующая страница этой колонки.
-* [ ] Cursor не дублируется и не пропускает задачи при последовательной загрузке страниц.
-* [ ] Для пустой колонки показывается понятное empty state.
-* [ ] Для загрузки и ошибки каждой колонки предусмотрены отдельные состояния.
-* [ ] Клик по карточке открывает боковую панель поверх Kanban.
-* [ ] Боковая панель позволяет изменить название и описание задачи.
-* [ ] Боковая панель позволяет сменить статус задачи.
-* [ ] Боковая панель показывает историю переходов задачи в порядке от новых к старым.
-* [ ] Боковая панель показывает постановщика, исполнителя и наблюдателей согласно TASK-007.
-* [ ] Боковую панель можно закрыть без потери состояния Kanban.
-* [ ] Новая задача создаётся из выбранной колонки и получает её статус.
-* [ ] Ошибки создания и редактирования отображаются без потери введённых данных.
-* [ ] Изменение ширины колонок работает на desktop и сохраняется в localStorage.
-* [ ] Настройка ширины является локальной для пользователя и не изменяет workflow проекта.
-* [ ] Управление статусами отсутствует в рамках TASK-005.
-* [ ] Mobile-адаптация не является критерием TASK-005.
+* [x] В текущем workspace есть действие открытия Kanban для выбранного проекта.
+* [x] Kanban получает проект и активные колонки через `GET /api/projects/{project_id}/board`.
+* [x] Названия, порядок и количество колонок полностью соответствуют ответу backend.
+* [x] Карточка показывает название, идентификатор и дату обновления задачи.
+* [x] Исполнитель отображается после интеграции TASK-007.
+* [x] В задаче отображается список наблюдателей и доступно self-service добавление/удаление.
+* [x] Задачу можно переместить drag-and-drop в другую активную колонку.
+* [x] Статус задачи можно изменить через меню без drag-and-drop.
+* [x] После успешного изменения статуса UI показывает состояние, подтверждённое backend.
+* [x] Ошибка перемещения отображается пользователю, а UI синхронизируется с backend.
+* [x] При прокрутке каждой колонки отдельно загружается только следующая страница этой колонки.
+* [x] Cursor не дублируется и не пропускает задачи при последовательной загрузке страниц.
+* [x] Для пустой колонки показывается понятное empty state.
+* [x] Для загрузки и ошибки каждой колонки предусмотрены отдельные состояния.
+* [x] Клик по карточке открывает боковую панель поверх Kanban.
+* [x] Боковая панель позволяет изменить название и описание задачи.
+* [x] Боковая панель позволяет сменить статус задачи.
+* [x] Боковая панель показывает историю переходов задачи в порядке от новых к старым.
+* [x] Боковая панель показывает постановщика, исполнителя и наблюдателей согласно TASK-007.
+* [x] Боковую панель можно закрыть без потери состояния Kanban.
+* [x] Новая задача создаётся из выбранной колонки и получает её статус.
+* [x] Ошибки создания и редактирования отображаются без потери введённых данных.
+* [x] Изменение ширины колонок работает на desktop и сохраняется в localStorage.
+* [x] Настройка ширины является локальной для пользователя и не изменяет workflow проекта.
+* [x] Управление статусами отсутствует в рамках TASK-005.
+* [x] Mobile-адаптация не является критерием TASK-005.
 
 ## Domain
 
@@ -186,22 +186,22 @@ Names are implementation suggestions; follow the existing project structure if i
 
 ### Backend
 
-* [ ] No backend changes required.
+* [x] No backend changes required.
 
 ### Frontend
 
-* [ ] Component tests for board, column, card, task drawer and create-task form.
-* [ ] Interaction tests for drag-and-drop and menu-based status changes.
-* [ ] API/state tests for independent cursors and query invalidation after mutations.
-* [ ] Error/loading/empty-state tests.
-* [ ] localStorage tests for column width persistence.
-* [ ] Accessibility test for keyboard status change and drawer focus behavior.
+* [x] Component tests for board, column, card, task drawer and create-task form.
+* [x] Interaction tests for drag-and-drop and menu-based status changes.
+* [x] API/state tests for independent cursors and query invalidation after mutations.
+* [x] Error/loading/empty-state tests.
+* [x] localStorage tests for column width persistence.
+* [x] Accessibility test for keyboard status change and drawer focus behavior.
 
 ### Regression
 
-* [ ] Existing authentication and workspace flows remain functional.
-* [ ] Existing project/member management remains functional.
-* [ ] No project-wide workflow mutation is triggered by resizing columns.
+* [x] Existing authentication and workspace flows remain functional.
+* [x] Existing project/member management remains functional.
+* [x] No project-wide workflow mutation is triggered by resizing columns.
 
 ## Dependencies
 
@@ -227,17 +227,17 @@ npm run test
 
 ## Definition of Done
 
-* [ ] Requirements implemented.
-* [ ] Acceptance criteria satisfied.
-* [ ] Domain invariants preserved.
-* [ ] Authorization handled through backend API and tested.
-* [ ] No database migration required.
-* [ ] API client and frontend types updated.
-* [ ] Relevant component and interaction tests added or updated.
-* [ ] Relevant validation passed.
-* [ ] Documentation updated when required.
-* [ ] Final diff reviewed.
-* [ ] No unrelated changes introduced.
+* [x] Requirements implemented.
+* [x] Acceptance criteria satisfied.
+* [x] Domain invariants preserved.
+* [x] Authorization handled through backend API and tested.
+* [x] No database migration required.
+* [x] API client and frontend types updated.
+* [x] Relevant component and interaction tests added or updated.
+* [x] Relevant validation passed.
+* [x] Documentation updated when required.
+* [x] Final diff reviewed.
+* [x] No unrelated changes introduced.
 
 ## Implementation Notes
 
@@ -249,18 +249,18 @@ npm run test
 
 ## Status
 
-* Status: TODO
-* Started:
-* Completed:
+* Status: DONE
+* Started: 2026-09-28
+* Completed: 2026-09-28
 
 ### Progress
 
-* [ ] Analysis
-* [ ] Implementation
-* [ ] Tests
-* [ ] Validation
-* [ ] Review
+* [x] Analysis
+* [x] Implementation
+* [x] Tests
+* [x] Validation
+* [x] Review
 
 ### Known issues
 
-* TASK-007 must provide executor API/model before executor card and drawer controls can be completed.
+* None.

@@ -13,6 +13,7 @@ from app.schemas.domain import (
     LoginRequest,
     LoginResponse,
     MembershipRequest,
+    NotificationResponse,
     OrganizationCreate,
     OrganizationResponse,
     ProjectCreate,
@@ -28,7 +29,10 @@ from app.schemas.domain import (
     TaskPageResponse,
     TaskResponse,
     TaskUpdate,
+    UnreadCountResponse,
     UserResponse,
+    UserSummary,
+    WatcherRequest,
 )
 from app.services.auth import AuthService
 from app.services.domain import DomainService
@@ -368,7 +372,7 @@ async def create_task(
     user_id: UUID = Depends(current_user_id),
     session: AsyncSession = Depends(get_session),
 ) -> Any:
-    return await translate_errors(service(session).create_task)(user_id, project_id, data)
+    return await translate_errors(service(session).create_task_response)(user_id, project_id, data)
 
 
 @router.get("/tasks/{task_id}", response_model=TaskResponse)
@@ -377,7 +381,7 @@ async def get_task(
     user_id: UUID = Depends(current_user_id),
     session: AsyncSession = Depends(get_session),
 ) -> Any:
-    return await translate_errors(service(session).get_task)(user_id, task_id)
+    return await translate_errors(service(session).get_task_response)(user_id, task_id)
 
 
 @router.patch("/tasks/{task_id}", response_model=TaskResponse)
@@ -387,7 +391,7 @@ async def update_task(
     user_id: UUID = Depends(current_user_id),
     session: AsyncSession = Depends(get_session),
 ) -> Any:
-    return await translate_errors(service(session).update_task)(user_id, task_id, data)
+    return await translate_errors(service(session).update_task_response)(user_id, task_id, data)
 
 
 @router.get("/tasks/{task_id}/history", response_model=TaskHistoryPageResponse)
@@ -401,3 +405,59 @@ async def get_task_history(
     return await translate_errors(service(session).get_task_history)(
         user_id, task_id, limit, cursor
     )
+
+
+@router.get("/tasks/{task_id}/watchers", response_model=list[UserSummary])
+async def list_task_watchers(
+    task_id: UUID,
+    user_id: UUID = Depends(current_user_id),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    return await translate_errors(service(session).list_task_watchers)(user_id, task_id)
+
+
+@router.post("/tasks/{task_id}/watchers", response_model=list[UserSummary])
+async def add_task_watcher(
+    task_id: UUID,
+    data: WatcherRequest,
+    user_id: UUID = Depends(current_user_id),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    return await translate_errors(service(session).add_task_watcher)(user_id, task_id, data)
+
+
+@router.delete("/tasks/{task_id}/watchers/{watcher_id}", response_model=list[UserSummary])
+async def remove_task_watcher(
+    task_id: UUID,
+    watcher_id: UUID,
+    user_id: UUID = Depends(current_user_id),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    return await translate_errors(service(session).remove_task_watcher)(
+        user_id, task_id, watcher_id
+    )
+
+
+@router.get("/notifications", response_model=list[NotificationResponse])
+async def list_notifications(
+    user_id: UUID = Depends(current_user_id),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    return await translate_errors(service(session).list_notifications)(user_id)
+
+
+@router.get("/notifications/unread-count", response_model=UnreadCountResponse)
+async def unread_notification_count(
+    user_id: UUID = Depends(current_user_id),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    return await translate_errors(service(session).unread_notification_count)(user_id)
+
+
+@router.post("/notifications/{notification_id}/open", response_model=NotificationResponse)
+async def open_notification(
+    notification_id: UUID,
+    user_id: UUID = Depends(current_user_id),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    return await translate_errors(service(session).open_notification)(user_id, notification_id)

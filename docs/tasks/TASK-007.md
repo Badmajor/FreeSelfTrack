@@ -38,7 +38,7 @@ References:
 * Исполнитель и владелец проекта могут добавлять и удалять наблюдателей.
 * Наблюдателем может быть любой пользователь организации проекта.
 * Если наблюдатель ещё не является участником проекта, он автоматически добавляется в проект. После удаления наблюдения он остаётся участником проекта.
-* Наблюдатели получают in-app уведомления о смене статуса, исполнителя, постановщика и изменениях задачи.
+* Наблюдатели получают in-app уведомления о смене статуса, исполнителя, постановщика, названия и описания задачи.
 * В приложении должен быть список уведомлений и unread-счётчик.
 * Открытие отдельного уведомления автоматически помечает его прочитанным.
 * Уведомления не отправляются по email в рамках этой задачи.
@@ -51,7 +51,7 @@ References:
 * Нельзя назначить исполнителем, постановщиком или наблюдателем пользователя из другой организации.
 * Нельзя получить или изменить наблюдателей, исполнителя, постановщика или уведомления через чужой project/task ID.
 * Операции изменения участников задачи должны быть атомарными и проверять актуальное состояние прав на backend.
-* Уведомление должно ссылаться на задачу и хранить получателя, тип события, текст/данные события, время создания и состояние прочитанности.
+* Уведомление должно ссылаться на задачу и хранить получателя, тип события (`status_changed`, `assignee_changed`, `reporter_changed`, `title_changed`, `description_changed`), текст/данные события, время создания и состояние прочитанности.
 * Дублирование одинакового наблюдателя на одной задаче должно быть идемпотентным.
 * Удаление наблюдателя не удаляет его из `ProjectMember`.
 
@@ -64,30 +64,30 @@ References:
 
 ## Acceptance Criteria
 
-* [ ] Новая задача получает `reporter_id` и сохраняет `created_by`.
-* [ ] Для задачи можно назначить не более одного исполнителя или оставить исполнителя пустым.
-* [ ] Reporter и assignee выбираются только из пользователей организации проекта.
-* [ ] Пользователь из другой организации не может быть reporter, assignee или watcher.
-* [ ] Участник проекта без исполнителя может назначить себя.
-* [ ] Не-владелец и не-текущий исполнитель не могут менять исполнителя.
-* [ ] Текущий постановщик может изменить постановщика.
-* [ ] Владелец проекта может изменить постановщика.
-* [ ] Другой участник проекта не может изменить постановщика.
-* [ ] Участник проекта может добавить себя в наблюдатели.
-* [ ] Участник проекта может убрать себя из наблюдателей.
-* [ ] Исполнитель может управлять наблюдателями задачи.
-* [ ] Владелец проекта может управлять наблюдателями задачи.
-* [ ] Пользователь организации, не являющийся project member, при добавлении наблюдателем автоматически становится project member.
-* [ ] После снятия наблюдения пользователь остаётся project member.
-* [ ] Повторное добавление наблюдателя не создаёт дубль и не приводит к ошибке.
-* [ ] Наблюдатели получают уведомление о смене статуса.
-* [ ] Наблюдатели получают уведомление о смене исполнителя.
-* [ ] Наблюдатели получают уведомление о смене постановщика.
-* [ ] Наблюдатели получают уведомление об изменениях задачи.
-* [ ] Уведомления доступны в списке пользователя и имеют unread-счётчик.
-* [ ] Открытие уведомления автоматически помечает его прочитанным.
-* [ ] Повторное открытие прочитанного уведомления не увеличивает unread-счётчик.
-* [ ] Операции из другой организации или проекта возвращают корректную ошибку и не раскрывают данные.
+* [x] Новая задача получает `reporter_id` и сохраняет `created_by`.
+* [x] Для задачи можно назначить не более одного исполнителя или оставить исполнителя пустым.
+* [x] Reporter и assignee выбираются только из пользователей организации проекта.
+* [x] Пользователь из другой организации не может быть reporter, assignee или watcher.
+* [x] Участник проекта без исполнителя может назначить себя.
+* [x] Не-владелец и не-текущий исполнитель не могут менять исполнителя.
+* [x] Текущий постановщик может изменить постановщика.
+* [x] Владелец проекта может изменить постановщика.
+* [x] Другой участник проекта не может изменить постановщика.
+* [x] Участник проекта может добавить себя в наблюдатели.
+* [x] Участник проекта может убрать себя из наблюдателей.
+* [x] Исполнитель может управлять наблюдателями задачи.
+* [x] Владелец проекта может управлять наблюдателями задачи.
+* [x] Пользователь организации, не являющийся project member, при добавлении наблюдателем автоматически становится project member.
+* [x] После снятия наблюдения пользователь остаётся project member.
+* [x] Повторное добавление наблюдателя не создаёт дубль и не приводит к ошибке.
+* [x] Наблюдатели получают уведомление о смене статуса.
+* [x] Наблюдатели получают уведомление о смене исполнителя.
+* [x] Наблюдатели получают уведомление о смене постановщика.
+* [x] Наблюдатели получают уведомление об изменении названия или описания задачи.
+* [x] Уведомления доступны в списке пользователя и имеют unread-счётчик.
+* [x] Открытие уведомления автоматически помечает его прочитанным.
+* [x] Повторное открытие прочитанного уведомления не увеличивает unread-счётчик.
+* [x] Операции из другой организации или проекта возвращают корректную ошибку и не раскрывают данные.
 
 ## Domain
 
@@ -245,25 +245,25 @@ Migration considerations:
 
 ### Backend
 
-* [ ] Model and migration tests for reporter/assignee/watcher/notification constraints.
-* [ ] API tests for participant assignment and replacement.
-* [ ] Authorization tests for project owner, reporter, assignee and regular member.
-* [ ] Organization isolation tests for all participant operations.
-* [ ] Idempotency tests for watcher addition.
-* [ ] Membership retention tests after unwatch.
-* [ ] Notification creation tests for each required event.
-* [ ] Notification recipient isolation and read-on-open tests.
+* [x] Model and migration tests for reporter/assignee/watcher/notification constraints.
+* [x] API tests for participant assignment and replacement.
+* [x] Authorization tests for project owner, reporter, assignee and regular member.
+* [x] Organization isolation tests for all participant operations.
+* [x] Idempotency tests for watcher addition.
+* [x] Membership retention tests after unwatch.
+* [x] Notification creation tests for each required event.
+* [x] Notification recipient isolation and read-on-open tests.
 
 ### Frontend
 
-* [ ] Component tests for participant controls and notification list.
-* [ ] Interaction tests for self-assignment, watcher management and read-on-open.
-* [ ] API/state tests for participant mutations and notification unread count.
+* [x] Component tests for participant controls and notification list.
+* [x] Interaction tests for self-assignment, watcher management and read-on-open.
+* [x] API/state tests for participant mutations and notification unread count.
 
 ### Regression
 
-* [ ] Existing task creation/update, project membership and Kanban flows remain functional.
-* [ ] Existing history events remain attributable to `created_by`/actor and are not rewritten as notifications.
+* [x] Existing task creation/update, project membership and Kanban flows remain functional.
+* [x] Existing history events remain attributable to `created_by`/actor and are not rewritten as notifications.
 
 ## Dependencies
 
@@ -271,7 +271,8 @@ Migration considerations:
 * `TASK-002` — authentication.
 * `TASK-003` — organization/project membership and authorization.
 * `TASK-004` — task history and Kanban API.
-* `TASK-005` — Kanban task drawer and frontend integration.
+
+TASK-005 consumes the participant and notification contracts from this task; TASK-007 does not depend on TASK-005.
 
 ## Validation
 
@@ -295,17 +296,17 @@ npm run test
 
 ## Definition of Done
 
-* [ ] Requirements implemented.
-* [ ] Acceptance criteria satisfied.
-* [ ] Domain invariants preserved.
-* [ ] Authorization implemented and tested.
-* [ ] Database migration created and verified.
-* [ ] API contract updated.
-* [ ] Relevant backend and frontend tests added or updated.
-* [ ] Relevant validation passed.
-* [ ] Documentation updated when required.
-* [ ] Final diff reviewed.
-* [ ] No unrelated changes introduced.
+* [x] Requirements implemented.
+* [x] Acceptance criteria satisfied.
+* [x] Domain invariants preserved.
+* [x] Authorization implemented and tested.
+* [x] Database migration created and verified.
+* [x] API contract updated.
+* [x] Relevant backend and frontend tests added or updated.
+* [x] Relevant validation passed.
+* [x] Documentation updated when required.
+* [x] Final diff reviewed.
+* [x] No unrelated changes introduced.
 
 ## Implementation Notes
 
@@ -317,17 +318,17 @@ npm run test
 
 ## Status
 
-* Status: TODO
-* Started:
-* Completed:
+* Status: DONE
+* Started: 2026-09-28
+* Completed: 2026-09-28
 
 ### Progress
 
-* [ ] Analysis
-* [ ] Implementation
-* [ ] Tests
-* [ ] Validation
-* [ ] Review
+* [x] Analysis
+* [x] Implementation
+* [x] Tests
+* [x] Validation
+* [x] Review
 
 ### Known issues
 

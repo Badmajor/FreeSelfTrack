@@ -18,15 +18,17 @@ Build the first complete vertical slice from organization to task.
 | TASK-002 | Authentication                    | DONE   |
 | TASK-003 | Project members and authorization | DONE   |
 | TASK-004 | Kanban API                        | DONE   |
-| TASK-005 | Kanban frontend                   | TODO   |
+| TASK-005 | Kanban frontend                   | DONE   |
 | TASK-006 | Containerized self-hosted deployment | DONE   |
-| TASK-007 | Task participants and in-app notifications | TODO   |
+| TASK-007 | Task participants and in-app notifications | DONE   |
+| TASK-008 | Frontend tests                   | DONE   |
+| TASK-009 | Backend permission tests and Python 3.13 validation | DONE   |
 
 ---
 
 ## Current focus
 
-`TASK-005`
+`MVP foundation complete`
 
 ---
 
@@ -37,12 +39,15 @@ Build the first complete vertical slice from organization to task.
 * TASK-003 — Project members and authorization.
 * TASK-006 — Containerized self-hosted deployment.
 * TASK-004 — Kanban API and task workflow history.
+* TASK-005 — Kanban frontend implementation.
+* TASK-007 — Task participants and in-app notifications.
+* TASK-008 — Frontend test suite.
+* TASK-009 — Backend permission tests and Python 3.13 validation.
 
 ---
 
 ## In progress
 
-None.
 
 ---
 
@@ -77,6 +82,6 @@ None.
 
 ## Next milestone
 
-After `TASK-005`:
+Next milestone:
 
-1. Kanban frontend.
+None.
