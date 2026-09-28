@@ -120,6 +120,10 @@ class Task(Base):
     title: Mapped[str] = mapped_column(String(300))
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_by: Mapped[UUID] = mapped_column()
+    reporter_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    assignee_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
@@ -131,6 +135,8 @@ class Task(Base):
 
     project: Mapped[Project] = relationship(back_populates="tasks", overlaps="tasks")
     status: Mapped[ProjectStatus] = relationship(back_populates="tasks", overlaps="project,tasks")
+    reporter: Mapped[User] = relationship(foreign_keys=[reporter_id])
+    assignee: Mapped[User | None] = relationship(foreign_keys=[assignee_id])
     history: Mapped[list["TaskHistory"]] = relationship(
         back_populates="task", cascade="all, delete-orphan"
     )
@@ -164,3 +170,38 @@ class TaskHistory(Base):
     task: Mapped[Task] = relationship(back_populates="history")
 
     __table_args__ = (Index("ix_task_history_task_created_at_id", "task_id", "created_at", "id"),)
+
+
+class TaskWatcher(Base):
+    __tablename__ = "task_watchers"
+
+    task_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tasks.id", ondelete="CASCADE"), primary_key=True
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), index=True
+    )
+
+    __table_args__ = (Index("ix_task_watchers_user_id", "user_id"),)
+
+
+class Notification(Base):
+    __tablename__ = "notifications"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    recipient_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    task_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("tasks.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    event_type: Mapped[str] = mapped_column(String(64))
+    message: Mapped[str] = mapped_column(String(500))
+    event_data: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), index=True
+    )
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

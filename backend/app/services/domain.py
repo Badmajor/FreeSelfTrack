@@ -13,6 +13,7 @@ from app.schemas.domain import (
     BoardResponse,
     ConfirmRequest,
     MembershipRequest,
+    NotificationResponse,
     OrganizationCreate,
     ProjectCreate,
     ProjectUpdate,
@@ -26,6 +27,9 @@ from app.schemas.domain import (
     TaskPageResponse,
     TaskResponse,
     TaskUpdate,
+    UnreadCountResponse,
+    UserSummary,
+    WatcherRequest,
 )
 from app.services.errors import (
     ConflictError,
@@ -329,7 +333,7 @@ class DomainService:
         return project_status
 
     async def create_task(self, user_id: UUID, project_id: UUID, data: TaskCreate) -> Task:
-        await self.get_project(user_id, project_id)
+        project = await self.get_project(user_id, project_id)
         project_status = await self.repository.get_status(data.status_id)
         if (
             project_status is None
@@ -337,16 +341,28 @@ class DomainService:
             or not project_status.is_active
         ):
             raise InvalidWorkflowError("Task status must be an active status of the task project")
+        reporter_id = data.reporter_id or user_id
+        await self._require_organization_user(project.organization_id, reporter_id)
+        if data.assignee_id is not None:
+            await self._require_organization_user(project.organization_id, data.assignee_id)
         task = Task(
             project_id=project_id,
             status_id=project_status.id,
             title=data.title,
             description=data.description,
             created_by=user_id,
+            reporter_id=reporter_id,
+            assignee_id=data.assignee_id,
         )
         self.session.add(task)
         await self.session.commit()
         return task
+
+    async def create_task_response(
+        self, user_id: UUID, project_id: UUID, data: TaskCreate
+    ) -> TaskResponse:
+        task = await self.create_task(user_id, project_id, data)
+        return await self._task_response(task)
 
     async def get_task(self, user_id: UUID, task_id: UUID) -> Task:
         task = await self.repository.get_task(task_id)
@@ -354,12 +370,21 @@ class DomainService:
             raise NotFoundError("Task not found")
         return task
 
+    async def get_task_response(self, user_id: UUID, task_id: UUID) -> TaskResponse:
+        return await self._task_response(await self.get_task(user_id, task_id))
+
     async def update_task(self, user_id: UUID, task_id: UUID, data: TaskUpdate) -> Task:
         task = await self.get_task(user_id, task_id)
-        if data.title is not None:
+        project = await self.repository.get_project(task.project_id)
+        if project is None:
+            raise NotFoundError("Task not found")
+        events: list[tuple[str, str, dict[str, str]]] = []
+        if data.title is not None and data.title != task.title:
             task.title = data.title
-        if "description" in data.model_fields_set:
+            events.append(("title_changed", "Task title changed", {"title": data.title}))
+        if "description" in data.model_fields_set and data.description != task.description:
             task.description = data.description
+            events.append(("description_changed", "Task description changed", {}))
         if data.status_id is not None and data.status_id != task.status_id:
             project_status = await self.repository.get_status(data.status_id)
             if (
@@ -379,8 +404,97 @@ class DomainService:
                 )
             )
             task.status_id = project_status.id
+            events.append(
+                ("status_changed", "Task status changed", {"status_id": str(project_status.id)})
+            )
+        if "reporter_id" in data.model_fields_set:
+            self._require_reporter_permission(user_id, task, project.owner_id)
+            if data.reporter_id is None:
+                raise InvalidWorkflowError("A task must have a reporter")
+            await self._require_organization_user(project.organization_id, data.reporter_id)
+            if data.reporter_id != task.reporter_id:
+                task.reporter_id = data.reporter_id
+                events.append(
+                    (
+                        "reporter_changed",
+                        "Task reporter changed",
+                        {"reporter_id": str(data.reporter_id)},
+                    )
+                )
+        if "assignee_id" in data.model_fields_set:
+            self._require_assignee_permission(user_id, task, project.owner_id, data.assignee_id)
+            if data.assignee_id is not None:
+                await self._require_organization_user(project.organization_id, data.assignee_id)
+            if data.assignee_id != task.assignee_id:
+                task.assignee_id = data.assignee_id
+                events.append(
+                    (
+                        "assignee_changed",
+                        "Task assignee changed",
+                        {"assignee_id": str(data.assignee_id) if data.assignee_id else ""},
+                    )
+                )
+        await self._queue_notifications(task, user_id, events)
         await self.session.commit()
         return task
+
+    async def update_task_response(
+        self, user_id: UUID, task_id: UUID, data: TaskUpdate
+    ) -> TaskResponse:
+        return await self._task_response(await self.update_task(user_id, task_id, data))
+
+    async def list_task_watchers(self, user_id: UUID, task_id: UUID) -> list[User]:
+        await self.get_task(user_id, task_id)
+        return await self.repository.list_task_watchers(task_id)
+
+    async def add_task_watcher(
+        self, user_id: UUID, task_id: UUID, data: WatcherRequest
+    ) -> list[User]:
+        task = await self.get_task(user_id, task_id)
+        project = await self.repository.get_project(task.project_id)
+        if project is None:
+            raise NotFoundError("Task not found")
+        target_id = data.user_id or user_id
+        if target_id != user_id:
+            self._require_watcher_manager(user_id, task, project.owner_id)
+        await self._require_organization_user(project.organization_id, target_id)
+        await self.repository.add_project_member(task.project_id, target_id)
+        await self.repository.add_task_watcher(task.id, target_id)
+        await self.session.commit()
+        return await self.repository.list_task_watchers(task.id)
+
+    async def remove_task_watcher(
+        self, user_id: UUID, task_id: UUID, watcher_id: UUID
+    ) -> list[User]:
+        task = await self.get_task(user_id, task_id)
+        project = await self.repository.get_project(task.project_id)
+        if project is None:
+            raise NotFoundError("Task not found")
+        if watcher_id != user_id:
+            self._require_watcher_manager(user_id, task, project.owner_id)
+        if await self.repository.get_task_watcher(task.id, watcher_id) is None:
+            raise NotFoundError("Task watcher not found")
+        await self.repository.remove_task_watcher(task.id, watcher_id)
+        await self.session.commit()
+        return await self.repository.list_task_watchers(task.id)
+
+    async def list_notifications(self, user_id: UUID) -> list[NotificationResponse]:
+        return [
+            NotificationResponse.model_validate(item)
+            for item in await self.repository.list_notifications(user_id)
+        ]
+
+    async def unread_notification_count(self, user_id: UUID) -> UnreadCountResponse:
+        return UnreadCountResponse(count=await self.repository.count_unread_notifications(user_id))
+
+    async def open_notification(self, user_id: UUID, notification_id: UUID) -> NotificationResponse:
+        notification = await self.repository.get_notification(notification_id)
+        if notification is None or notification.recipient_id != user_id:
+            raise NotFoundError("Notification not found")
+        if notification.read_at is None:
+            notification.read_at = datetime.now(UTC)
+            await self.session.commit()
+        return NotificationResponse.model_validate(notification)
 
     async def get_board(self, user_id: UUID, project_id: UUID, limit: int) -> BoardResponse:
         await self.get_project(user_id, project_id)
@@ -396,7 +510,7 @@ class DomainService:
             columns.append(
                 BoardColumnResponse(
                     status=StatusResponse.model_validate(project_status),
-                    tasks=[TaskResponse.model_validate(task) for task in tasks],
+                    tasks=[await self._task_response(task) for task in tasks],
                     next_cursor=next_cursor,
                 )
             )
@@ -417,7 +531,7 @@ class DomainService:
             page = page[:limit]
             next_cursor = encode_cursor(page[-1].updated_at, page[-1].id)
         return TaskPageResponse(
-            tasks=[TaskResponse.model_validate(task) for task in page], next_cursor=next_cursor
+            tasks=[await self._task_response(task) for task in page], next_cursor=next_cursor
         )
 
     async def get_task_history(
@@ -448,6 +562,74 @@ class DomainService:
             return decode_cursor(cursor)
         except (ValueError, KeyError, TypeError, binascii.Error, json.JSONDecodeError) as exc:
             raise InvalidWorkflowError("Invalid cursor") from exc
+
+    async def _task_response(self, task: Task) -> TaskResponse:
+        watchers = await self.repository.list_task_watchers(task.id)
+        return TaskResponse(
+            id=task.id,
+            project_id=task.project_id,
+            status_id=task.status_id,
+            title=task.title,
+            description=task.description,
+            created_by=task.created_by,
+            reporter_id=task.reporter_id,
+            assignee_id=task.assignee_id,
+            watchers=[UserSummary.model_validate(user) for user in watchers],
+            created_at=task.created_at,
+            updated_at=task.updated_at,
+        )
+
+    async def _require_organization_user(self, organization_id: UUID, user_id: UUID) -> User:
+        user = await self.repository.get_user(user_id)
+        if (
+            user is None
+            or not user.is_active
+            or not await self.repository.has_organization_access(organization_id, user_id)
+        ):
+            raise InvalidWorkflowError("User must belong to the task organization")
+        return user
+
+    async def _queue_notifications(
+        self,
+        task: Task,
+        actor_id: UUID,
+        events: list[tuple[str, str, dict[str, str]]],
+    ) -> None:
+        if not events:
+            return
+        watcher_ids = await self.repository.list_task_watcher_ids(task.id)
+        for event_type, message, event_data in events:
+            payload = json.dumps(event_data, separators=(",", ":"))
+            for watcher_id in watcher_ids:
+                if watcher_id != actor_id:
+                    self.repository.add_notification(
+                        recipient_id=watcher_id,
+                        task_id=task.id,
+                        event_type=event_type,
+                        message=message,
+                        event_data=payload,
+                    )
+
+    @staticmethod
+    def _require_assignee_permission(
+        user_id: UUID, task: Task, project_owner_id: UUID, new_assignee_id: UUID | None
+    ) -> None:
+        if task.assignee_id is None and new_assignee_id == user_id:
+            return
+        if user_id not in {project_owner_id, task.assignee_id}:
+            raise PermissionDeniedError(
+                "Only the project owner or current assignee can change assignee"
+            )
+
+    @staticmethod
+    def _require_reporter_permission(user_id: UUID, task: Task, project_owner_id: UUID) -> None:
+        if user_id not in {project_owner_id, task.reporter_id}:
+            raise PermissionDeniedError("Only the project owner or reporter can change reporter")
+
+    @staticmethod
+    def _require_watcher_manager(user_id: UUID, task: Task, project_owner_id: UUID) -> None:
+        if user_id not in {project_owner_id, task.assignee_id}:
+            raise PermissionDeniedError("Only the project owner or assignee can manage watchers")
 
     async def _find_user(self, email: str) -> User:
         user = await self.repository.get_user_by_email(normalized_email(str(email)))

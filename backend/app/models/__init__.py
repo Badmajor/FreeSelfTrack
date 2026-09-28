@@ -1,4 +1,5 @@
 from app.models.domain import (
+    Notification,
     Organization,
     OrganizationMember,
     Project,
@@ -6,6 +7,7 @@ from app.models.domain import (
     ProjectStatus,
     Task,
     TaskHistory,
+    TaskWatcher,
     User,
 )
 
@@ -17,5 +19,7 @@ __all__ = [
     "ProjectStatus",
     "Task",
     "TaskHistory",
+    "TaskWatcher",
+    "Notification",
     "User",
 ]

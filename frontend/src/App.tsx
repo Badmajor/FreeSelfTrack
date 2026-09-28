@@ -1,11 +1,15 @@
 import { FormEvent, useEffect, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   addProjectMember,
   deleteProject,
   listOrganizations,
+  listNotifications,
   listProjectMembers,
   listProjects,
+  getUnreadNotificationCount,
+  openNotification,
   login,
   register,
   removeProjectMember,
@@ -14,6 +18,7 @@ import {
   type Organization,
   type Project,
 } from "./api";
+import { KanbanView } from "./KanbanView";
 
 type Mode = "login" | "register";
 
@@ -160,6 +165,7 @@ function Workspace({ user, onSignOut }: WorkspaceProps) {
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
+  const [kanbanOpen, setKanbanOpen] = useState(false);
 
   const project = projects.find((item) => item.id === projectId) ?? null;
   const isOwner = project?.owner_id === user.id;
@@ -184,6 +190,7 @@ function Workspace({ user, onSignOut }: WorkspaceProps) {
       setMembers([]);
     }
   }, [projectId]);
+  useEffect(() => { setKanbanOpen(false); }, [projectId]);
 
   async function loadOrganizations() {
     setLoading(true);
@@ -277,7 +284,10 @@ function Workspace({ user, onSignOut }: WorkspaceProps) {
           <h1>Projects and members</h1>
           <p className="muted">{user.email}</p>
         </div>
-        <button className="button secondary compact" type="button" onClick={onSignOut}>Sign out</button>
+        <div className="workspace-actions">
+          <NotificationCenter />
+          <button className="button secondary compact" type="button" onClick={onSignOut}>Sign out</button>
+        </div>
       </header>
 
       {error && <p className="error workspace-message" role="alert">{error}</p>}
@@ -303,6 +313,8 @@ function Workspace({ user, onSignOut }: WorkspaceProps) {
                   <div><div className="eyebrow">Project</div><h2 id="members-title">{project.name}</h2></div>
                   {isOwner && <button className="button danger compact" type="button" onClick={() => void handleDeleteProject()} disabled={working}>Delete project</button>}
                 </div>
+                <button className="button compact" type="button" onClick={() => setKanbanOpen(true)}>Open Kanban</button>
+                {kanbanOpen ? <KanbanView project={project} currentUser={user} onClose={() => setKanbanOpen(false)} /> : <>
                 <div className="member-list">
                   <div className="section-heading"><h3>Members</h3><span>{members.length}</span></div>
                   {members.map((member) => <div className="member-row" key={member.id}><span>{member.email}</span>{member.id === project.owner_id ? <span className="role">Owner</span> : isOwner ? <button className="link-button" type="button" onClick={() => void handleRemoveMember(member.id)} disabled={working}>Remove</button> : null}</div>)}
@@ -312,6 +324,7 @@ function Workspace({ user, onSignOut }: WorkspaceProps) {
                   <form onSubmit={handleAddMember}><h3>Add member</h3><label htmlFor="member-email">Email</label><input id="member-email" type="email" value={memberEmail} onChange={(event) => setMemberEmail(event.target.value)} required /><button className="button" type="submit" disabled={working}>Add member</button></form>
                   <form onSubmit={handleTransferOwnership}><h3>Transfer ownership</h3><label htmlFor="transfer-email">Member email</label><input id="transfer-email" type="email" value={transferEmail} onChange={(event) => setTransferEmail(event.target.value)} required /><button className="button secondary" type="submit" disabled={working}>Transfer</button></form>
                 </div>}
+                </>}
               </>
             )}
           </section>
@@ -323,4 +336,67 @@ function Workspace({ user, onSignOut }: WorkspaceProps) {
 
 function messageFor(error: unknown): string {
   return error instanceof Error ? error.message : "Request failed";
+}
+
+
+type NotificationCenterProps = {
+  onOpenTask?: (taskId: string) => void;
+};
+
+export function NotificationCenter({ onOpenTask }: NotificationCenterProps) {
+  const queryClient = useQueryClient();
+  const [expanded, setExpanded] = useState(false);
+  const notifications = useQuery({
+    queryKey: ["notifications"],
+    queryFn: listNotifications,
+    enabled: expanded,
+  });
+  const unread = useQuery({
+    queryKey: ["notifications", "unread-count"],
+    queryFn: getUnreadNotificationCount,
+    refetchInterval: 30_000,
+  });
+  const open = useMutation({
+    mutationFn: openNotification,
+    onSuccess: (notification) => {
+      queryClient.invalidateQueries({ queryKey: ["notifications"] });
+      queryClient.invalidateQueries({ queryKey: ["notifications", "unread-count"] });
+      if (notification.task_id) onOpenTask?.(notification.task_id);
+    },
+  });
+
+  return (
+    <div className="notification-center">
+      <button
+        className="button secondary compact"
+        type="button"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((value) => !value)}
+      >
+        Notifications{unread.data ? ` (${unread.data})` : ""}
+      </button>
+      {expanded && (
+        <div className="notification-panel" role="dialog" aria-label="Notifications">
+          {notifications.isPending && <p className="muted">Loading notifications...</p>}
+          {notifications.isError && <p className="error">Unable to load notifications.</p>}
+          {!notifications.isPending && !notifications.isError && !notifications.data.length && (
+            <p className="muted">No notifications.</p>
+          )}
+          {open.isError && <p className="error" role="alert">Unable to open notification.</p>}
+          {notifications.data?.map((notification) => (
+            <button
+              className={notification.read_at ? "notification read" : "notification"}
+              type="button"
+              key={notification.id}
+              onClick={() => void open.mutateAsync(notification.id)}
+              disabled={open.isPending}
+            >
+              <strong>{notification.message}</strong>
+              <span>{new Date(notification.created_at).toLocaleString()}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }

@@ -675,3 +675,21 @@ AI agents MUST:
 10. If a new domain concept cannot be accurately described using the existing terminology, propose an update to this glossary before implementing the concept.
 
 When requirements conflict with this glossary, stop and resolve the terminology conflict before implementation.
+
+## Task Participants and Notifications
+
+### Reporter
+
+The user responsible for specifying a task. A task has one reporter, represented by `reporter_id`. The reporter is independent from the technical creator stored in `created_by`.
+
+### Assignee
+
+The single user currently responsible for completing a task. A task may have no assignee. The assignee is represented by `assignee_id`.
+
+### Task Watcher
+
+A user who follows changes to a task and receives in-app notifications about relevant task changes. A task may have multiple watchers. Removing a watcher does not remove the user from project membership.
+
+### Notification
+
+An in-app event addressed to one user. A notification may reference a task, has an event type and creation timestamp, and becomes read when opened by its recipient.

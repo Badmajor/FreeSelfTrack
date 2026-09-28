@@ -708,3 +708,33 @@ GET /api/tasks/{task_id}/history?limit=500&cursor=...
 ```
 
 History is returned newest first using `created_at DESC, id DESC`. Status configuration remains owner-only. Archived statuses use `is_active=false` and are exposed to the project owner through `GET /api/projects/{project_id}/statuses/archive`; restore uses `POST /api/projects/{project_id}/statuses/{status_id}/restore`. A non-empty status and the last active status cannot be archived.
+
+
+# Task Participants and Notifications
+
+Tasks expose separate technical creator and product participant fields:
+
+```json
+{
+  "created_by": "user-uuid",
+  "reporter_id": "user-uuid",
+  "assignee_id": "user-uuid-or-null",
+  "watchers": [{"id": "user-uuid", "email": "user@example.com"}]
+}
+```
+
+Reporter and assignee candidates must belong to the task's organization. A task has at most one assignee. When no assignee exists, a project member may assign themselves; subsequent assignee changes are restricted to the project owner or current assignee.
+
+```http
+GET    /api/tasks/{task_id}/watchers
+POST   /api/tasks/{task_id}/watchers
+DELETE /api/tasks/{task_id}/watchers/{user_id}
+
+GET  /api/notifications
+GET  /api/notifications/unread-count
+POST /api/notifications/{notification_id}/open
+```
+
+A project member may manage their own watcher membership. The project owner and current assignee may manage any watcher. An organization user added as a watcher is added to project membership and remains a project member after unwatching. Watcher additions are idempotent.
+
+Notifications are in-app only. They are created for watcher-visible status, title, description, reporter and assignee changes. Opening a notification marks it read; notification access is restricted to its recipient.

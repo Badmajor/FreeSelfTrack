@@ -1,9 +1,10 @@
 from uuid import UUID
 
-from sqlalchemy import and_, desc, or_, select
+from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
+    Notification,
     Organization,
     OrganizationMember,
     Project,
@@ -11,6 +12,7 @@ from app.models import (
     ProjectStatus,
     Task,
     TaskHistory,
+    TaskWatcher,
     User,
 )
 
@@ -201,3 +203,71 @@ class DomainRepository:
 
     async def has_active_project_access(self, project_id: UUID, user_id: UUID) -> bool:
         return await self.has_project_access(project_id, user_id)
+
+    async def list_task_watchers(self, task_id: UUID) -> list[User]:
+        result = await self.session.scalars(
+            select(User)
+            .join(TaskWatcher, TaskWatcher.user_id == User.id)
+            .where(TaskWatcher.task_id == task_id)
+            .order_by(User.email)
+        )
+        return list(result)
+
+    async def list_task_watcher_ids(self, task_id: UUID) -> list[UUID]:
+        result = await self.session.scalars(
+            select(TaskWatcher.user_id).where(TaskWatcher.task_id == task_id)
+        )
+        return list(result)
+
+    async def get_task_watcher(self, task_id: UUID, user_id: UUID) -> TaskWatcher | None:
+        return await self.session.get(TaskWatcher, {"task_id": task_id, "user_id": user_id})
+
+    async def add_task_watcher(self, task_id: UUID, user_id: UUID) -> TaskWatcher:
+        watcher = await self.get_task_watcher(task_id, user_id)
+        if watcher is None:
+            watcher = TaskWatcher(task_id=task_id, user_id=user_id)
+            self.session.add(watcher)
+        return watcher
+
+    async def remove_task_watcher(self, task_id: UUID, user_id: UUID) -> None:
+        watcher = await self.get_task_watcher(task_id, user_id)
+        if watcher is not None:
+            await self.session.delete(watcher)
+
+    async def get_notification(self, notification_id: UUID) -> Notification | None:
+        return await self.session.get(Notification, notification_id)
+
+    async def list_notifications(self, user_id: UUID, limit: int = 100) -> list[Notification]:
+        result = await self.session.scalars(
+            select(Notification)
+            .where(Notification.recipient_id == user_id)
+            .order_by(desc(Notification.created_at), desc(Notification.id))
+            .limit(limit)
+        )
+        return list(result)
+
+    async def count_unread_notifications(self, user_id: UUID) -> int:
+        count = await self.session.scalar(
+            select(func.count(Notification.id)).where(
+                Notification.recipient_id == user_id, Notification.read_at.is_(None)
+            )
+        )
+        return int(count or 0)
+
+    def add_notification(
+        self,
+        recipient_id: UUID,
+        task_id: UUID,
+        event_type: str,
+        message: str,
+        event_data: str | None = None,
+    ) -> Notification:
+        notification = Notification(
+            recipient_id=recipient_id,
+            task_id=task_id,
+            event_type=event_type,
+            message=message,
+            event_data=event_data,
+        )
+        self.session.add(notification)
+        return notification

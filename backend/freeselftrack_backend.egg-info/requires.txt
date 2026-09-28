@@ -1,0 +1,17 @@
+alembic<2.0,>=1.14
+asyncpg<1.0,>=0.29
+email-validator<3.0,>=2.2
+fastapi<1.0,>=0.115
+pwdlib[argon2]<1.0,>=0.2
+pydantic-settings<3.0,>=2.6
+pyjwt<3.0,>=2.9
+sqlalchemy[asyncio]<3.0,>=2.0
+uvicorn[standard]<1.0,>=0.34
+
+[dev]
+aiosqlite<1.0,>=0.20
+httpx<1.0,>=0.28
+pytest<9.0,>=8.3
+pytest-asyncio<1.0,>=0.25
+ruff<1.0,>=0.9
+mypy<2.0,>=1.14

@@ -422,3 +422,237 @@ async def test_status_archive_is_owner_only_and_requires_empty_non_last_status(
         f"/api/projects/{project['id']}/statuses/{done['id']}", headers=owner_headers
     )
     assert last.status_code == 409
+
+
+async def test_task_participants_watchers_and_notifications(
+    client: AsyncClient, user_ids: tuple[UUID, UUID]
+) -> None:
+    owner_login_id, organization_login_id = user_ids
+    owner_headers = await authenticate(client, owner_login_id)
+    organization_user_headers = await authenticate(client, organization_login_id)
+    outsider_login_id = uuid4()
+    outsider_headers = await authenticate(client, outsider_login_id)
+    organization = await create_organization(client, owner_headers, "Acme")
+    owner_id = UUID(organization["owner_id"])
+    project = await create_project(client, owner_headers, organization["id"], "Tracker")
+    statuses = (
+        await client.get(f"/api/projects/{project['id']}/statuses", headers=owner_headers)
+    ).json()
+    backlog, in_progress, _ = statuses
+
+    added_to_org = await client.post(
+        f"/api/organizations/{organization['id']}/members",
+        json={"email": f"{organization_login_id}@example.com"},
+        headers=owner_headers,
+    )
+    assert added_to_org.status_code == 200
+    organization_user_id = UUID(added_to_org.json()["id"])
+
+    task = await client.post(
+        f"/api/projects/{project['id']}/tasks",
+        json={"title": "Participants", "status_id": backlog["id"]},
+        headers=owner_headers,
+    )
+    assert task.status_code == 201
+    task_body = task.json()
+    task_id = task_body["id"]
+    assert task_body["created_by"] == str(owner_id)
+    assert task_body["reporter_id"] == str(owner_id)
+    assert task_body["assignee_id"] is None
+    assert task_body["watchers"] == []
+
+    outsider_assignment = await client.patch(
+        f"/api/tasks/{task_id}",
+        json={"assignee_id": str(outsider_login_id)},
+        headers=owner_headers,
+    )
+    assert outsider_assignment.status_code == 422
+
+    add_watcher = await client.post(
+        f"/api/tasks/{task_id}/watchers",
+        json={"user_id": str(organization_user_id)},
+        headers=owner_headers,
+    )
+    assert add_watcher.status_code == 200
+    assert [item["id"] for item in add_watcher.json()] == [str(organization_user_id)]
+    duplicate_watcher = await client.post(
+        f"/api/tasks/{task_id}/watchers",
+        json={"user_id": str(organization_user_id)},
+        headers=owner_headers,
+    )
+    assert duplicate_watcher.status_code == 200
+    project_members = await client.get(
+        f"/api/projects/{project['id']}/members", headers=owner_headers
+    )
+    assert organization_user_id in {UUID(item["id"]) for item in project_members.json()}
+
+    self_assigned = await client.patch(
+        f"/api/tasks/{task_id}",
+        json={"assignee_id": str(organization_user_id)},
+        headers=organization_user_headers,
+    )
+    assert self_assigned.status_code == 200
+    assert self_assigned.json()["assignee_id"] == str(organization_user_id)
+
+    owner_changes_title = await client.patch(
+        f"/api/tasks/{task_id}",
+        json={"title": "Participants updated", "status_id": in_progress["id"]},
+        headers=owner_headers,
+    )
+    assert owner_changes_title.status_code == 200
+    owner_changes_participants = await client.patch(
+        f"/api/tasks/{task_id}",
+        json={
+            "description": "Updated details",
+            "reporter_id": str(organization_user_id),
+            "assignee_id": None,
+        },
+        headers=owner_headers,
+    )
+    assert owner_changes_participants.status_code == 200
+    notifications = await client.get("/api/notifications", headers=organization_user_headers)
+    assert notifications.status_code == 200
+    notification_types = {item["event_type"] for item in notifications.json()}
+    required_notification_types = {
+        "title_changed",
+        "status_changed",
+        "description_changed",
+        "reporter_changed",
+        "assignee_changed",
+    }
+    assert required_notification_types.issubset(notification_types)
+    unread = await client.get("/api/notifications/unread-count", headers=organization_user_headers)
+    assert unread.status_code == 200
+    unread_before_open = unread.json()["count"]
+    assert unread_before_open >= 2
+
+    notification_id = notifications.json()[0]["id"]
+    opened = await client.post(
+        f"/api/notifications/{notification_id}/open", headers=organization_user_headers
+    )
+    assert opened.status_code == 200
+    assert opened.json()["read_at"] is not None
+    unread_after_open = await client.get(
+        "/api/notifications/unread-count", headers=organization_user_headers
+    )
+    assert unread_after_open.json()["count"] == unread_before_open - 1
+    opened_again = await client.post(
+        f"/api/notifications/{notification_id}/open", headers=organization_user_headers
+    )
+    assert opened_again.status_code == 200
+    assert (
+        await client.get("/api/notifications/unread-count", headers=organization_user_headers)
+    ).json()["count"] == unread_after_open.json()["count"]
+
+    forbidden_open = await client.post(
+        f"/api/notifications/{notification_id}/open", headers=outsider_headers
+    )
+    assert forbidden_open.status_code == 404
+    removed_watcher = await client.delete(
+        f"/api/tasks/{task_id}/watchers/{organization_user_id}", headers=organization_user_headers
+    )
+    assert removed_watcher.status_code == 200
+    remaining_members = await client.get(
+        f"/api/projects/{project['id']}/members", headers=owner_headers
+    )
+    assert organization_user_id in {UUID(item["id"]) for item in remaining_members.json()}
+
+
+async def test_task_participant_permission_matrix_and_organization_isolation(
+    client: AsyncClient, user_ids: tuple[UUID, UUID]
+) -> None:
+    owner_login_id, member_login_id = user_ids
+    regular_login_id = uuid4()
+    foreign_login_id = uuid4()
+    owner_headers = await authenticate(client, owner_login_id)
+    member_headers = await authenticate(client, member_login_id)
+    regular_headers = await authenticate(client, regular_login_id)
+    foreign_headers = await authenticate(client, foreign_login_id)
+
+    organization = await create_organization(client, owner_headers, "Acme")
+    organization_id = organization["id"]
+    member_user_id = UUID(int=0)
+    regular_user_id = UUID(int=0)
+    for login_id in (member_login_id, regular_login_id):
+        response = await client.post(
+            f"/api/organizations/{organization_id}/members",
+            json={"email": f"{login_id}@example.com"},
+            headers=owner_headers,
+        )
+        assert response.status_code == 200
+        if login_id == member_login_id:
+            member_user_id = UUID(response.json()["id"])
+        else:
+            regular_user_id = UUID(response.json()["id"])
+
+    project = await create_project(client, owner_headers, organization_id, "Tracker")
+    project_id = project["id"]
+    for login_id in (member_login_id, regular_login_id):
+        response = await client.post(
+            f"/api/projects/{project_id}/members",
+            json={"email": f"{login_id}@example.com"},
+            headers=owner_headers,
+        )
+        assert response.status_code == 200
+    statuses = (
+        await client.get(f"/api/projects/{project_id}/statuses", headers=owner_headers)
+    ).json()
+    task = await client.post(
+        f"/api/projects/{project_id}/tasks",
+        json={"title": "Permission matrix", "status_id": statuses[0]["id"]},
+        headers=owner_headers,
+    )
+    assert task.status_code == 201
+    task_id = task.json()["id"]
+
+    self_assigned = await client.patch(
+        f"/api/tasks/{task_id}",
+        json={"assignee_id": str(member_user_id)},
+        headers=member_headers,
+    )
+    assert self_assigned.status_code == 200
+    regular_assignee_change = await client.patch(
+        f"/api/tasks/{task_id}",
+        json={"assignee_id": str(regular_user_id)},
+        headers=regular_headers,
+    )
+    assert regular_assignee_change.status_code == 403
+    regular_reporter_change = await client.patch(
+        f"/api/tasks/{task_id}",
+        json={"reporter_id": str(regular_user_id)},
+        headers=regular_headers,
+    )
+    assert regular_reporter_change.status_code == 403
+
+    owner_reporter_change = await client.patch(
+        f"/api/tasks/{task_id}",
+        json={"reporter_id": str(member_user_id)},
+        headers=owner_headers,
+    )
+    assert owner_reporter_change.status_code == 200
+    reporter_reporter_change = await client.patch(
+        f"/api/tasks/{task_id}",
+        json={"reporter_id": str(UUID(organization["owner_id"]))},
+        headers=member_headers,
+    )
+    assert reporter_reporter_change.status_code == 200
+
+    self_watching = await client.post(
+        f"/api/tasks/{task_id}/watchers", json={}, headers=regular_headers
+    )
+    assert self_watching.status_code == 200
+    stopped_watching = await client.delete(
+        f"/api/tasks/{task_id}/watchers/{regular_user_id}", headers=regular_headers
+    )
+    assert stopped_watching.status_code == 200
+
+    foreign_organization = await create_organization(client, foreign_headers, "Foreign")
+    foreign_user_id = UUID(foreign_organization["owner_id"])
+    foreign_watcher = await client.post(
+        f"/api/tasks/{task_id}/watchers",
+        json={"user_id": str(foreign_user_id)},
+        headers=owner_headers,
+    )
+    assert foreign_watcher.status_code == 422
+    foreign_task_access = await client.get(f"/api/tasks/{task_id}", headers=foreign_headers)
+    assert foreign_task_access.status_code == 404
