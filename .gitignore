@@ -1,4 +1,4 @@
 # Generated Python package metadata
-backend/freeselftrack_backend.egg-info/
-
+*.egg-info/
 .env
+**/__pycache__/**
