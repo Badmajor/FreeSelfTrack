@@ -20,6 +20,7 @@ Build the first complete vertical slice from organization to task.
 | TASK-004 | Kanban API                        | DONE   |
 | TASK-005 | Kanban frontend                   | TODO   |
 | TASK-006 | Containerized self-hosted deployment | DONE   |
+| TASK-007 | Task participants and in-app notifications | TODO   |
 
 ---
 
