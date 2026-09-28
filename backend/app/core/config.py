@@ -4,7 +4,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    database_url: str = "postgresql+asyncpg://tracker:tracker@localhost:5432/tracker"
+    database_url: str
     api_prefix: str = "/api"
     auth_secret_key: str = "development-secret-key-change-in-production-0123456789"
     cors_origins: list[str] = ["http://localhost:5173"]
