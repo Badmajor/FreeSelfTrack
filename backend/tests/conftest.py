@@ -1,3 +1,4 @@
+import os
 from collections.abc import AsyncIterator
 from uuid import UUID, uuid4
 
@@ -6,9 +7,11 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.db.base import Base
-from app.db.session import get_session
-from app.main import app
+os.environ.setdefault("TRACKER_DATABASE_URL", "sqlite+aiosqlite:///:memory:")
+
+from app.db.base import Base  # noqa: E402
+from app.db.session import get_session  # noqa: E402
+from app.main import app  # noqa: E402
 
 
 @pytest_asyncio.fixture

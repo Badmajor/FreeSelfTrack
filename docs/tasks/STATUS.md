@@ -14,23 +14,26 @@ Build the first complete vertical slice from organization to task.
 
 | Task     | Description                       | Status |
 | -------- | --------------------------------- | ------ |
-| TASK-001 | Core task domain                  | TODO   |
-| TASK-002 | Authentication                    | TODO   |
+| TASK-001 | Core task domain                  | DONE   |
+| TASK-002 | Authentication                    | DONE   |
 | TASK-003 | Project members and authorization | TODO   |
 | TASK-004 | Kanban API                        | TODO   |
 | TASK-005 | Kanban frontend                   | TODO   |
+| TASK-006 | Containerized self-hosted deployment | DONE   |
 
 ---
 
 ## Current focus
 
-`TASK-001`
+`TASK-003`
 
 ---
 
 ## Completed
 
-None.
+* TASK-001 — Core task domain
+* TASK-002 — Authentication.
+* TASK-006 — Containerized self-hosted deployment.
 
 ---
 
@@ -71,9 +74,8 @@ None.
 
 ## Next milestone
 
-After `TASK-001`:
+After `TASK-006`:
 
-1. Authentication.
-2. Project membership and authorization.
-3. Kanban API.
-4. Kanban frontend.
+1. Project membership and authorization.
+2. Kanban API.
+3. Kanban frontend.
