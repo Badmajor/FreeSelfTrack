@@ -2,3 +2,8 @@
 *.egg-info/
 .env
 **/__pycache__/**
+docs/architecture/
+docs/development/
+docs/product/
+docs/tasks/
+ AGENTS.md

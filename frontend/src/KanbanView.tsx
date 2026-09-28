@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -74,8 +74,23 @@ type ColumnProps = { column: ColumnState; statuses: BoardColumn["status"][]; wid
 function KanbanColumn({ column, statuses, width, onWidthChange, onCreate, onTaskClick, onStatusChange, onDragStart, onDrop, onLoadMore }: ColumnProps) {
   const [creating, setCreating] = useState(false); const [title, setTitle] = useState(""); const [createError, setCreateError] = useState("");
   async function submit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); if (!title.trim()) return; try { await onCreate(title.trim()); setTitle(""); setCreating(false); } catch (error) { setCreateError(messageFor(error)); } }
+  const resizeStart = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = width;
+    const move = (moveEvent: globalThis.PointerEvent) => onWidthChange(Math.min(520, Math.max(220, startWidth + moveEvent.clientX - startX)));
+    const stop = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", stop); };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+  };
+  const resizeKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+      event.preventDefault();
+      onWidthChange(Math.min(520, Math.max(220, width + (event.key === "ArrowRight" ? 20 : -20))));
+    }
+  };
   return <section className="kanban-column" style={{ width }} onDragOver={(event) => event.preventDefault()} onDrop={() => onDrop(column.status.id)} aria-labelledby={`status-${column.status.id}`}>
-    <header className="kanban-column-header"><div><h3 id={`status-${column.status.id}`}>{column.status.name}</h3><span>{column.tasks.length}</span></div><label className="width-control">Width<input aria-label={`Width of ${column.status.name}`} type="range" min="220" max="520" value={width} onChange={(event) => onWidthChange(Number(event.target.value))} /></label></header>
+    <header className="kanban-column-header"><div><h3 id={`status-${column.status.id}`}>{column.status.name}</h3><span>{column.tasks.length}</span></div><div className="resize-handle" role="separator" aria-orientation="vertical" aria-label={`Resize ${column.status.name} column`} aria-valuemin={220} aria-valuemax={520} aria-valuenow={width} tabIndex={0} onPointerDown={resizeStart} onKeyDown={resizeKeyDown} /></header>
     <div className="task-list" onScroll={(event) => { const target = event.currentTarget; if (target.scrollTop + target.clientHeight >= target.scrollHeight - 24) onLoadMore(); }}>{column.tasks.map((task) => <TaskCard key={task.id} task={task} statuses={statuses} onClick={(trigger) => onTaskClick(task.id, trigger)} onStatusChange={onStatusChange} onDragStart={() => onDragStart(task)} />)}{!column.tasks.length && <p className="empty-state compact-empty">No tasks in this column.</p>}{column.loadingMore && <p className="muted">Loading more...</p>}{column.error && <p className="error" role="alert">{column.error}</p>}</div>
     <button className="button compact" type="button" onClick={() => setCreating((value) => !value)}>{creating ? "Cancel" : "Add task"}</button>{creating && <form className="create-task-form" onSubmit={(event) => void submit(event)}><label htmlFor={`new-task-${column.status.id}`}>Title</label><input id={`new-task-${column.status.id}`} value={title} onChange={(event) => setTitle(event.target.value)} required /><button className="button" type="submit">Create</button>{createError && <p className="error" role="alert">{createError}</p>}</form>}
   </section>;

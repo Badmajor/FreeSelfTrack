@@ -117,9 +117,9 @@ describe("Kanban interactions", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     renderView({ id: "member-1", email: "member@example.com" });
-    const width = await screen.findByRole("slider", { name: "Width of Backlog" });
-    fireEvent.change(width, { target: { value: "360" } });
-    expect(JSON.parse(window.localStorage.getItem("freeselftrack.kanban.widths.project-1") ?? "{}")).toMatchObject({ "status-backlog": 360 });
+    const width = await screen.findByRole("separator", { name: "Resize Backlog column" });
+    fireEvent.keyDown(width, { key: "ArrowRight" });
+    expect(JSON.parse(window.localStorage.getItem("freeselftrack.kanban.widths.project-1") ?? "{}")).toMatchObject({ "status-backlog": 300 });
 
     await userEvent.click(screen.getByRole("article", { name: "Open task task-1" }));
     expect(await screen.findByLabelText("Assignee")).toBeDisabled();
