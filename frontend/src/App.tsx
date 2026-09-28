@@ -3,6 +3,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   addProjectMember,
+  createOrganization,
+  createProject,
   deleteProject,
   listOrganizations,
   listNotifications,
@@ -162,6 +164,10 @@ function Workspace({ user, onSignOut }: WorkspaceProps) {
   const [projectId, setProjectId] = useState("");
   const [memberEmail, setMemberEmail] = useState("");
   const [transferEmail, setTransferEmail] = useState("");
+  const [organizationName, setOrganizationName] = useState("");
+  const [projectName, setProjectName] = useState("");
+  const [showOrganizationForm, setShowOrganizationForm] = useState(false);
+  const [showProjectForm, setShowProjectForm] = useState(false);
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
@@ -224,6 +230,30 @@ function Workspace({ user, onSignOut }: WorkspaceProps) {
     } catch (requestError) {
       setError(messageFor(requestError));
     }
+  }
+
+  async function handleCreateOrganization(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!organizationName.trim()) return;
+    await perform(async () => {
+      const created = await createOrganization(organizationName.trim());
+      setOrganizations((current) => [...current, created]);
+      setOrganizationId(created.id);
+      setOrganizationName("");
+      setShowOrganizationForm(false);
+    });
+  }
+
+  async function handleCreateProject(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!organizationId || !projectName.trim()) return;
+    await perform(async () => {
+      const created = await createProject(organizationId, projectName.trim());
+      setProjects((current) => [...current, created]);
+      setProjectId(created.id);
+      setProjectName("");
+      setShowProjectForm(false);
+    });
   }
 
   async function handleAddMember(event: FormEvent<HTMLFormElement>) {
@@ -299,11 +329,23 @@ function Workspace({ user, onSignOut }: WorkspaceProps) {
               <option value="">No organizations</option>
               {organizations.map((organization) => <option key={organization.id} value={organization.id}>{organization.name}</option>)}
             </select>
+            <button className="button secondary compact" type="button" onClick={() => setShowOrganizationForm((value) => !value)} disabled={working}>{showOrganizationForm ? "Cancel" : "New organization"}</button>
+            {showOrganizationForm && <form onSubmit={(event) => void handleCreateOrganization(event)}>
+              <label htmlFor="organization-name">Name</label>
+              <input id="organization-name" value={organizationName} onChange={(event) => setOrganizationName(event.target.value)} required />
+              <button className="button compact" type="submit" disabled={working}>Create organization</button>
+            </form>}
             <label htmlFor="project">Project</label>
             <select id="project" value={projectId} onChange={(event) => setProjectId(event.target.value)} disabled={!projects.length}>
               <option value="">No projects</option>
               {projects.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
             </select>
+            {organizationId && <button className="button secondary compact" type="button" onClick={() => setShowProjectForm((value) => !value)} disabled={working}>{showProjectForm ? "Cancel" : "New project"}</button>}
+            {showProjectForm && organizationId && <form onSubmit={(event) => void handleCreateProject(event)}>
+              <label htmlFor="project-name">Name</label>
+              <input id="project-name" value={projectName} onChange={(event) => setProjectName(event.target.value)} required />
+              <button className="button compact" type="submit" disabled={working}>Create project</button>
+            </form>}
           </aside>
 
           <section className="workspace-content" aria-labelledby="members-title">
