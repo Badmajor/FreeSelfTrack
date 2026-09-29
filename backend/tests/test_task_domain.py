@@ -73,6 +73,7 @@ async def test_create_organization_project_status_and_task(
     assert response.status_code == 201
     assert response.json()["project_id"] == project["id"]
     assert response.json()["status_id"] == project_status["id"]
+    assert response.json()["slug"] == "TRA-1"
 
 
 async def test_statuses_are_returned_in_workflow_order(
@@ -503,6 +504,11 @@ async def test_task_participants_watchers_and_notifications(
     )
     assert self_assigned.status_code == 200
     assert self_assigned.json()["assignee_id"] == str(organization_user_id)
+    assert self_assigned.json()["assignee"] == {
+        "id": str(organization_user_id),
+        "first_name": "Test",
+        "last_name": "User",
+    }
 
     owner_changes_title = await client.patch(
         f"/api/tasks/{task_id}",

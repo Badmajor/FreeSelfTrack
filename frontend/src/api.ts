@@ -142,15 +142,18 @@ export type UserSummary = {
   email: string;
 };
 
+export type Assignee = { id: string; first_name: string; last_name: string };
 export type Task = {
   id: string;
   project_id: string;
   status_id: string;
+  slug: string;
   title: string;
   description: string | null;
   created_by: string;
   reporter_id: string;
   assignee_id: string | null;
+  assignee: Assignee | null;
   watchers: UserSummary[];
   created_at: string;
   updated_at: string;

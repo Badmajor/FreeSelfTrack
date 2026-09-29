@@ -99,6 +99,17 @@ class Project(Base):
     tasks: Mapped[list["Task"]] = relationship(back_populates="project")
 
 
+class ProjectTaskSequence(Base):
+    __tablename__ = "project_task_sequences"
+
+    project_id: Mapped[UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True
+    )
+    next_number: Mapped[int] = mapped_column(Integer, default=1)
+
+    project: Mapped[Project] = relationship()
+
+
 class ProjectMember(Base):
     __tablename__ = "project_members"
 
@@ -142,6 +153,8 @@ class Task(Base):
     status_id: Mapped[UUID] = mapped_column(index=True)
     title: Mapped[str] = mapped_column(String(300))
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    slug: Mapped[str] = mapped_column(String(80))
+    sequence_number: Mapped[int] = mapped_column(Integer)
     created_by: Mapped[UUID] = mapped_column()
     reporter_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
     assignee_id: Mapped[UUID | None] = mapped_column(
@@ -171,6 +184,8 @@ class Task(Base):
             ondelete="RESTRICT",
             name="fk_tasks_project_status_same_project",
         ),
+        UniqueConstraint("project_id", "slug", name="uq_tasks_project_slug"),
+        UniqueConstraint("project_id", "sequence_number", name="uq_tasks_project_sequence"),
     )
 
 

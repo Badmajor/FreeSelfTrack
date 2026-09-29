@@ -134,6 +134,14 @@ class UserSummary(BaseModel):
     email: EmailStr
 
 
+class AssigneeSummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    first_name: str
+    last_name: str
+
+
 class TaskCreate(BaseModel):
     title: str = Field(min_length=1, max_length=300)
     description: str | None = None
@@ -156,11 +164,13 @@ class TaskResponse(BaseModel):
     id: UUID
     project_id: UUID
     status_id: UUID
+    slug: str
     title: str
     description: str | None
     created_by: UUID
     reporter_id: UUID
     assignee_id: UUID | None
+    assignee: AssigneeSummary | None
     watchers: list[UserSummary] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
