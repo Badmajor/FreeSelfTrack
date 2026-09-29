@@ -252,3 +252,13 @@ export async function getUnreadNotificationCount(): Promise<number> {
 export async function openNotification(notificationId: string): Promise<Notification> {
   return request<Notification>(`/notifications/${notificationId}/open`, { method: "POST" });
 }
+
+export function listOrganizationMembers(organizationId: string): Promise<AuthUser[]> {
+  return request<AuthUser[]>(`/organizations/${organizationId}/members`);
+}
+
+export function addOrganizationMember(organizationId: string, email: string): Promise<AuthUser> {
+  return request<AuthUser>(`/organizations/${organizationId}/members`, {
+    method: "POST", body: JSON.stringify({ email }),
+  });
+}

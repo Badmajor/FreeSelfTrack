@@ -36,6 +36,13 @@ describe("App workspace", () => {
     expect(screen.getByLabelText("Organization")).toHaveValue("organization-1");
     expect(screen.getByLabelText("Project")).toHaveValue("project-1");
 
+    expect(screen.queryByRole("button", { name: "Add member" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Members" }));
+    expect(await screen.findByRole("heading", { name: "Members" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Project")).toHaveValue("project-1");
+    await userEvent.click(screen.getByRole("button", { name: "Back to workspace" }));
+    expect(screen.getByLabelText("Organization")).toHaveValue("organization-1");
+    expect(screen.getByLabelText("Project")).toHaveValue("project-1");
     await userEvent.click(screen.getByRole("button", { name: "Open Kanban" }));
     expect(await screen.findByRole("region", { name: "Product Kanban" })).toBeInTheDocument();
     expect(screen.getByText("First task")).toBeInTheDocument();

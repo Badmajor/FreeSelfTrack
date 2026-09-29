@@ -2,26 +2,23 @@ import { FormEvent, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
-  addProjectMember,
   createOrganization,
   createProject,
   getMyProfile,
   deleteProject,
   listOrganizations,
   listNotifications,
-  listProjectMembers,
   listProjects,
   getUnreadNotificationCount,
   openNotification,
   login,
   register,
   updateMyProfile,
-  removeProjectMember,
-  transferProjectOwnership,
   type AuthUser,
   type Organization,
   type Project,
 } from "./api";
+import { MembersPage } from "./MembersPage";
 import { KanbanView } from "./KanbanView";
 
 type Mode = "login" | "register";
@@ -185,11 +182,8 @@ type WorkspaceProps = {
 function Workspace({ user, onSignOut, onOpenProfile }: WorkspaceProps) {
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
-  const [members, setMembers] = useState<AuthUser[]>([]);
   const [organizationId, setOrganizationId] = useState("");
   const [projectId, setProjectId] = useState("");
-  const [memberEmail, setMemberEmail] = useState("");
-  const [transferEmail, setTransferEmail] = useState("");
   const [organizationName, setOrganizationName] = useState("");
   const [projectName, setProjectName] = useState("");
   const [showOrganizationForm, setShowOrganizationForm] = useState(false);
@@ -198,6 +192,8 @@ function Workspace({ user, onSignOut, onOpenProfile }: WorkspaceProps) {
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
   const [kanbanOpen, setKanbanOpen] = useState(false);
+  const [membersOpen, setMembersOpen] = useState(false);
+  const [projectsLoading, setProjectsLoading] = useState(false);
 
   const project = projects.find((item) => item.id === projectId) ?? null;
   const isOwner = project?.owner_id === user.id;
@@ -207,21 +203,20 @@ function Workspace({ user, onSignOut, onOpenProfile }: WorkspaceProps) {
   }, []);
 
   useEffect(() => {
-    if (!organizationId) {
-      setProjects([]);
-      setProjectId("");
-      return;
-    }
-    void loadProjects(organizationId);
+    let active = true;
+    setProjects([]);
+    if (!organizationId) { setProjectId(""); setProjectsLoading(false); return; }
+    setProjectsLoading(true);
+    setError("");
+    void listProjects(organizationId).then((result) => {
+      if (!active) return;
+      setProjects(result);
+      setProjectId((current) => result.some((item) => item.id === current) ? current : result[0]?.id ?? "");
+    }).catch((requestError) => { if (active) setError(messageFor(requestError)); })
+      .finally(() => { if (active) setProjectsLoading(false); });
+    return () => { active = false; };
   }, [organizationId]);
 
-  useEffect(() => {
-    if (projectId) {
-      void loadMembers(projectId);
-    } else {
-      setMembers([]);
-    }
-  }, [projectId]);
   useEffect(() => { setKanbanOpen(false); }, [projectId]);
 
   async function loadOrganizations() {
@@ -235,26 +230,6 @@ function Workspace({ user, onSignOut, onOpenProfile }: WorkspaceProps) {
       setError(messageFor(requestError));
     } finally {
       setLoading(false);
-    }
-  }
-
-  async function loadProjects(id: string) {
-    setError("");
-    try {
-      const result = await listProjects(id);
-      setProjects(result);
-      setProjectId((current) => result.some((item) => item.id === current) ? current : result[0]?.id ?? "");
-    } catch (requestError) {
-      setError(messageFor(requestError));
-    }
-  }
-
-  async function loadMembers(id: string) {
-    setError("");
-    try {
-      setMembers(await listProjectMembers(id));
-    } catch (requestError) {
-      setError(messageFor(requestError));
     }
   }
 
@@ -282,34 +257,6 @@ function Workspace({ user, onSignOut, onOpenProfile }: WorkspaceProps) {
     });
   }
 
-  async function handleAddMember(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!projectId || !memberEmail.trim()) return;
-    await perform(async () => {
-      await addProjectMember(projectId, memberEmail);
-      setMemberEmail("");
-      await loadMembers(projectId);
-    });
-  }
-
-  async function handleRemoveMember(memberId: string) {
-    if (!projectId) return;
-    await perform(async () => {
-      await removeProjectMember(projectId, memberId);
-      await loadMembers(projectId);
-    });
-  }
-
-  async function handleTransferOwnership(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!projectId || !transferEmail.trim()) return;
-    await perform(async () => {
-      const updated = await transferProjectOwnership(projectId, transferEmail);
-      setProjects((current) => current.map((item) => item.id === updated.id ? updated : item));
-      setTransferEmail("");
-    });
-  }
-
   async function handleDeleteProject() {
     if (!project || !window.confirm(`Delete project "${project.name}"? Its data will be kept as deleted.`)) return;
     await perform(async () => {
@@ -332,16 +279,32 @@ function Workspace({ user, onSignOut, onOpenProfile }: WorkspaceProps) {
     }
   }
 
+  function changeOrganization(id: string) {
+    setOrganizationId(id);
+    setProjectId("");
+    setProjects([]);
+  }
+
+  if (membersOpen) return <MembersPage
+    user={user} organizations={organizations} projects={projects}
+    organizationId={organizationId} projectId={projectId}
+    onOrganizationChange={changeOrganization} onProjectChange={setProjectId}
+    loading={loading || projectsLoading} error={error}
+    onClose={() => setMembersOpen(false)}
+    onProjectUpdated={(updated) => setProjects((current) => current.map((item) => item.id === updated.id ? updated : item))}
+  />;
+
   return (
     <main className="workspace-shell">
       <header className="workspace-header">
         <div>
           <div className="eyebrow">FreeSelfTrack workspace</div>
-          <h1>Projects and members</h1>
+          <h1>Projects</h1>
           <p className="muted">{user.email}</p>
         </div>
         <div className="workspace-actions">
           <NotificationCenter />
+          <button className="button secondary compact" type="button" onClick={() => setMembersOpen(true)}>Members</button>
           <button className="button secondary compact" type="button" onClick={onOpenProfile}>Profile</button>
           <button className="button secondary compact" type="button" onClick={onSignOut}>Sign out</button>
         </div>
@@ -352,7 +315,7 @@ function Workspace({ user, onSignOut, onOpenProfile }: WorkspaceProps) {
         <div className="workspace-grid">
           <aside className="workspace-sidebar" aria-label="Projects navigation">
             <label htmlFor="organization">Organization</label>
-            <select id="organization" value={organizationId} onChange={(event) => setOrganizationId(event.target.value)}>
+            <select id="organization" value={organizationId} onChange={(event) => changeOrganization(event.target.value)}>
               <option value="">No organizations</option>
               {organizations.map((organization) => <option key={organization.id} value={organization.id}>{organization.name}</option>)}
             </select>
@@ -376,24 +339,14 @@ function Workspace({ user, onSignOut, onOpenProfile }: WorkspaceProps) {
           </aside>
 
           <section className="workspace-content" aria-labelledby="members-title">
-            {!project ? <div className="empty-state"><h2>No project selected</h2><p className="muted">Choose an organization and project to manage members.</p></div> : (
+            {!project ? <div className="empty-state"><h2>No project selected</h2><p className="muted">Choose an organization and project.</p></div> : (
               <>
                 <div className="content-heading">
                   <div><div className="eyebrow">Project</div><h2 id="members-title">{project.name}</h2></div>
                   {isOwner && <button className="button danger compact" type="button" onClick={() => void handleDeleteProject()} disabled={working}>Delete project</button>}
                 </div>
                 <button className="button compact" type="button" onClick={() => setKanbanOpen(true)}>Open Kanban</button>
-                {kanbanOpen ? <KanbanView project={project} currentUser={user} onClose={() => setKanbanOpen(false)} /> : <>
-                <div className="member-list">
-                  <div className="section-heading"><h3>Members</h3><span>{members.length}</span></div>
-                  {members.map((member) => <div className="member-row" key={member.id}><span>{member.email}</span>{member.id === project.owner_id ? <span className="role">Owner</span> : isOwner ? <button className="link-button" type="button" onClick={() => void handleRemoveMember(member.id)} disabled={working}>Remove</button> : null}</div>)}
-                  {!members.length && <p className="muted">No members found.</p>}
-                </div>
-                {isOwner && <div className="forms-row">
-                  <form onSubmit={handleAddMember}><h3>Add member</h3><label htmlFor="member-email">Email</label><input id="member-email" type="email" value={memberEmail} onChange={(event) => setMemberEmail(event.target.value)} required /><button className="button" type="submit" disabled={working}>Add member</button></form>
-                  <form onSubmit={handleTransferOwnership}><h3>Transfer ownership</h3><label htmlFor="transfer-email">Member email</label><input id="transfer-email" type="email" value={transferEmail} onChange={(event) => setTransferEmail(event.target.value)} required /><button className="button secondary" type="submit" disabled={working}>Transfer</button></form>
-                </div>}
-                </>}
+                {kanbanOpen && <KanbanView project={project} currentUser={user} onClose={() => setKanbanOpen(false)} />}
               </>
             )}
           </section>

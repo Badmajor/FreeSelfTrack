@@ -780,3 +780,44 @@ async def test_task_participant_permission_matrix_and_organization_isolation(
     assert foreign_watcher.status_code == 422
     foreign_task_access = await client.get(f"/api/tasks/{task_id}", headers=foreign_headers)
     assert foreign_task_access.status_code == 404
+
+
+async def test_member_addition_validation_profiles_and_project_idempotency(
+    client: AsyncClient, user_ids: tuple[UUID, UUID]
+) -> None:
+    headers = await authenticate(client, user_ids[0])
+    outsider_headers = await authenticate(client, user_ids[1])
+    email = f"{user_ids[1]}@example.com"
+    organization = await create_organization(client, headers, "Members test")
+    project = await create_project(client, headers, organization["id"], "Members project")
+    org_url = f"/api/organizations/{organization['id']}/members"
+    project_url = f"/api/projects/{project['id']}/members"
+
+    for url in (org_url, project_url):
+        denied = await client.get(url, headers=outsider_headers)
+        assert denied.status_code == 404
+        anonymous = await client.post(url, json={"email": email})
+        assert anonymous.status_code == 401
+        invalid = await client.post(url, json={"email": "invalid"}, headers=headers)
+        assert invalid.status_code == 422
+        missing = await client.post(url, json={"email": "missing@example.com"}, headers=headers)
+        assert missing.status_code == 404
+
+    foreign = await client.post(project_url, json={"email": email}, headers=headers)
+    assert foreign.status_code == 409
+    added = await client.post(org_url, json={"email": email}, headers=headers)
+    assert added.status_code == 200
+    assert added.json()["profile"]["first_name"] == "Test"
+    assert added.json()["profile"]["last_name"] == "User"
+    assert "password_hash" not in added.json()
+    member_id = added.json()["id"]
+    before = await client.get(project_url, headers=headers)
+    assert member_id not in {item["id"] for item in before.json()}
+    for _ in range(2):
+        result = await client.post(project_url, json={"email": email}, headers=headers)
+        assert result.status_code == 200
+        assert result.json()["id"] == member_id
+    for url in (org_url, project_url):
+        result = await client.get(url, headers=headers)
+        assert sum(item["id"] == member_id for item in result.json()) == 1
+        assert all(item["profile"]["first_name"] == "Test" for item in result.json())

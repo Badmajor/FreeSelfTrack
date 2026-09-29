@@ -414,3 +414,12 @@ select {
 .watcher { padding: 5px 8px; border: 1px solid #d9e2ec; border-radius: 4px; color: #334e68; background: #f5f7fa; font-size: .78rem; }
 .kanban-column-header[draggable="true"] { cursor: grab; user-select: none; }
 .kanban-column-header[draggable="true"]:active { cursor: grabbing; }
+
+.members-context { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; max-width: 760px; margin-bottom: 24px; }
+.members-content { border-top: 1px solid #d9e2ec; padding-top: 20px; }
+.members-directory { list-style: none; padding: 0; max-width: 760px; }
+.member-add-form { max-width: 440px; margin-top: 24px; }
+.member-add-form .button { margin-top: 12px; }
+
+.members-context label { display: block; margin-bottom: 8px; }
+.members-context select { width: 100%; }

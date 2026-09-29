@@ -36,7 +36,7 @@ describe("authentication form", () => {
     await user.type(screen.getByLabelText("Password"), "password123");
     await user.click(screen.getByRole("button", { name: "Sign in" }));
 
-    expect(await screen.findByRole("heading", { name: "Projects and members" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Projects" })).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/auth/login",
       expect.objectContaining({ method: "POST", body: JSON.stringify({ email: "new@example.com", password: "password123" }) }),
