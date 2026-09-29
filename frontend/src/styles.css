@@ -412,3 +412,5 @@ select {
 
 .watcher-list { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 12px; }
 .watcher { padding: 5px 8px; border: 1px solid #d9e2ec; border-radius: 4px; color: #334e68; background: #f5f7fa; font-size: .78rem; }
+.column-drop-start, .column-drop-end { flex: 0 0 24px; min-height: 220px; border: 2px dashed transparent; border-radius: 6px; }
+.column-drop-start:hover, .column-drop-end:hover { border-color: #2c7a7b; background: rgba(44, 122, 123, .08); }

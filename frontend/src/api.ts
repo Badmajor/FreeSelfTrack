@@ -169,6 +169,13 @@ export async function createStatus(projectId: string, name: string): Promise<Sta
 }
 
 export type BoardColumn = { status: Status; tasks: Task[]; next_cursor: string | null };
+
+export async function reorderStatuses(projectId: string, statusIds: string[]): Promise<Status[]> {
+  return request<Status[]>("/projects/" + projectId + "/statuses/reorder", {
+    method: "POST",
+    body: JSON.stringify({ status_ids: statusIds }),
+  });
+}
 export type Board = { project_id: string; columns: BoardColumn[] };
 export type TaskPage = { tasks: Task[]; next_cursor: string | null };
 export type TaskHistoryEntry = { id: string; task_id: string; changed_by: string; actor: Profile; from_status_id?: string | null; to_status_id?: string | null; event_type: string; field_name?: string | null; old_value?: string | null; new_value?: string | null; created_at: string };

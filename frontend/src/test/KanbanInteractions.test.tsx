@@ -187,4 +187,55 @@ describe("Kanban interactions", () => {
     await screen.findByRole("heading", { name: "Backlog" });
     expect(screen.queryByRole("button", { name: "Add column" })).not.toBeInTheDocument();
   });
+  it("reorders columns for the project owner", async () => {
+    const reorderedBoard = { ...board, columns: [board.columns[1], board.columns[0]] };
+    let boardRequests = 0;
+    const fetchMock = vi.fn((input: string | URL | Request, options?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/board?")) {
+        boardRequests += 1;
+        return response(boardRequests === 1 ? board : reorderedBoard);
+      }
+      if (url === "/api/projects/project-1/statuses/reorder" && options?.method === "POST") return response([reorderedBoard.columns[0].status, reorderedBoard.columns[1].status]);
+      return response([]);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderView();
+    await screen.findByRole("heading", { name: "Backlog" });
+
+    const backlogHeader = screen.getByRole("heading", { name: "Backlog" }).parentElement?.parentElement as HTMLElement;
+    fireEvent.dragStart(backlogHeader);
+    fireEvent.drop(screen.getByLabelText("Move column to end"));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/projects/project-1/statuses/reorder",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ status_ids: ["status-done", "status-backlog"] }) }),
+    ));
+    await waitFor(() => expect(screen.getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent)).toEqual(["Done", "Backlog"]));
+  });
+
+  it("rolls back column order when reorder fails and hides controls for members", async () => {
+    const fetchMock = vi.fn((input: string | URL | Request, options?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/board?")) return response(board);
+      if (url.includes("/statuses/reorder") && options?.method === "POST") return response({ detail: "Only the project owner can manage statuses" }, 403);
+      return response([]);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderView();
+    await screen.findByRole("heading", { name: "Backlog" });
+    const backlogHeader = screen.getByRole("heading", { name: "Backlog" }).parentElement?.parentElement as HTMLElement;
+    fireEvent.dragStart(backlogHeader);
+    fireEvent.drop(screen.getByLabelText("Move column to end"));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Only the project owner can manage statuses");
+    await waitFor(() => expect(screen.getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent)).toEqual(["Backlog", "Done"]));
+
+    cleanup();
+    vi.stubGlobal("fetch", vi.fn().mockReturnValue(response(board)));
+    renderView({ id: "member-1", email: "member.com" });
+    await screen.findByRole("heading", { name: "Backlog" });
+    const memberHeader = screen.getByRole("heading", { name: "Backlog" }).parentElement?.parentElement as HTMLElement;
+    expect(memberHeader).not.toHaveAttribute("draggable", "true");
+  });
 });

@@ -148,6 +148,69 @@ async def test_statuses_are_returned_in_workflow_order(
     ]
 
 
+async def test_status_reorder_permissions_validation_and_task_integrity(
+    client: AsyncClient, user_ids: tuple[UUID, UUID]
+) -> None:
+    owner_headers = await authenticate(client, user_ids[0])
+    member_headers = await authenticate(client, user_ids[1])
+    outsider_headers = await authenticate(client, UUID(int=3))
+    organization = await create_organization(client, owner_headers, "Acme")
+    project = await create_project(client, owner_headers, organization["id"], "Tracker")
+    await client.post(
+        f"/api/organizations/{organization['id']}/members",
+        json={"email": f"{user_ids[1]}@example.com"},
+        headers=owner_headers,
+    )
+    await client.post(
+        f"/api/projects/{project['id']}/members",
+        json={"email": f"{user_ids[1]}@example.com"},
+        headers=owner_headers,
+    )
+    statuses_response = await client.get(
+        f"/api/projects/{project['id']}/statuses", headers=owner_headers
+    )
+    statuses = statuses_response.json()
+    task_response = await client.post(
+        f"/api/projects/{project['id']}/tasks",
+        json={"title": "Stable task", "status_id": statuses[0]["id"]},
+        headers=owner_headers,
+    )
+    assert task_response.status_code == 201
+    task_id = task_response.json()["id"]
+
+    reordered = await client.post(
+        f"/api/projects/{project['id']}/statuses/reorder",
+        json={"status_ids": [item["id"] for item in reversed(statuses)]},
+        headers=owner_headers,
+    )
+    assert reordered.status_code == 200
+    assert [item["id"] for item in reordered.json()] == [item["id"] for item in reversed(statuses)]
+    assert [item["position"] for item in reordered.json()] == list(range(len(statuses)))
+
+    unchanged_task = await client.get(f"/api/tasks/{task_id}", headers=owner_headers)
+    assert unchanged_task.json()["status_id"] == statuses[0]["id"]
+
+    member_attempt = await client.post(
+        f"/api/projects/{project['id']}/statuses/reorder",
+        json={"status_ids": [item["id"] for item in statuses]},
+        headers=member_headers,
+    )
+    assert member_attempt.status_code == 403
+    outsider_attempt = await client.post(
+        f"/api/projects/{project['id']}/statuses/reorder",
+        json={"status_ids": [item["id"] for item in statuses]},
+        headers=outsider_headers,
+    )
+    assert outsider_attempt.status_code == 404
+
+    invalid = await client.post(
+        f"/api/projects/{project['id']}/statuses/reorder",
+        json={"status_ids": [statuses[0]["id"], statuses[0]["id"]]},
+        headers=owner_headers,
+    )
+    assert invalid.status_code == 422
+
+
 async def test_cross_project_status_is_rejected(
     client: AsyncClient, user_ids: tuple[UUID, UUID]
 ) -> None:

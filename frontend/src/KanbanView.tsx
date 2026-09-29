@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   addTaskWatcher,
   createStatus,
+  reorderStatuses,
   createTask,
   getBoard,
   getColumnTasks,
@@ -34,6 +35,7 @@ export function KanbanView({ project, currentUser, onClose }: Props) {
   const [widths, setWidths] = useState<Record<string, number>>(() => readWidths(project.id));
   const [error, setError] = useState("");
   const [creatingColumn, setCreatingColumn] = useState(false);
+  const [draggedColumnId, setDraggedColumnId] = useState<string | null>(null);
   const canManageColumns = currentUser.id === project.owner_id;
 
   useEffect(() => { if (board.data) setColumns(board.data.columns.map((column) => ({ ...column, loadingMore: false, error: "" }))); }, [board.data]);
@@ -48,6 +50,24 @@ export function KanbanView({ project, currentUser, onClose }: Props) {
   function changeStatus(task: Task, statusId: string) {
     if (task.status_id === statusId || update.isPending) return;
     update.mutate({ taskId: task.id, statusId });
+  }
+
+  const reorder = useMutation({ mutationFn: (statusIds: string[]) => reorderStatuses(project.id, statusIds) });
+
+  function moveColumn(sourceId: string, targetId: string | null, placement: "before" | "after" | "start" | "end" = "after") {
+    if (reorder.isPending || sourceId === targetId) return;
+    const previous = columns;
+    const sourceIndex = previous.findIndex((column) => column.status.id === sourceId);
+    if (sourceIndex < 0) return;
+    const next = previous.filter((column) => column.status.id !== sourceId);
+    const targetIndex = targetId === null ? next.length : next.findIndex((column) => column.status.id === targetId);
+    const insertIndex = placement === "start" ? 0 : placement === "end" || targetId === null ? next.length : targetIndex + (placement === "after" ? 1 : 0);
+    next.splice(insertIndex, 0, previous[sourceIndex]);
+    setColumns(next);
+    reorder.mutate(next.map((column) => column.status.id), {
+      onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["board", project.id] }),
+      onError: (requestError) => { setColumns(previous); setError(messageFor(requestError)); },
+    });
   }
 
   async function loadMore(column: ColumnState) {
@@ -69,7 +89,8 @@ export function KanbanView({ project, currentUser, onClose }: Props) {
     <div className="kanban-heading"><div><div className="eyebrow">Project board</div><h2>{project.name}</h2></div><div className="kanban-actions">{canManageColumns && <button className="button compact" type="button" onClick={() => setCreatingColumn((value) => !value)}>{creatingColumn ? "Cancel" : "Add column"}</button>}<button className="button secondary compact" type="button" onClick={onClose}>Back to project</button></div></div>
     {creatingColumn && <CreateColumnForm projectId={project.id} onCreated={() => { setCreatingColumn(false); void queryClient.invalidateQueries({ queryKey: ["board", project.id] }); }} />}
     {error && <p className="error" role="alert">{error}</p>}
-    <div className="kanban-board">{columns.map((column) => <KanbanColumn key={column.status.id} column={column} width={widths[column.status.id] ?? DEFAULT_WIDTH} onWidthChange={(width) => setWidths((current) => ({ ...current, [column.status.id]: width }))} onCreate={async (title) => { await createTask(project.id, { title, description: null, status_id: column.status.id }); await queryClient.invalidateQueries({ queryKey: ["board", project.id] }); }} onTaskClick={(taskId, trigger) => { lastTriggerRef.current = trigger; setSelectedTaskId(taskId); }} onDragStart={setDraggedTask} onDrop={(statusId) => { if (draggedTask) changeStatus(draggedTask, statusId); setDraggedTask(null); }} onLoadMore={() => void loadMore(column)} />)}</div>
+    {canManageColumns && draggedColumnId && <div className="column-drop-start" aria-label="Move column to start" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); if (draggedColumnId) { moveColumn(draggedColumnId, null, "start"); setDraggedColumnId(null); } }} />}
+    <div className="kanban-board">{columns.map((column) => <KanbanColumn key={column.status.id} column={column} width={widths[column.status.id] ?? DEFAULT_WIDTH} onWidthChange={(width) => setWidths((current) => ({ ...current, [column.status.id]: width }))} canReorder={canManageColumns} isReordering={reorder.isPending} onColumnDragStart={(event) => { event.stopPropagation(); setDraggedColumnId(column.status.id); event.dataTransfer?.setData("application/x-kanban-column", column.status.id); }} onColumnDragEnd={() => setDraggedColumnId(null)} onColumnDrop={() => { if (draggedColumnId) { moveColumn(draggedColumnId, column.status.id, "after"); setDraggedColumnId(null); } }} onColumnKeyDown={(event) => { if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return; const index = columns.findIndex((item) => item.status.id === column.status.id); const target = columns[index + (event.key === "ArrowLeft" ? -1 : 1)]; if (target) { event.preventDefault(); moveColumn(column.status.id, target.status.id, event.key === "ArrowLeft" ? "before" : "after"); } }} onCreate={async (title) => { await createTask(project.id, { title, description: null, status_id: column.status.id }); await queryClient.invalidateQueries({ queryKey: ["board", project.id] }); }} onTaskClick={(taskId, trigger) => { lastTriggerRef.current = trigger; setSelectedTaskId(taskId); }} onDragStart={setDraggedTask} onDrop={(statusId) => { if (draggedTask) changeStatus(draggedTask, statusId); setDraggedTask(null); }} onLoadMore={() => void loadMore(column)} />)}</div>{canManageColumns && draggedColumnId && <div className="column-drop-end" aria-label="Move column to end" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); if (draggedColumnId) { moveColumn(draggedColumnId, null, "end"); setDraggedColumnId(null); } }} />}
     {activeTask && <TaskDrawer key={activeTask.id} task={activeTask} columns={columns} projectId={project.id} projectOwnerId={project.owner_id} currentUser={currentUser} onClose={() => { setSelectedTaskId(null); requestAnimationFrame(() => lastTriggerRef.current?.focus()); }} onSaved={(saved) => setColumns((current) => replaceTask(current, saved))} onStatusChange={changeStatus} />}
   </section>;
 }
@@ -104,8 +125,8 @@ function CreateColumnForm({ projectId, onCreated }: CreateColumnFormProps) {
   </form>;
 }
 
-type ColumnProps = { column: ColumnState; width: number; onWidthChange: (width: number) => void; onCreate: (title: string) => Promise<void>; onTaskClick: (taskId: string, trigger: HTMLElement) => void; onDragStart: (task: Task) => void; onDrop: (statusId: string) => void; onLoadMore: () => void };
-function KanbanColumn({ column, width, onWidthChange, onCreate, onTaskClick, onDragStart, onDrop, onLoadMore }: ColumnProps) {
+type ColumnProps = { column: ColumnState; width: number; canReorder: boolean; isReordering: boolean; onColumnDragStart: (event: React.DragEvent<HTMLElement>) => void; onColumnDragEnd: () => void; onColumnDrop: () => void; onColumnKeyDown: (event: ReactKeyboardEvent<HTMLElement>) => void; onWidthChange: (width: number) => void; onCreate: (title: string) => Promise<void>; onTaskClick: (taskId: string, trigger: HTMLElement) => void; onDragStart: (task: Task) => void; onDrop: (statusId: string) => void; onLoadMore: () => void };
+function KanbanColumn({ column, width, canReorder, isReordering, onColumnDragStart, onColumnDragEnd, onColumnDrop, onColumnKeyDown, onWidthChange, onCreate, onTaskClick, onDragStart, onDrop, onLoadMore }: ColumnProps) {
   const [creating, setCreating] = useState(false); const [title, setTitle] = useState(""); const [createError, setCreateError] = useState("");
   async function submit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); if (!title.trim()) return; try { await onCreate(title.trim()); setTitle(""); setCreating(false); } catch (error) { setCreateError(messageFor(error)); } }
   const resizeStart = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -124,7 +145,7 @@ function KanbanColumn({ column, width, onWidthChange, onCreate, onTaskClick, onD
     }
   };
   return <section className="kanban-column" style={{ width }} onDragOver={(event) => event.preventDefault()} onDrop={() => onDrop(column.status.id)} aria-labelledby={`status-${column.status.id}`}>
-    <header className="kanban-column-header"><div><h3 id={`status-${column.status.id}`}>{column.status.name}</h3><span>{column.tasks.length}</span></div><div className="resize-handle" role="separator" aria-orientation="vertical" aria-label={`Resize ${column.status.name} column`} aria-valuemin={220} aria-valuemax={520} aria-valuenow={width} tabIndex={0} onPointerDown={resizeStart} onKeyDown={resizeKeyDown} /></header>
+    <header className="kanban-column-header" draggable={canReorder && !isReordering} tabIndex={canReorder ? 0 : undefined} aria-label={"Reorder " + column.status.name + " column"} onKeyDown={onColumnKeyDown} onDragStart={onColumnDragStart} onDragEnd={onColumnDragEnd} onDragOver={(event) => { if (canReorder) event.preventDefault(); }} onDrop={(event) => { event.preventDefault(); event.stopPropagation(); onColumnDrop(); }}><div><h3 id={`status-${column.status.id}`}>{column.status.name}</h3><span>{column.tasks.length}</span></div><div className="resize-handle" role="separator" aria-orientation="vertical" aria-label={`Resize ${column.status.name} column`} aria-valuemin={220} aria-valuemax={520} aria-valuenow={width} tabIndex={0} onPointerDown={resizeStart} onKeyDown={resizeKeyDown} /></header>
     <div className="task-list" onScroll={(event) => { const target = event.currentTarget; if (target.scrollTop + target.clientHeight >= target.scrollHeight - 24) onLoadMore(); }}>{column.tasks.map((task) => <TaskCard key={task.id} task={task} statusName={column.status.name} onClick={(trigger) => onTaskClick(task.id, trigger)} onDragStart={() => onDragStart(task)} />)}{!column.tasks.length && <p className="empty-state compact-empty">No tasks in this column.</p>}{column.loadingMore && <p className="muted">Loading more...</p>}{column.error && <p className="error" role="alert">{column.error}</p>}</div>
     <button className="button compact" type="button" onClick={() => setCreating((value) => !value)}>{creating ? "Cancel" : "Add task"}</button>{creating && <form className="create-task-form" onSubmit={(event) => void submit(event)}><label htmlFor={`new-task-${column.status.id}`}>Title</label><input id={`new-task-${column.status.id}`} value={title} onChange={(event) => setTitle(event.target.value)} required /><button className="button" type="submit">Create</button>{createError && <p className="error" role="alert">{createError}</p>}</form>}
   </section>;
