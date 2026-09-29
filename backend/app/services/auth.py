@@ -7,10 +7,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.models import User
+from app.models import User, UserProfile
 from app.repositories.domain import DomainRepository
-from app.schemas.domain import LoginRequest, RegisterRequest
-from app.services.errors import DuplicateEmailError, InvalidCredentialsError
+from app.schemas.domain import LoginRequest, ProfileResponse, ProfileUpdate, RegisterRequest
+from app.services.errors import DuplicateEmailError, InvalidCredentialsError, NotFoundError
 
 password_hash = PasswordHash.recommended()
 
@@ -29,7 +29,11 @@ class AuthService:
         if await self.repository.get_user_by_email(email) is not None:
             raise DuplicateEmailError("Email is already registered")
 
-        user = User(email=email, password_hash=password_hash.hash(data.password))
+        user = User(
+            email=email,
+            password_hash=password_hash.hash(data.password),
+            profile=UserProfile(first_name=data.first_name, last_name=data.last_name),
+        )
         self.session.add(user)
         try:
             await self.session.commit()
@@ -48,6 +52,21 @@ class AuthService:
         ):
             raise InvalidCredentialsError("Invalid email or password")
         return self.create_access_token(user.id), user
+
+    async def get_profile(self, user_id: UUID) -> ProfileResponse:
+        user = await self.repository.get_user(user_id)
+        if user is None or user.profile is None:
+            raise NotFoundError("User profile not found")
+        return ProfileResponse.model_validate(user.profile)
+
+    async def update_profile(self, user_id: UUID, data: ProfileUpdate) -> ProfileResponse:
+        user = await self.repository.get_user(user_id)
+        if user is None or user.profile is None:
+            raise NotFoundError("User profile not found")
+        user.profile.first_name = data.first_name
+        user.profile.last_name = data.last_name
+        await self.session.commit()
+        return ProfileResponse.model_validate(user.profile)
 
     @staticmethod
     def create_access_token(user_id: UUID) -> str:

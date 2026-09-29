@@ -5,6 +5,7 @@ import {
   addProjectMember,
   createOrganization,
   createProject,
+  getMyProfile,
   deleteProject,
   listOrganizations,
   listNotifications,
@@ -14,6 +15,7 @@ import {
   openNotification,
   login,
   register,
+  updateMyProfile,
   removeProjectMember,
   transferProjectOwnership,
   type AuthUser,
@@ -31,6 +33,9 @@ export function App() {
   const [mode, setMode] = useState<Mode>(savedToken ? "login" : "register");
   const [email, setEmail] = useState(savedUser ? JSON.parse(savedUser).email : "");
   const [password, setPassword] = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [profileOpen, setProfileOpen] = useState(false);
   const [user, setUser] = useState<AuthUser | null>(savedToken && savedUser ? JSON.parse(savedUser) : null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -44,7 +49,7 @@ export function App() {
 
     try {
       if (mode === "register") {
-        await register(email, password);
+        await register(email, password, firstName, lastName);
         setPassword("");
         setMode("login");
         setNotice("Account created. Sign in to continue.");
@@ -71,7 +76,10 @@ export function App() {
   }
 
   if (user) {
-    return <Workspace user={user} onSignOut={signOut} />;
+    if (profileOpen) {
+      return <ProfilePage user={user} onClose={() => setProfileOpen(false)} onSaved={(profile) => { const next = { ...user, profile }; setUser(next); localStorage.setItem("freeselftrack.user", JSON.stringify(next)); setProfileOpen(false); }} />;
+    }
+    return <Workspace user={user} onSignOut={signOut} onOpenProfile={() => setProfileOpen(true)} />;
   }
 
   return (
@@ -115,6 +123,13 @@ export function App() {
         </div>
 
         <form onSubmit={handleSubmit} noValidate>
+          {mode === "register" && <>
+            <label htmlFor="first-name">First name</label>
+            <input id="first-name" value={firstName} onChange={(event) => setFirstName(event.target.value)} required />
+            <label htmlFor="last-name">Last name</label>
+            <input id="last-name" value={lastName} onChange={(event) => setLastName(event.target.value)} required />
+          </>}
+
           <label htmlFor="email">Email</label>
           <input
             id="email"
@@ -151,12 +166,23 @@ export function App() {
   );
 }
 
+function ProfilePage({ user, onClose, onSaved }: { user: AuthUser; onClose: () => void; onSaved: (profile: NonNullable<AuthUser["profile"]>) => void }) {
+  const [firstName, setFirstName] = useState(user.profile?.first_name ?? "");
+  const [lastName, setLastName] = useState(user.profile?.last_name ?? "");
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  useEffect(() => { void getMyProfile().then((profile) => { setFirstName(profile.first_name); setLastName(profile.last_name); }).catch((requestError) => setError(messageFor(requestError))); }, []);
+  async function submit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); setSaving(true); setError(""); try { onSaved(await updateMyProfile(firstName, lastName)); } catch (requestError) { setError(messageFor(requestError)); } finally { setSaving(false); } }
+  return <main className="shell"><section className="workspace-panel" aria-labelledby="profile-title"><div className="workspace-header"><div><div className="eyebrow">Account</div><h1 id="profile-title">Profile</h1></div><button className="button secondary compact" type="button" onClick={onClose}>Back to workspace</button></div><form onSubmit={(event) => void submit(event)}><label htmlFor="profile-first-name">First name</label><input id="profile-first-name" value={firstName} onChange={(event) => setFirstName(event.target.value)} required /><label htmlFor="profile-last-name">Last name</label><input id="profile-last-name" value={lastName} onChange={(event) => setLastName(event.target.value)} required /><p className="muted">{user.email}</p>{error && <p className="error" role="alert">{error}</p>}<button className="button" type="submit" disabled={saving}>{saving ? "Saving..." : "Save profile"}</button></form></section></main>;
+}
+
 type WorkspaceProps = {
   user: AuthUser;
   onSignOut: () => void;
+  onOpenProfile: () => void;
 };
 
-function Workspace({ user, onSignOut }: WorkspaceProps) {
+function Workspace({ user, onSignOut, onOpenProfile }: WorkspaceProps) {
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [members, setMembers] = useState<AuthUser[]>([]);
@@ -316,6 +342,7 @@ function Workspace({ user, onSignOut }: WorkspaceProps) {
         </div>
         <div className="workspace-actions">
           <NotificationCenter />
+          <button className="button secondary compact" type="button" onClick={onOpenProfile}>Profile</button>
           <button className="button secondary compact" type="button" onClick={onSignOut}>Sign out</button>
         </div>
       </header>
