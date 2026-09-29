@@ -76,6 +76,51 @@ async def test_create_organization_project_status_and_task(
     assert response.json()["slug"] == "TRA-1"
 
 
+async def test_status_creation_requires_project_owner_and_valid_name(
+    client: AsyncClient, user_ids: tuple[UUID, UUID]
+) -> None:
+    owner_headers = await authenticate(client, user_ids[0])
+    member_headers = await authenticate(client, user_ids[1])
+    organization = await create_organization(client, owner_headers, "Acme")
+    project = await create_project(client, owner_headers, organization["id"], "Tracker")
+
+    add_org_member = await client.post(
+        f"/api/organizations/{organization['id']}/members",
+        json={"email": f"{user_ids[1]}@example.com"},
+        headers=owner_headers,
+    )
+    assert add_org_member.status_code == 200
+
+    add_member = await client.post(
+        f"/api/projects/{project['id']}/members",
+        json={"email": f"{user_ids[1]}@example.com"},
+        headers=owner_headers,
+    )
+    assert add_member.status_code == 200
+
+    member_attempt = await client.post(
+        f"/api/projects/{project['id']}/statuses",
+        json={"name": "Review"},
+        headers=member_headers,
+    )
+    assert member_attempt.status_code == 403
+
+    for invalid_name in ("   ", "x" * 121):
+        response = await client.post(
+            f"/api/projects/{project['id']}/statuses",
+            json={"name": invalid_name},
+            headers=owner_headers,
+        )
+        assert response.status_code == 422
+
+    outsider_attempt = await client.post(
+        f"/api/projects/{project['id']}/statuses",
+        json={"name": "Review"},
+        headers=await authenticate(client, UUID(int=3)),
+    )
+    assert outsider_attempt.status_code == 404
+
+
 async def test_statuses_are_returned_in_workflow_order(
     client: AsyncClient, user_ids: tuple[UUID, UUID]
 ) -> None:

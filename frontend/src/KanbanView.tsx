@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   addTaskWatcher,
+  createStatus,
   createTask,
   getBoard,
   getColumnTasks,
@@ -32,6 +33,8 @@ export function KanbanView({ project, currentUser, onClose }: Props) {
   const [draggedTask, setDraggedTask] = useState<Task | null>(null);
   const [widths, setWidths] = useState<Record<string, number>>(() => readWidths(project.id));
   const [error, setError] = useState("");
+  const [creatingColumn, setCreatingColumn] = useState(false);
+  const canManageColumns = currentUser.id === project.owner_id;
 
   useEffect(() => { if (board.data) setColumns(board.data.columns.map((column) => ({ ...column, loadingMore: false, error: "" }))); }, [board.data]);
   useEffect(() => { window.localStorage.setItem(widthKey(project.id), JSON.stringify(widths)); }, [project.id, widths]);
@@ -63,11 +66,42 @@ export function KanbanView({ project, currentUser, onClose }: Props) {
   if (board.isError) return <section className="kanban-shell"><p className="error" role="alert">{messageFor(board.error)}</p><button className="button secondary" type="button" onClick={() => void board.refetch()}>Retry</button></section>;
 
   return <section className="kanban-shell" aria-label={`${project.name} Kanban`}>
-    <div className="kanban-heading"><div><div className="eyebrow">Project board</div><h2>{project.name}</h2></div><button className="button secondary compact" type="button" onClick={onClose}>Back to project</button></div>
+    <div className="kanban-heading"><div><div className="eyebrow">Project board</div><h2>{project.name}</h2></div><div className="kanban-actions">{canManageColumns && <button className="button compact" type="button" onClick={() => setCreatingColumn((value) => !value)}>{creatingColumn ? "Cancel" : "Add column"}</button>}<button className="button secondary compact" type="button" onClick={onClose}>Back to project</button></div></div>
+    {creatingColumn && <CreateColumnForm projectId={project.id} onCreated={() => { setCreatingColumn(false); void queryClient.invalidateQueries({ queryKey: ["board", project.id] }); }} />}
     {error && <p className="error" role="alert">{error}</p>}
     <div className="kanban-board">{columns.map((column) => <KanbanColumn key={column.status.id} column={column} width={widths[column.status.id] ?? DEFAULT_WIDTH} onWidthChange={(width) => setWidths((current) => ({ ...current, [column.status.id]: width }))} onCreate={async (title) => { await createTask(project.id, { title, description: null, status_id: column.status.id }); await queryClient.invalidateQueries({ queryKey: ["board", project.id] }); }} onTaskClick={(taskId, trigger) => { lastTriggerRef.current = trigger; setSelectedTaskId(taskId); }} onDragStart={setDraggedTask} onDrop={(statusId) => { if (draggedTask) changeStatus(draggedTask, statusId); setDraggedTask(null); }} onLoadMore={() => void loadMore(column)} />)}</div>
     {activeTask && <TaskDrawer key={activeTask.id} task={activeTask} columns={columns} projectId={project.id} projectOwnerId={project.owner_id} currentUser={currentUser} onClose={() => { setSelectedTaskId(null); requestAnimationFrame(() => lastTriggerRef.current?.focus()); }} onSaved={(saved) => setColumns((current) => replaceTask(current, saved))} onStatusChange={changeStatus} />}
   </section>;
+}
+
+type CreateColumnFormProps = { projectId: string; onCreated: () => void };
+function CreateColumnForm({ projectId, onCreated }: CreateColumnFormProps) {
+  const [name, setName] = useState("");
+  const [error, setError] = useState("");
+  const create = useMutation({
+    mutationFn: () => createStatus(projectId, name.trim()),
+    onSuccess: onCreated,
+    onError: (requestError) => setError(messageFor(requestError)),
+  });
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      setError("Column name is required");
+      return;
+    }
+    if (trimmedName.length > 120) {
+      setError("Column name must be 120 characters or fewer");
+      return;
+    }
+    setError("");
+    create.mutate();
+  };
+  return <form className="create-column-form" onSubmit={submit} aria-label="Add column form">
+    <label htmlFor="new-column-name">Column name</label>
+    <div className="create-column-controls"><input id="new-column-name" maxLength={120} value={name} onChange={(event) => { setName(event.target.value); if (error) setError(""); }} disabled={create.isPending} autoFocus /><button className="button compact" type="submit" disabled={create.isPending}>{create.isPending ? "Creating..." : "Create"}</button></div>
+    {error && <p className="error" role="alert">{error}</p>}
+  </form>;
 }
 
 type ColumnProps = { column: ColumnState; width: number; onWidthChange: (width: number) => void; onCreate: (title: string) => Promise<void>; onTaskClick: (taskId: string, trigger: HTMLElement) => void; onDragStart: (task: Task) => void; onDrop: (statusId: string) => void; onLoadMore: () => void };

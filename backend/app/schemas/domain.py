@@ -106,11 +106,29 @@ class StatusCreate(BaseModel):
     position: int | None = Field(default=None, ge=0)
     is_active: bool = True
 
+    @field_validator("name")
+    @classmethod
+    def name_must_not_be_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Status name must not be blank")
+        return value
+
 
 class StatusUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     position: int | None = Field(default=None, ge=0)
     is_active: bool | None = None
+
+    @field_validator("name")
+    @classmethod
+    def name_must_not_be_blank(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("Status name must not be blank")
+        return value
 
 
 class StatusResponse(BaseModel):

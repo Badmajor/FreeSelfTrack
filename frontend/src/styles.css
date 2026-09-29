@@ -374,6 +374,11 @@ select {
 .content-actions { display: flex; gap: 10px; align-items: center; }
 .kanban-shell { position: relative; margin-top: 22px; }
 .kanban-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+.kanban-actions { display: flex; align-items: center; gap: 10px; }
+.create-column-form { display: grid; gap: 8px; margin-bottom: 18px; padding: 14px; border: 1px solid #d9e2ec; border-radius: 6px; background: #fff; }
+.create-column-controls { display: flex; align-items: center; gap: 10px; }
+.create-column-controls input { min-height: 40px; }
+.create-column-controls .button { flex: 0 0 auto; }
 .kanban-heading h2 { margin: 6px 0; color: #102a43; }
 .kanban-board { display: flex; align-items: flex-start; gap: 14px; overflow-x: auto; padding-bottom: 16px; }
 .kanban-column { position: relative; flex: 0 0 auto; min-width: 220px; max-width: 520px; padding: 12px; border: 1px solid #d9e2ec; border-radius: 6px; background: #f5f7fa; }

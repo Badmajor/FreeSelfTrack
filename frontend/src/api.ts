@@ -161,6 +161,13 @@ export type Task = {
 
 export type Status = { id: string; project_id: string; name: string; position: number; is_active: boolean };
 
+export async function createStatus(projectId: string, name: string): Promise<Status> {
+  return request<Status>("/projects/" + projectId + "/statuses", {
+    method: "POST",
+    body: JSON.stringify({ name }),
+  });
+}
+
 export type BoardColumn = { status: Status; tasks: Task[]; next_cursor: string | null };
 export type Board = { project_id: string; columns: BoardColumn[] };
 export type TaskPage = { tasks: Task[]; next_cursor: string | null };

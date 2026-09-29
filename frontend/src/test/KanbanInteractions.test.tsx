@@ -130,4 +130,61 @@ describe("Kanban interactions", () => {
     expect(await screen.findByLabelText("Assignee")).toBeDisabled();
     expect(screen.getByLabelText("Reporter")).toBeDisabled();
   });
+  it("allows the project owner to create a column and refreshes the board", async () => {
+    const createdStatus = { id: "status-review", project_id: project.id, name: "Review", position: 2, is_active: true };
+    const updatedBoard = { ...board, columns: [...board.columns, { status: createdStatus, tasks: [], next_cursor: null }] };
+    let boardRequests = 0;
+    const fetchMock = vi.fn((input: string | URL | Request, options?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/board?")) {
+        boardRequests += 1;
+        return response(boardRequests === 1 ? board : updatedBoard);
+      }
+      if (url === "/api/projects/project-1/statuses" && options?.method === "POST") return response(createdStatus, 201);
+      return response([]);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderView();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Add column" }));
+    await userEvent.type(screen.getByLabelText("Column name"), "  Review  ");
+    await userEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/projects/project-1/statuses",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ name: "Review" }) }),
+    ));
+    expect(await screen.findByRole("heading", { name: "Review" })).toBeInTheDocument();
+    expect(screen.queryByRole("form", { name: "Add column form" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the column name when creation fails and prevents blank submissions", async () => {
+    const fetchMock = vi.fn((input: string | URL | Request, options?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/board?")) return response(board);
+      if (url === "/api/projects/project-1/statuses" && options?.method === "POST") return response({ detail: "Only the project owner can manage statuses" }, 403);
+      return response([]);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderView();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Add column" }));
+    const input = screen.getByLabelText("Column name");
+    await userEvent.click(screen.getByRole("button", { name: "Create" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Column name is required");
+    expect(fetchMock).not.toHaveBeenCalledWith("/api/projects/project-1/statuses", expect.anything());
+
+    await userEvent.type(input, "Review");
+    await userEvent.click(screen.getByRole("button", { name: "Create" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Only the project owner can manage statuses");
+    expect(screen.getByLabelText("Column name")).toHaveValue("Review");
+  });
+
+  it("does not expose column creation to project members", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockReturnValue(response(board)));
+    renderView({ id: "member-1", email: "member.com" });
+
+    await screen.findByRole("heading", { name: "Backlog" });
+    expect(screen.queryByRole("button", { name: "Add column" })).not.toBeInTheDocument();
+  });
 });
