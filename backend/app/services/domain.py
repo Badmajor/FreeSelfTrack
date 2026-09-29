@@ -1,14 +1,24 @@
 import binascii
 import json
+import re
 from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.cursor import decode_cursor, encode_cursor
-from app.models import Organization, Project, ProjectStatus, Task, TaskHistory, User
+from app.models import (
+    Organization,
+    Project,
+    ProjectStatus,
+    ProjectTaskSequence,
+    Task,
+    TaskHistory,
+    User,
+)
 from app.repositories.domain import DomainRepository
 from app.schemas.domain import (
+    AssigneeSummary,
     BoardColumnResponse,
     BoardResponse,
     ConfirmRequest,
@@ -40,6 +50,17 @@ from app.services.errors import (
 )
 
 DEFAULT_STATUSES = ("Backlog", "In Progress", "Done")
+
+
+def project_slug_prefix(name: str) -> str:
+    words = re.findall(r"[^\W_]+", name, flags=re.UNICODE)
+    if len(words) > 1:
+        prefix = "".join(word[0] for word in words)
+    elif words:
+        prefix = words[0][:3]
+    else:
+        prefix = "TASK"
+    return prefix.upper()[:40] or "TASK"
 
 
 def normalized_email(email: str) -> str:
@@ -83,6 +104,7 @@ class DomainService:
         )
         self.session.add(project)
         await self.session.flush()
+        self.session.add(ProjectTaskSequence(project_id=project.id, next_number=1))
         await self.repository.add_project_member(project.id, user_id)
         for position, name in enumerate(DEFAULT_STATUSES):
             self.session.add(ProjectStatus(project_id=project.id, name=name, position=position))
@@ -343,6 +365,12 @@ class DomainService:
         ):
             raise InvalidWorkflowError("Task status must be an active status of the task project")
         reporter_id = data.reporter_id or user_id
+        sequence = await self.repository.get_project_task_sequence(project_id)
+        if sequence is None:
+            raise ConflictError("Project task sequence is not initialized")
+        sequence_number = sequence.next_number
+        sequence.next_number += 1
+        slug = f"{project_slug_prefix(project.name)}-{sequence_number}"
         await self._require_organization_user(project.organization_id, reporter_id)
         if data.assignee_id is not None:
             await self._require_organization_user(project.organization_id, data.assignee_id)
@@ -351,6 +379,8 @@ class DomainService:
             status_id=project_status.id,
             title=data.title,
             description=data.description,
+            slug=slug,
+            sequence_number=sequence_number,
             created_by=user_id,
             reporter_id=reporter_id,
             assignee_id=data.assignee_id,
@@ -611,15 +641,30 @@ class DomainService:
 
     async def _task_response(self, task: Task) -> TaskResponse:
         watchers = await self.repository.list_task_watchers(task.id)
+        assignee = (
+            await self.repository.get_user(task.assignee_id)
+            if task.assignee_id is not None
+            else None
+        )
         return TaskResponse(
             id=task.id,
             project_id=task.project_id,
             status_id=task.status_id,
+            slug=task.slug,
             title=task.title,
             description=task.description,
             created_by=task.created_by,
             reporter_id=task.reporter_id,
             assignee_id=task.assignee_id,
+            assignee=(
+                AssigneeSummary(
+                    id=assignee.id,
+                    first_name=assignee.profile.first_name,
+                    last_name=assignee.profile.last_name,
+                )
+                if assignee is not None and assignee.profile is not None
+                else None
+            ),
             watchers=[UserSummary.model_validate(user) for user in watchers],
             created_at=task.created_at,
             updated_at=task.updated_at,

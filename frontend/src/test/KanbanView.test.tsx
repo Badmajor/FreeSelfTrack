@@ -67,17 +67,26 @@ describe("KanbanView", () => {
     expect(screen.getByText("First task")).toBeInTheDocument();
     expect(screen.getByText("task-1")).toBeInTheDocument();
     expect(screen.getByText("Unassigned")).toBeInTheDocument();
+    expect(screen.getByText("Status: Backlog")).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Status for task-1" })).not.toBeInTheDocument();
   });
 
-  it("updates a task status through the card menu", async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify(board), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ...board.columns[0].tasks[0], status_id: "status-done" }), { status: 200 }));
+  it("updates a task status through the task drawer", async () => {
+    const fetchMock = vi.fn((input: string | URL | Request, options?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/board?")) return Promise.resolve(new Response(JSON.stringify(board), { status: 200 }));
+      if (url === "/api/tasks/task-1" && options?.method === "PATCH") return Promise.resolve(new Response(JSON.stringify({ ...board.columns[0].tasks[0], status_id: "status-done" }), { status: 200 }));
+      if (url.includes("/tasks/task-1/history")) return Promise.resolve(new Response(JSON.stringify({ entries: [], next_cursor: null }), { status: 200 }));
+      if (url.includes("/tasks/task-1/watchers")) return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }));
+      if (url.includes("/projects/project-1/members")) return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }));
+      if (url === "/api/tasks/task-1") return Promise.resolve(new Response(JSON.stringify(board.columns[0].tasks[0]), { status: 200 }));
+      return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }));
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     renderView();
-    const statusMenu = await screen.findByRole("combobox", { name: "Status for task-1" });
-    await userEvent.selectOptions(statusMenu, "status-done");
+    await userEvent.click(await screen.findByRole("article", { name: "Open task task-1" }));
+    await userEvent.selectOptions(await screen.findByLabelText("Status"), "status-done");
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/tasks/task-1",

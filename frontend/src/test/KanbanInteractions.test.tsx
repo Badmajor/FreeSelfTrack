@@ -93,11 +93,16 @@ describe("Kanban interactions", () => {
       const url = String(input);
       if (url.includes("/board?")) return response(board);
       if (url === "/api/tasks/task-1" && options?.method === "PATCH") return response({ detail: "You cannot change this task" }, 403);
+      if (url.includes("/tasks/task-1/history")) return response({ entries: [], next_cursor: null });
+      if (url.includes("/tasks/task-1/watchers")) return response([]);
+      if (url.includes("/projects/project-1/members")) return response([]);
+      if (url === "/api/tasks/task-1") return response(task);
       return response([]);
     });
     vi.stubGlobal("fetch", fetchMock);
     renderView({ id: "member-1", email: "member@example.com" });
-    const statusMenu = await screen.findByRole("combobox", { name: "Status for task-1" });
+    await userEvent.click(await screen.findByRole("article", { name: "Open task task-1" }));
+    const statusMenu = await screen.findByLabelText("Status");
     await userEvent.selectOptions(statusMenu, "status-done");
 
     expect(await screen.findByRole("alert")).toHaveTextContent("You cannot change this task");

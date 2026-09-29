@@ -7,8 +7,9 @@ Revises: 0005_task_participants
 from collections.abc import Sequence
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 revision = "0006_profiles_task_history"
 down_revision = "0005_task_participants"
@@ -33,9 +34,7 @@ def upgrade() -> None:
         "SELECT id, 'Unknown', 'User', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP FROM users"
     )
 
-    op.add_column(
-        "task_history", sa.Column("event_type", sa.String(length=64), nullable=True)
-    )
+    op.add_column("task_history", sa.Column("event_type", sa.String(length=64), nullable=True))
     op.add_column("task_history", sa.Column("field_name", sa.String(length=64), nullable=True))
     op.add_column("task_history", sa.Column("old_value", sa.Text(), nullable=True))
     op.add_column("task_history", sa.Column("new_value", sa.Text(), nullable=True))

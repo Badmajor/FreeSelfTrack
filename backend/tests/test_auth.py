@@ -83,7 +83,12 @@ async def test_password_hash_is_not_plaintext(
     password = "correct horse battery staple"
     response = await client.post(
         "/api/auth/register",
-        json={"email": "hash@example.com", "password": password},
+        json={
+            "email": "hash@example.com",
+            "password": password,
+            "first_name": "Test",
+            "last_name": "User",
+        },
     )
 
     assert response.status_code == 201

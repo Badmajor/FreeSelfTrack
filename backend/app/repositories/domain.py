@@ -11,6 +11,7 @@ from app.models import (
     Project,
     ProjectMember,
     ProjectStatus,
+    ProjectTaskSequence,
     Task,
     TaskHistory,
     TaskWatcher,
@@ -42,7 +43,18 @@ class DomainRepository:
         return await self.session.get(ProjectStatus, status_id)
 
     async def get_task(self, task_id: UUID) -> Task | None:
-        return await self.session.get(Task, task_id)
+        return await self.session.scalar(
+            select(Task)
+            .options(selectinload(Task.assignee).selectinload(User.profile))
+            .where(Task.id == task_id)
+        )
+
+    async def get_project_task_sequence(self, project_id: UUID) -> ProjectTaskSequence | None:
+        return await self.session.scalar(
+            select(ProjectTaskSequence)
+            .where(ProjectTaskSequence.project_id == project_id)
+            .with_for_update()
+        )
 
     async def list_organizations_for_user(self, user_id: UUID) -> list[Organization]:
         result = await self.session.scalars(
