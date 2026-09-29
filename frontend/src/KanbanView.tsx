@@ -189,20 +189,19 @@ function TaskDrawer({ task, columns, projectId, projectOwnerId, currentUser, onC
   useEffect(() => { setReporterId(task.reporter_id); setAssigneeId(task.assignee_id ?? ""); }, [task.assignee_id, task.reporter_id]);
 
   return <aside className="task-drawer" role="dialog" aria-modal="true" aria-labelledby="task-drawer-title">
-    <div className="drawer-header"><h2 id="task-drawer-title">Task details</h2><button className="icon-button" type="button" aria-label="Close task details" onClick={onClose}>×</button></div>
+    <div className="drawer-header"><h2 id="task-drawer-title">Task details</h2><div className="drawer-actions"><button className="button drawer-save" type="submit" form="task-edit-form" disabled={save.isPending}>{save.isPending ? "Saving..." : "Save changes"}</button><button className="icon-button" type="button" aria-label="Close task details" onClick={onClose}>×</button></div></div>
     {details.isPending && <p className="loading">Loading task...</p>}
-    <form onSubmit={(event) => { event.preventDefault(); save.mutate(); }}>
+    <form id="task-edit-form" onSubmit={(event) => { event.preventDefault(); if (!save.isPending) { setSaveError(""); save.mutate(); } }}>
       <label htmlFor="task-title">Title</label><input id="task-title" value={title} onChange={(event) => setTitle(event.target.value)} />
       <label htmlFor="task-description">Description</label><textarea id="task-description" value={description} onChange={(event) => setDescription(event.target.value)} />
       <label htmlFor="task-status">Status</label><select id="task-status" value={task.status_id} onChange={(event) => onStatusChange(task, event.target.value)}>{columns.map((column) => <option key={column.status.id} value={column.status.id}>{column.status.name}</option>)}</select>
-      <button className="button" type="submit" disabled={save.isPending}>Save changes</button>
       {saveError && <p className="error" role="alert">{saveError}</p>}
     </form>
-    <div className="drawer-section"><h3>Participants</h3>
+    <div className="drawer-section drawer-participants"><h3>Participants</h3>
       <label htmlFor="task-reporter">Reporter</label><select id="task-reporter" value={reporterId} disabled={!canChangeReporter || participantUpdate.isPending} onChange={(event) => { setReporterId(event.target.value); participantUpdate.mutate({ reporter_id: event.target.value }); }}>{members.data?.map((member) => <option key={member.id} value={member.id}>{member.email}</option>)}</select>
       <label htmlFor="task-assignee">Assignee</label><select id="task-assignee" value={assigneeId} disabled={!canChangeAssignee || participantUpdate.isPending} onChange={(event) => { const value = event.target.value || null; setAssigneeId(event.target.value); participantUpdate.mutate({ assignee_id: value }); }}><option value="">Unassigned</option>{members.data?.map((member) => <option key={member.id} value={member.id}>{member.email}</option>)}</select>
       <p>Watchers: {watchers.data?.length ?? task.watchers.length}</p>{watchers.isPending && <p className="muted">Loading watchers...</p>}{watchers.isError && <p className="error" role="alert">Unable to load watchers.</p>}{!watchers.isPending && !watchers.isError && !watchers.data?.length && <p className="muted">No watchers.</p>}<div className="watcher-list">{watchers.data?.map((watcher) => <span className="watcher" key={watcher.id}>{watcher.email}</span>)}</div>
-      <button className="button secondary compact" type="button" disabled={watcherMutation.isPending} onClick={() => watcherMutation.mutate()}>{isWatching ? "Stop watching" : "Watch task"}</button>
+      <button className="button secondary compact drawer-watch" type="button" disabled={watcherMutation.isPending} onClick={() => watcherMutation.mutate()}>{isWatching ? "Stop watching" : "Watch task"}</button>
     </div>
     <div className="drawer-section"><h3>History</h3>{history.isPending && <p className="muted">Loading history...</p>}{history.data?.entries.map((entry: TaskHistoryEntry) => { const expanded = expandedHistory[entry.id] ?? false; const text = formatHistoryEntry(entry); return <div className="history-entry" key={entry.id}><p><time dateTime={entry.created_at}>{new Date(entry.created_at).toLocaleString()}</time> · <strong>{entry.actor.first_name} {entry.actor.last_name}</strong> · {text}</p>{entry.field_name === "description" && entry.new_value && <details open={expanded}><summary onClick={(event) => { event.preventDefault(); setExpandedHistory((current) => ({ ...current, [entry.id]: !expanded })); }}>{expanded ? "Hide details" : "Show details"}</summary><p>{entry.new_value}</p></details>}</div>; })}</div>
   </aside>;

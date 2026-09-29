@@ -106,7 +106,10 @@ describe("Kanban task workflow", () => {
     await userEvent.type(title, "Updated task");
     await userEvent.clear(screen.getByLabelText("Description"));
     await userEvent.type(screen.getByLabelText("Description"), "Details");
-    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    const save = screen.getByRole("button", { name: "Save changes" });
+    expect(save.closest(".drawer-header")).not.toBeNull();
+    expect(screen.getAllByRole("button", { name: "Save changes" })).toHaveLength(1);
+    await userEvent.click(save);
 
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/tasks/task-1",
