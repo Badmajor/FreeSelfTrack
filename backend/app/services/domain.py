@@ -15,6 +15,7 @@ from app.schemas.domain import (
     MembershipRequest,
     NotificationResponse,
     OrganizationCreate,
+    ProfileResponse,
     ProjectCreate,
     ProjectUpdate,
     StatusCreate,
@@ -380,10 +381,18 @@ class DomainService:
             raise NotFoundError("Task not found")
         events: list[tuple[str, str, dict[str, str]]] = []
         if data.title is not None and data.title != task.title:
+            old_value = task.title
             task.title = data.title
+            await self._record_history(
+                task, user_id, "title_changed", "title", old_value, data.title
+            )
             events.append(("title_changed", "Task title changed", {"title": data.title}))
         if "description" in data.model_fields_set and data.description != task.description:
+            old_value = task.description
             task.description = data.description
+            await self._record_history(
+                task, user_id, "description_changed", "description", old_value, data.description
+            )
             events.append(("description_changed", "Task description changed", {}))
         if data.status_id is not None and data.status_id != task.status_id:
             project_status = await self.repository.get_status(data.status_id)
@@ -395,12 +404,17 @@ class DomainService:
                 raise InvalidWorkflowError(
                     "Task status must be an active status of the task project"
                 )
+            old_status = await self.repository.get_status(task.status_id)
             self.session.add(
                 TaskHistory(
                     task_id=task.id,
                     changed_by=user_id,
                     from_status_id=task.status_id,
                     to_status_id=project_status.id,
+                    event_type="status_changed",
+                    field_name="status",
+                    old_value=old_status.name if old_status else None,
+                    new_value=project_status.name,
                 )
             )
             task.status_id = project_status.id
@@ -413,7 +427,12 @@ class DomainService:
                 raise InvalidWorkflowError("A task must have a reporter")
             await self._require_organization_user(project.organization_id, data.reporter_id)
             if data.reporter_id != task.reporter_id:
+                old_value = await self._display_name(task.reporter_id)
+                new_value = await self._display_name(data.reporter_id)
                 task.reporter_id = data.reporter_id
+                await self._record_history(
+                    task, user_id, "reporter_changed", "reporter", old_value, new_value
+                )
                 events.append(
                     (
                         "reporter_changed",
@@ -426,7 +445,12 @@ class DomainService:
             if data.assignee_id is not None:
                 await self._require_organization_user(project.organization_id, data.assignee_id)
             if data.assignee_id != task.assignee_id:
+                old_value = await self._display_name(task.assignee_id) if task.assignee_id else None
+                new_value = await self._display_name(data.assignee_id) if data.assignee_id else None
                 task.assignee_id = data.assignee_id
+                await self._record_history(
+                    task, user_id, "assignee_changed", "assignee", old_value, new_value
+                )
                 events.append(
                     (
                         "assignee_changed",
@@ -458,8 +482,13 @@ class DomainService:
         if target_id != user_id:
             self._require_watcher_manager(user_id, task, project.owner_id)
         await self._require_organization_user(project.organization_id, target_id)
+        existing = await self.repository.get_task_watcher(task.id, target_id)
         await self.repository.add_project_member(task.project_id, target_id)
         await self.repository.add_task_watcher(task.id, target_id)
+        if existing is None:
+            await self._record_history(
+                task, user_id, "watcher_added", "watcher", None, await self._display_name(target_id)
+            )
         await self.session.commit()
         return await self.repository.list_task_watchers(task.id)
 
@@ -474,7 +503,9 @@ class DomainService:
             self._require_watcher_manager(user_id, task, project.owner_id)
         if await self.repository.get_task_watcher(task.id, watcher_id) is None:
             raise NotFoundError("Task watcher not found")
+        old_value = await self._display_name(watcher_id)
         await self.repository.remove_task_watcher(task.id, watcher_id)
+        await self._record_history(task, user_id, "watcher_removed", "watcher", old_value, None)
         await self.session.commit()
         return await self.repository.list_task_watchers(task.id)
 
@@ -546,7 +577,22 @@ class DomainService:
             page = page[:limit]
             next_cursor = encode_cursor(page[-1].created_at, page[-1].id)
         return TaskHistoryPageResponse(
-            entries=[TaskHistoryResponse.model_validate(item) for item in page],
+            entries=[
+                TaskHistoryResponse(
+                    id=item.id,
+                    task_id=item.task_id,
+                    changed_by=item.changed_by,
+                    actor=ProfileResponse.model_validate(item.actor.profile),
+                    from_status_id=item.from_status_id,
+                    to_status_id=item.to_status_id,
+                    event_type=item.event_type,
+                    field_name=item.field_name,
+                    old_value=item.old_value,
+                    new_value=item.new_value,
+                    created_at=item.created_at,
+                )
+                for item in page
+            ],
             next_cursor=next_cursor,
         )
 
@@ -588,6 +634,34 @@ class DomainService:
         ):
             raise InvalidWorkflowError("User must belong to the task organization")
         return user
+
+    async def _record_history(
+        self,
+        task: Task,
+        actor_id: UUID,
+        event_type: str,
+        field_name: str,
+        old_value: str | None,
+        new_value: str | None,
+    ) -> None:
+        self.session.add(
+            TaskHistory(
+                task_id=task.id,
+                changed_by=actor_id,
+                event_type=event_type,
+                field_name=field_name,
+                old_value=old_value,
+                new_value=new_value,
+            )
+        )
+
+    async def _display_name(self, user_id: UUID | None) -> str | None:
+        if user_id is None:
+            return None
+        user = await self.repository.get_user(user_id)
+        if user is None or user.profile is None:
+            return "Unknown user"
+        return f"{user.profile.first_name} {user.profile.last_name}"
 
     async def _queue_notifications(
         self,

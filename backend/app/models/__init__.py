@@ -9,6 +9,7 @@ from app.models.domain import (
     TaskHistory,
     TaskWatcher,
     User,
+    UserProfile,
 )
 
 __all__ = [
@@ -22,4 +23,5 @@ __all__ = [
     "TaskWatcher",
     "Notification",
     "User",
+    "UserProfile",
 ]

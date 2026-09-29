@@ -32,6 +32,29 @@ class User(Base):
         default=lambda: datetime.now(UTC),
         onupdate=lambda: datetime.now(UTC),
     )
+    profile: Mapped["UserProfile"] = relationship(
+        back_populates="user", uselist=False, cascade="all, delete-orphan"
+    )
+
+
+class UserProfile(Base):
+    __tablename__ = "user_profiles"
+
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    first_name: Mapped[str] = mapped_column(String(100))
+    last_name: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+
+    user: Mapped[User] = relationship(back_populates="profile")
 
 
 class Organization(Base):
@@ -157,17 +180,22 @@ class TaskHistory(Base):
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     task_id: Mapped[UUID] = mapped_column(ForeignKey("tasks.id", ondelete="CASCADE"), index=True)
     changed_by: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
-    from_status_id: Mapped[UUID] = mapped_column(
-        ForeignKey("project_statuses.id", ondelete="RESTRICT")
+    from_status_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("project_statuses.id", ondelete="RESTRICT"), nullable=True
     )
-    to_status_id: Mapped[UUID] = mapped_column(
-        ForeignKey("project_statuses.id", ondelete="RESTRICT")
+    to_status_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("project_statuses.id", ondelete="RESTRICT"), nullable=True
     )
+    event_type: Mapped[str] = mapped_column(String(64), default="status_changed")
+    field_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    old_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    new_value: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), index=True
     )
 
     task: Mapped[Task] = relationship(back_populates="history")
+    actor: Mapped[User] = relationship(foreign_keys=[changed_by])
 
     __table_args__ = (Index("ix_task_history_task_created_at_id", "task_id", "created_at", "id"),)
 

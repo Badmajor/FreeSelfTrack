@@ -109,6 +109,7 @@ function TaskDrawer({ task, columns, projectId, projectOwnerId, currentUser, onC
   const [description, setDescription] = useState(task.description ?? "");
   const [reporterId, setReporterId] = useState(task.reporter_id);
   const [assigneeId, setAssigneeId] = useState(task.assignee_id ?? "");
+  const [expandedHistory, setExpandedHistory] = useState<Record<string, boolean>>({});
   const [saveError, setSaveError] = useState("");
   const save = useMutation({ mutationFn: () => updateTask(task.id, { title, description }), onSuccess: onSaved, onError: (error) => setSaveError(messageFor(error)) });
   const participantUpdate = useMutation({
@@ -147,10 +148,12 @@ function TaskDrawer({ task, columns, projectId, projectOwnerId, currentUser, onC
       <p>Watchers: {watchers.data?.length ?? task.watchers.length}</p>{watchers.isPending && <p className="muted">Loading watchers...</p>}{watchers.isError && <p className="error" role="alert">Unable to load watchers.</p>}{!watchers.isPending && !watchers.isError && !watchers.data?.length && <p className="muted">No watchers.</p>}<div className="watcher-list">{watchers.data?.map((watcher) => <span className="watcher" key={watcher.id}>{watcher.email}</span>)}</div>
       <button className="button secondary compact" type="button" disabled={watcherMutation.isPending} onClick={() => watcherMutation.mutate()}>{isWatching ? "Stop watching" : "Watch task"}</button>
     </div>
-    <div className="drawer-section"><h3>History</h3>{history.isPending && <p className="muted">Loading history...</p>}{history.data?.entries.map((entry: TaskHistoryEntry) => <p className="history-entry" key={entry.id}>{new Date(entry.created_at).toLocaleString()}: {entry.from_status_id} to {entry.to_status_id}</p>)}</div>
+    <div className="drawer-section"><h3>History</h3>{history.isPending && <p className="muted">Loading history...</p>}{history.data?.entries.map((entry: TaskHistoryEntry) => { const expanded = expandedHistory[entry.id] ?? false; const text = formatHistoryEntry(entry); return <div className="history-entry" key={entry.id}><p><time dateTime={entry.created_at}>{new Date(entry.created_at).toLocaleString()}</time> · <strong>{entry.actor.first_name} {entry.actor.last_name}</strong> · {text}</p>{entry.field_name === "description" && entry.new_value && <details open={expanded}><summary onClick={(event) => { event.preventDefault(); setExpandedHistory((current) => ({ ...current, [entry.id]: !expanded })); }}>{expanded ? "Hide details" : "Show details"}</summary><p>{entry.new_value}</p></details>}</div>; })}</div>
   </aside>;
 }
 
+function formatHistoryEntry(entry: TaskHistoryEntry) { const labels: Record<string, string> = { status_changed: "changed status", title_changed: "changed title", description_changed: "changed description", reporter_changed: "changed reporter", assignee_changed: "changed assignee", watcher_added: "added a watcher", watcher_removed: "removed a watcher" }; const label = labels[entry.event_type] ?? entry.event_type; if (entry.event_type === "status_changed") return `${label}: ${entry.old_value ?? "none"} -> ${entry.new_value ?? "none"}`; if (entry.event_type === "watcher_added") return `${label} ${entry.new_value ?? ""}`; if (entry.event_type === "watcher_removed") return `${label} ${entry.old_value ?? ""}`; return `${label}${entry.field_name === "description" ? ": " + shorten(entry.new_value) : `: ${entry.old_value ?? "none"} -> ${entry.new_value ?? "none"}`}`; }
+function shorten(value: string | null | undefined) { if (!value) return "none"; return value.length > 120 ? value.slice(0, 120) + "..." : value; }
 function widthKey(projectId: string) { return `freeselftrack.kanban.widths.${projectId}`; }
 function readWidths(projectId: string): Record<string, number> { try { return JSON.parse(window.localStorage.getItem(widthKey(projectId)) ?? "{}"); } catch { return {}; } }
 function appendUnique(current: Task[], next: Task[]) { const ids = new Set(current.map((task) => task.id)); return [...current, ...next.filter((task) => !ids.has(task.id))]; }

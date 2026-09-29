@@ -1,17 +1,48 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 
 class RegisterRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
+    first_name: str = Field(min_length=1, max_length=100)
+    last_name: str = Field(min_length=1, max_length=100)
+
+    @field_validator("first_name", "last_name")
+    @classmethod
+    def names_must_not_be_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Name must not be blank")
+        return value
 
 
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=1, max_length=128)
+
+
+class ProfileResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    user_id: UUID
+    first_name: str
+    last_name: str
+
+
+class ProfileUpdate(BaseModel):
+    first_name: str = Field(min_length=1, max_length=100)
+    last_name: str = Field(min_length=1, max_length=100)
+
+    @field_validator("first_name", "last_name")
+    @classmethod
+    def names_must_not_be_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Name must not be blank")
+        return value
 
 
 class UserResponse(BaseModel):
@@ -21,6 +52,7 @@ class UserResponse(BaseModel):
     email: EmailStr
     is_active: bool
     created_at: datetime
+    profile: ProfileResponse
 
 
 class LoginResponse(BaseModel):
@@ -161,8 +193,13 @@ class TaskHistoryResponse(BaseModel):
     id: UUID
     task_id: UUID
     changed_by: UUID
-    from_status_id: UUID
-    to_status_id: UUID
+    actor: ProfileResponse
+    from_status_id: UUID | None = None
+    to_status_id: UUID | None = None
+    event_type: str
+    field_name: str | None = None
+    old_value: str | None = None
+    new_value: str | None = None
     created_at: datetime
 
 
