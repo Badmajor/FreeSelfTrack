@@ -16,6 +16,8 @@ from app.schemas.domain import (
     NotificationResponse,
     OrganizationCreate,
     OrganizationResponse,
+    ProfileResponse,
+    ProfileUpdate,
     ProjectCreate,
     ProjectResponse,
     ProjectUpdate,
@@ -64,6 +66,22 @@ async def register(data: RegisterRequest, session: AsyncSession = Depends(get_se
 async def login(data: LoginRequest, session: AsyncSession = Depends(get_session)) -> Any:
     access_token, user = await translate_errors(AuthService(session).login)(data)
     return LoginResponse(access_token=access_token, user=user)
+
+
+@router.get("/users/me/profile", response_model=ProfileResponse)
+async def get_my_profile(
+    user_id: UUID = Depends(current_user_id), session: AsyncSession = Depends(get_session)
+) -> Any:
+    return await translate_errors(AuthService(session).get_profile)(user_id)
+
+
+@router.patch("/users/me/profile", response_model=ProfileResponse)
+async def update_my_profile(
+    data: ProfileUpdate,
+    user_id: UUID = Depends(current_user_id),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    return await translate_errors(AuthService(session).update_profile)(user_id, data)
 
 
 @router.post(

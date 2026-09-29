@@ -13,7 +13,7 @@ afterEach(() => {
 
 describe("authentication form", () => {
   it("registers an account and signs in", async () => {
-    const registeredUser = { id: "user-1", email: "new@example.com", is_active: true };
+    const registeredUser = { id: "user-1", email: "new@example.com", is_active: true, profile: { user_id: "user-1", first_name: "Ada", last_name: "Lovelace" } };
     const fetchMock = vi.fn((input: string | URL | Request, options?: RequestInit) => {
       const url = String(input);
       if (url.endsWith("/auth/register")) return jsonResponse(registeredUser);
@@ -26,6 +26,8 @@ describe("authentication form", () => {
     const user = userEvent.setup();
 
     renderWithQueryClient(<App />);
+    await user.type(screen.getByLabelText("First name"), "Ada");
+    await user.type(screen.getByLabelText("Last name"), "Lovelace");
     await user.type(screen.getByLabelText("Email"), "new@example.com");
     await user.type(screen.getByLabelText("Password"), "password123");
     await user.click(screen.getByRole("button", { name: "Create account" }));

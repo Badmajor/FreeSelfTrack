@@ -12,7 +12,12 @@ async def test_register_returns_public_user_data(
 ) -> None:
     response = await client.post(
         "/api/auth/register",
-        json={"email": " User@example.com ", "password": "correct horse battery staple"},
+        json={
+            "email": " User@example.com ",
+            "password": "correct horse battery staple",
+            "first_name": "Test",
+            "last_name": "User",
+        },
     )
 
     assert response.status_code == 201
@@ -27,11 +32,21 @@ async def test_register_rejects_duplicate_email_case_insensitively(
 ) -> None:
     first = await client.post(
         "/api/auth/register",
-        json={"email": "user@example.com", "password": "correct horse battery staple"},
+        json={
+            "email": "user@example.com",
+            "password": "correct horse battery staple",
+            "first_name": "Test",
+            "last_name": "User",
+        },
     )
     second = await client.post(
         "/api/auth/register",
-        json={"email": "USER@EXAMPLE.COM", "password": "correct horse battery staple"},
+        json={
+            "email": "USER@EXAMPLE.COM",
+            "password": "correct horse battery staple",
+            "first_name": "Test",
+            "last_name": "User",
+        },
     )
 
     assert first.status_code == 201
@@ -49,7 +64,12 @@ async def test_register_validates_email_and_password(client: AsyncClient) -> Non
     )
     invalid_email = await client.post(
         "/api/auth/register",
-        json={"email": "not-an-email", "password": "correct horse battery staple"},
+        json={
+            "email": "not-an-email",
+            "password": "correct horse battery staple",
+            "first_name": "Test",
+            "last_name": "User",
+        },
     )
 
     assert short_password.status_code == 422
@@ -78,12 +98,22 @@ async def test_login_returns_token_and_rejects_invalid_credentials(
 ) -> None:
     await client.post(
         "/api/auth/register",
-        json={"email": "login@example.com", "password": "correct horse battery staple"},
+        json={
+            "email": "login@example.com",
+            "password": "correct horse battery staple",
+            "first_name": "Test",
+            "last_name": "User",
+        },
     )
 
     success = await client.post(
         "/api/auth/login",
-        json={"email": "LOGIN@example.com", "password": "correct horse battery staple"},
+        json={
+            "email": "LOGIN@example.com",
+            "password": "correct horse battery staple",
+            "first_name": "Test",
+            "last_name": "User",
+        },
     )
     invalid = await client.post(
         "/api/auth/login",
@@ -105,7 +135,12 @@ async def test_login_returns_token_and_rejects_invalid_credentials(
 async def test_inactive_user_cannot_login(client: AsyncClient, db_session: AsyncSession) -> None:
     await client.post(
         "/api/auth/register",
-        json={"email": "inactive@example.com", "password": "correct horse battery staple"},
+        json={
+            "email": "inactive@example.com",
+            "password": "correct horse battery staple",
+            "first_name": "Test",
+            "last_name": "User",
+        },
     )
     user = await db_session.scalar(select(User).where(User.email == "inactive@example.com"))
     assert user is not None
@@ -114,7 +149,12 @@ async def test_inactive_user_cannot_login(client: AsyncClient, db_session: Async
 
     response = await client.post(
         "/api/auth/login",
-        json={"email": "inactive@example.com", "password": "correct horse battery staple"},
+        json={
+            "email": "inactive@example.com",
+            "password": "correct horse battery staple",
+            "first_name": "Test",
+            "last_name": "User",
+        },
     )
     assert response.status_code == 401
 

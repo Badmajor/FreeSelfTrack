@@ -7,12 +7,22 @@ async def authenticate(client: AsyncClient, user_id: UUID) -> dict[str, str]:
     email = f"{user_id}@example.com"
     response = await client.post(
         "/api/auth/register",
-        json={"email": email, "password": "correct horse battery staple"},
+        json={
+            "email": email,
+            "password": "correct horse battery staple",
+            "first_name": "Test",
+            "last_name": "User",
+        },
     )
     assert response.status_code == 201
     response = await client.post(
         "/api/auth/login",
-        json={"email": email.upper(), "password": "correct horse battery staple"},
+        json={
+            "email": email.upper(),
+            "password": "correct horse battery staple",
+            "first_name": "Test",
+            "last_name": "User",
+        },
     )
     assert response.status_code == 200
     return {"Authorization": f"Bearer {response.json()['access_token']}"}

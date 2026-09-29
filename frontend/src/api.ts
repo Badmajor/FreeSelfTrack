@@ -1,10 +1,13 @@
 const API_URL = import.meta.env.VITE_API_URL ?? "/api";
 
+export type Profile = { user_id: string; first_name: string; last_name: string };
+
 export type AuthUser = {
   id: string;
   email: string;
   is_active: boolean;
   created_at?: string;
+  profile?: Profile;
 };
 
 export type Organization = {
@@ -57,10 +60,21 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return body as T;
 }
 
-export async function register(email: string, password: string): Promise<AuthUser> {
+export async function register(email: string, password: string, firstName: string, lastName: string): Promise<AuthUser> {
   return request<AuthUser>("/auth/register", {
     method: "POST",
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ email, password, first_name: firstName, last_name: lastName }),
+  });
+}
+
+export async function getMyProfile(): Promise<Profile> {
+  return request<Profile>("/users/me/profile");
+}
+
+export async function updateMyProfile(firstName: string, lastName: string): Promise<Profile> {
+  return request<Profile>("/users/me/profile", {
+    method: "PATCH",
+    body: JSON.stringify({ first_name: firstName, last_name: lastName }),
   });
 }
 
@@ -147,7 +161,7 @@ export type Status = { id: string; project_id: string; name: string; position: n
 export type BoardColumn = { status: Status; tasks: Task[]; next_cursor: string | null };
 export type Board = { project_id: string; columns: BoardColumn[] };
 export type TaskPage = { tasks: Task[]; next_cursor: string | null };
-export type TaskHistoryEntry = { id: string; task_id: string; changed_by: string; from_status_id: string; to_status_id: string; created_at: string };
+export type TaskHistoryEntry = { id: string; task_id: string; changed_by: string; actor: Profile; from_status_id?: string | null; to_status_id?: string | null; event_type: string; field_name?: string | null; old_value?: string | null; new_value?: string | null; created_at: string };
 export type TaskHistoryPage = { entries: TaskHistoryEntry[]; next_cursor: string | null };
 
 export type Notification = {

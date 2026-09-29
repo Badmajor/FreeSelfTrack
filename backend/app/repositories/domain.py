@@ -2,6 +2,7 @@ from uuid import UUID
 
 from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models import (
     Notification,
@@ -22,10 +23,14 @@ class DomainRepository:
         self.session = session
 
     async def get_user(self, user_id: UUID) -> User | None:
-        return await self.session.get(User, user_id)
+        return await self.session.scalar(
+            select(User).options(selectinload(User.profile)).where(User.id == user_id)
+        )
 
     async def get_user_by_email(self, email: str) -> User | None:
-        return await self.session.scalar(select(User).where(User.email == email))
+        return await self.session.scalar(
+            select(User).options(selectinload(User.profile)).where(User.email == email)
+        )
 
     async def get_organization(self, organization_id: UUID) -> Organization | None:
         return await self.session.get(Organization, organization_id)
@@ -65,6 +70,7 @@ class DomainRepository:
     async def list_organization_members(self, organization_id: UUID) -> list[User]:
         result = await self.session.scalars(
             select(User)
+            .options(selectinload(User.profile))
             .join(OrganizationMember, OrganizationMember.user_id == User.id)
             .where(OrganizationMember.organization_id == organization_id)
             .order_by(User.email)
@@ -74,6 +80,7 @@ class DomainRepository:
     async def list_project_members(self, project_id: UUID) -> list[User]:
         result = await self.session.scalars(
             select(User)
+            .options(selectinload(User.profile))
             .join(ProjectMember, ProjectMember.user_id == User.id)
             .where(ProjectMember.project_id == project_id)
             .order_by(User.email)
@@ -187,7 +194,11 @@ class DomainRepository:
     async def list_task_history(
         self, task_id: UUID, limit: int, cursor: tuple[object, UUID] | None = None
     ) -> list[TaskHistory]:
-        query = select(TaskHistory).where(TaskHistory.task_id == task_id)
+        query = (
+            select(TaskHistory)
+            .options(selectinload(TaskHistory.actor).selectinload(User.profile))
+            .where(TaskHistory.task_id == task_id)
+        )
         if cursor is not None:
             timestamp, item_id = cursor
             query = query.where(
@@ -207,6 +218,7 @@ class DomainRepository:
     async def list_task_watchers(self, task_id: UUID) -> list[User]:
         result = await self.session.scalars(
             select(User)
+            .options(selectinload(User.profile))
             .join(TaskWatcher, TaskWatcher.user_id == User.id)
             .where(TaskWatcher.task_id == task_id)
             .order_by(User.email)
