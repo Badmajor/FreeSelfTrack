@@ -205,7 +205,8 @@ describe("Kanban interactions", () => {
 
     const backlogHeader = screen.getByRole("heading", { name: "Backlog" }).parentElement?.parentElement as HTMLElement;
     fireEvent.dragStart(backlogHeader);
-    fireEvent.drop(screen.getByLabelText("Move column to end"));
+    expect(screen.getByLabelText("Reorder Backlog column")).toBe(backlogHeader);
+    fireEvent.drop(screen.getByRole("heading", { name: "Done" }).closest(".kanban-column") as HTMLElement);
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/projects/project-1/statuses/reorder",
@@ -226,7 +227,8 @@ describe("Kanban interactions", () => {
     await screen.findByRole("heading", { name: "Backlog" });
     const backlogHeader = screen.getByRole("heading", { name: "Backlog" }).parentElement?.parentElement as HTMLElement;
     fireEvent.dragStart(backlogHeader);
-    fireEvent.drop(screen.getByLabelText("Move column to end"));
+    expect(screen.getByLabelText("Reorder Backlog column")).toBe(backlogHeader);
+    fireEvent.drop(screen.getByRole("heading", { name: "Done" }).closest(".kanban-column") as HTMLElement);
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Only the project owner can manage statuses");
     await waitFor(() => expect(screen.getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent)).toEqual(["Backlog", "Done"]));
