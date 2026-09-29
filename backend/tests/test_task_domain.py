@@ -821,3 +821,62 @@ async def test_member_addition_validation_profiles_and_project_idempotency(
         result = await client.get(url, headers=headers)
         assert sum(item["id"] == member_id for item in result.json()) == 1
         assert all(item["profile"]["first_name"] == "Test" for item in result.json())
+
+
+async def test_project_list_matches_membership_and_board_access(
+    client: AsyncClient, user_ids: tuple[UUID, UUID]
+) -> None:
+    owner = await authenticate(client, user_ids[0])
+    member = await authenticate(client, user_ids[1])
+    organization = await create_organization(client, owner, "Membership visibility")
+    org_id = organization["id"]
+    listing = f"/api/organizations/{org_id}/projects"
+    project = await create_project(client, owner, org_id, "Private project")
+    project_id = project["id"]
+    board_url = f"/api/projects/{project_id}/board"
+    assert (await client.get(listing)).status_code == 401
+    assert (await client.get(listing, headers=member)).status_code == 404
+    added = await client.post(
+        f"/api/organizations/{org_id}/members",
+        headers=owner,
+        json={"email": f"{user_ids[1]}@example.com"},
+    )
+    assert added.status_code == 200
+    member_id = added.json()["id"]
+    response = await client.get(listing, headers=member)
+    assert response.status_code == 200
+    assert response.json() == []
+    assert (await client.get(board_url, headers=member)).status_code == 404
+    added = await client.post(
+        f"/api/projects/{project_id}/members",
+        headers=owner,
+        json={"email": f"{user_ids[1]}@example.com"},
+    )
+    assert added.status_code == 200
+    assert [item["id"] for item in (await client.get(listing, headers=member)).json()] == [
+        project_id
+    ]
+    assert (await client.get(board_url, headers=member)).status_code == 200
+    member_project = await create_project(client, member, org_id, "Member project")
+    assert [item["id"] for item in (await client.get(listing, headers=owner)).json()] == [
+        project_id
+    ]
+    removed = await client.delete(f"/api/projects/{project_id}/members/{member_id}", headers=owner)
+    assert removed.status_code == 200
+    assert [item["id"] for item in (await client.get(listing, headers=member)).json()] == [
+        member_project["id"]
+    ]
+    assert (await client.get(board_url, headers=member)).status_code == 404
+    other_org = await create_organization(client, member, "Another organization")
+    await create_project(client, member, other_org["id"], "Other project")
+    assert len((await client.get(listing, headers=member)).json()) == 1
+    # Organization deletion must still include projects hidden from the owner's list.
+    deleted = await client.request(
+        "DELETE", f"/api/organizations/{org_id}", headers=owner, json={"confirm": True}
+    )
+    assert deleted.status_code == 204
+    assert (await client.get(listing, headers=member)).status_code == 404
+    restored = await client.post(f"/api/organizations/{org_id}/restore", headers=owner)
+    assert restored.status_code == 200
+    assert (await client.get(listing, headers=owner)).json() == []
+    assert (await client.get(listing, headers=member)).json() == []

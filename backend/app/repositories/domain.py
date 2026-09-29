@@ -79,6 +79,19 @@ class DomainRepository:
         )
         return list(result)
 
+    async def list_projects_for_user(self, organization_id: UUID, user_id: UUID) -> list[Project]:
+        result = await self.session.scalars(
+            select(Project)
+            .join(ProjectMember, ProjectMember.project_id == Project.id)
+            .where(
+                Project.organization_id == organization_id,
+                Project.deleted_at.is_(None),
+                ProjectMember.user_id == user_id,
+            )
+            .order_by(Project.name)
+        )
+        return list(result)
+
     async def list_organization_members(self, organization_id: UUID) -> list[User]:
         result = await self.session.scalars(
             select(User)

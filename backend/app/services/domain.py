@@ -93,7 +93,7 @@ class DomainService:
 
     async def list_projects(self, user_id: UUID, organization_id: UUID) -> list[Project]:
         await self.get_organization(user_id, organization_id)
-        return await self.repository.list_projects_for_organization(organization_id)
+        return await self.repository.list_projects_for_user(organization_id, user_id)
 
     async def create_project(self, user_id: UUID, data: ProjectCreate) -> Project:
         await self.get_organization(user_id, data.organization_id)
