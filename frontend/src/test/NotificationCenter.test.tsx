@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -11,7 +11,7 @@ const notification = {
   task_id: "task-1",
   event_type: "status_changed",
   message: "Task status changed",
-  event_data: null,
+  event_data: JSON.stringify({ comment_id: "message-1", project_id: "project-1" }),
   created_at: "2026-01-02T10:00:00Z",
   read_at: null,
 };
@@ -32,13 +32,15 @@ describe("NotificationCenter", () => {
     vi.stubGlobal("fetch", fetchMock);
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
-    render(<QueryClientProvider client={queryClient}><NotificationCenter /></QueryClientProvider>);
+    const onOpenTask = vi.fn();
+    render(<QueryClientProvider client={queryClient}><NotificationCenter onOpenTask={onOpenTask} /></QueryClientProvider>);
 
     const toggle = await screen.findByRole("button", { name: "Notifications (1)" });
     await userEvent.click(toggle);
     const item = await screen.findByText("Task status changed");
     await userEvent.click(item);
 
+    await waitFor(() => expect(onOpenTask).toHaveBeenCalledWith("task-1", "message-1"));
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/notifications/notification-1/open",
       expect.objectContaining({ method: "POST" }),

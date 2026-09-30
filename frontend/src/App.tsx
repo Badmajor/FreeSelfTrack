@@ -19,7 +19,7 @@ import {
   type Project,
 } from "./api";
 import { MembersPage } from "./MembersPage";
-import { KanbanView } from "./KanbanView";
+import { KanbanView, NotificationTaskPanel } from "./KanbanView";
 
 type Mode = "login" | "register";
 
@@ -27,6 +27,7 @@ const savedToken = localStorage.getItem("freeselftrack.access_token");
 const savedUser = localStorage.getItem("freeselftrack.user");
 
 export function App() {
+  const queryClient = useQueryClient();
   const [mode, setMode] = useState<Mode>(savedToken ? "login" : "register");
   const [email, setEmail] = useState(savedUser ? JSON.parse(savedUser).email : "");
   const [password, setPassword] = useState("");
@@ -65,6 +66,7 @@ export function App() {
   }
 
   function signOut() {
+    queryClient.clear();
     localStorage.removeItem("freeselftrack.access_token");
     localStorage.removeItem("freeselftrack.user");
     setUser(null);
@@ -192,6 +194,7 @@ function Workspace({ user, onSignOut, onOpenProfile }: WorkspaceProps) {
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
   const [kanbanOpen, setKanbanOpen] = useState(false);
+  const [notificationTarget, setNotificationTarget] = useState<{ taskId: string; commentId?: string } | null>(null);
   const [membersOpen, setMembersOpen] = useState(false);
   const [projectsLoading, setProjectsLoading] = useState(false);
 
@@ -303,13 +306,14 @@ function Workspace({ user, onSignOut, onOpenProfile }: WorkspaceProps) {
           <p className="muted">{user.email}</p>
         </div>
         <div className="workspace-actions">
-          <NotificationCenter />
+          <NotificationCenter onOpenTask={(taskId, commentId) => { setKanbanOpen(false); setNotificationTarget({ taskId, commentId }); }} />
           <button className="button secondary compact" type="button" onClick={() => setMembersOpen(true)}>Members</button>
           <button className="button secondary compact" type="button" onClick={onOpenProfile}>Profile</button>
           <button className="button secondary compact" type="button" onClick={onSignOut}>Sign out</button>
         </div>
       </header>
 
+      {notificationTarget && <NotificationTaskPanel {...notificationTarget} currentUser={user} onClose={() => setNotificationTarget(null)} />}
       {error && <p className="error workspace-message" role="alert">{error}</p>}
       {loading ? <p className="loading">Loading organizations...</p> : (
         <div className="workspace-grid">
@@ -362,7 +366,7 @@ function messageFor(error: unknown): string {
 
 
 type NotificationCenterProps = {
-  onOpenTask?: (taskId: string) => void;
+  onOpenTask?: (taskId: string, commentId?: string) => void;
 };
 
 export function NotificationCenter({ onOpenTask }: NotificationCenterProps) {
@@ -372,18 +376,23 @@ export function NotificationCenter({ onOpenTask }: NotificationCenterProps) {
     queryKey: ["notifications"],
     queryFn: listNotifications,
     enabled: expanded,
+    refetchInterval: expanded ? 3000 : false,
   });
   const unread = useQuery({
     queryKey: ["notifications", "unread-count"],
     queryFn: getUnreadNotificationCount,
-    refetchInterval: 30_000,
+    refetchInterval: 3000,
   });
   const open = useMutation({
     mutationFn: openNotification,
     onSuccess: (notification) => {
       queryClient.invalidateQueries({ queryKey: ["notifications"] });
       queryClient.invalidateQueries({ queryKey: ["notifications", "unread-count"] });
-      if (notification.task_id) onOpenTask?.(notification.task_id);
+      let commentId: string | undefined;
+      if (notification.event_data) {
+        try { const data: unknown = JSON.parse(notification.event_data); if (data && typeof data === "object" && "comment_id" in data && typeof data.comment_id === "string") commentId = data.comment_id; } catch { /* Older notifications may not contain structured data. */ }
+      }
+      if (notification.task_id) onOpenTask?.(notification.task_id, commentId);
     },
   });
 
@@ -410,7 +419,7 @@ export function NotificationCenter({ onOpenTask }: NotificationCenterProps) {
               className={notification.read_at ? "notification read" : "notification"}
               type="button"
               key={notification.id}
-              onClick={() => void open.mutateAsync(notification.id)}
+              onClick={() => open.mutate(notification.id)}
               disabled={open.isPending}
             >
               <strong>{notification.message}</strong>

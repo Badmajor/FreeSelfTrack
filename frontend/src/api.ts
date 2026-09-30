@@ -1,3 +1,5 @@
+export class ApiError extends Error { constructor(message: string, public status: number) { super(message); } }
+
 const API_URL = import.meta.env.VITE_API_URL ?? "/api";
 
 export type Profile = { user_id: string; first_name: string; last_name: string };
@@ -41,7 +43,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     ...options,
     headers: {
       ...authHeaders(),
-      "Content-Type": "application/json",
+      ...(options.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
       ...options.headers,
     },
   });
@@ -55,7 +57,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
       body && typeof body === "object" && "detail" in body && typeof body.detail === "string"
         ? body.detail
         : "Request failed";
-    throw new Error(detail);
+    throw new ApiError(detail, response.status);
   }
   return body as T;
 }
@@ -262,3 +264,28 @@ export function addOrganizationMember(organizationId: string, email: string): Pr
     method: "POST", body: JSON.stringify({ email }),
   });
 }
+
+export type ChatAttachment = { id: string; filename: string; media_type: string; size: number };
+export type ChatMessage = { id: string; task_id: string; sequence: number; author: Profile; text: string; mentions: Profile[]; attachments: ChatAttachment[]; created_at: string };
+export type ChatPage = { comments: ChatMessage[]; has_more: boolean };
+export function getComments(taskId: string, cursor?: { before?: number; after?: number }): Promise<ChatPage> {
+  const query = new URLSearchParams({ limit: "50" });
+  if (cursor?.before !== undefined) query.set("before", String(cursor.before));
+  if (cursor?.after !== undefined) query.set("after", String(cursor.after));
+  return request<ChatPage>(`/tasks/${taskId}/comments?${query}`);
+}
+export function getComment(taskId: string, commentId: string): Promise<ChatMessage> {
+  return request<ChatMessage>(`/tasks/${taskId}/comments/${commentId}`);
+}
+export function sendComment(taskId: string, text: string, mentionIds: string[], files: File[], requestId: string): Promise<ChatMessage> {
+  const body = new FormData();
+  body.set("metadata", JSON.stringify({ text, mention_ids: mentionIds, request_id: requestId }));
+  files.forEach((file) => body.append("files", file));
+  return request<ChatMessage>(`/tasks/${taskId}/comments`, { method: "POST", body });
+}
+export async function getAttachment(id: string, preview = false): Promise<Blob> {
+  const response = await fetch(`${API_URL}/attachments/${id}/content?preview=${preview}`, { headers: authHeaders(), cache: "no-store" });
+  if (!response.ok) throw new ApiError("Attachment unavailable", response.status);
+  return response.blob();
+}
+export function getProject(id: string): Promise<Project> { return request<Project>(`/projects/${id}`); }

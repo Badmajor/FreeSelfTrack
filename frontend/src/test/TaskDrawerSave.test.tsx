@@ -10,6 +10,7 @@ it("submits from the header, blocks duplicate saves and retains edits on failure
   let finish: (response: Response) => void = () => {};
   const fetchMock = vi.fn((input: unknown, options?: RequestInit) => {
     const url = String(input);
+      if (url.includes("/comments?")) return Promise.resolve(new Response(JSON.stringify({ comments: [], has_more: false }), { status: 200 }));
     if (options?.method === "PATCH") return new Promise<Response>((resolve) => { finish = resolve; });
     if (url.includes("/board?")) return jsonResponse(makeBoard());
     if (url.endsWith("/tasks/task-1")) return jsonResponse(makeTask());
@@ -22,6 +23,10 @@ it("submits from the header, blocks duplicate saves and retains edits on failure
   await waitFor(() => expect(screen.queryByText("Loading task...")).not.toBeInTheDocument());
   await userEvent.clear(screen.getByLabelText("Title"));
   await userEvent.type(screen.getByLabelText("Title"), "Keep these edits");
+  await userEvent.type(screen.getByLabelText("Message"), "Unsent draft");
+  await userEvent.click(screen.getByRole("tab", { name: "History" }));
+  await userEvent.click(screen.getByRole("tab", { name: "Chat" }));
+  expect(screen.getByLabelText("Message")).toHaveValue("Unsent draft");
   await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
   const saving = screen.getByRole("button", { name: "Saving..." });
   expect(saving).toBeDisabled();

@@ -15,6 +15,7 @@ describe("Kanban keyboard accessibility", () => {
     const task = makeTask();
     vi.stubGlobal("fetch", vi.fn((input: string | URL | Request) => {
       const url = String(input);
+      if (url.includes("/comments?")) return Promise.resolve(new Response(JSON.stringify({ comments: [], has_more: false }), { status: 200 }));
       if (url.includes("/board?")) return jsonResponse(makeBoard(task));
       if (url.includes("/tasks/task-1/history")) return jsonResponse({ entries: [], next_cursor: null });
       if (url.includes("/tasks/task-1/watchers")) return jsonResponse([]);

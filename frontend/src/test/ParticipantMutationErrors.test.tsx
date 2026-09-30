@@ -12,6 +12,7 @@ function createFetchMock(message: string, mutation: "watcher" | "reporter" | "as
   const task = makeTask();
   return vi.fn((input: string | URL | Request, options?: RequestInit) => {
     const url = String(input);
+      if (url.includes("/comments?")) return Promise.resolve(new Response(JSON.stringify({ comments: [], has_more: false }), { status: 200 }));
     if (url.includes("/board?")) return jsonResponse(makeBoard(task));
     if (url.includes("/tasks/task-1/watchers") && options?.method === "POST" && mutation === "watcher") {
       return jsonResponse({ detail: message }, 403);

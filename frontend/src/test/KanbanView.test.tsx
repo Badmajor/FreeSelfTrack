@@ -74,6 +74,7 @@ describe("KanbanView", () => {
   it("updates a task status through the task drawer", async () => {
     const fetchMock = vi.fn((input: string | URL | Request, options?: RequestInit) => {
       const url = String(input);
+      if (url.includes("/comments?")) return Promise.resolve(new Response(JSON.stringify({ comments: [], has_more: false }), { status: 200 }));
       if (url.includes("/board?")) return Promise.resolve(new Response(JSON.stringify(board), { status: 200 }));
       if (url === "/api/tasks/task-1" && options?.method === "PATCH") return Promise.resolve(new Response(JSON.stringify({ ...board.columns[0].tasks[0], status_id: "status-done" }), { status: 200 }));
       if (url.includes("/tasks/task-1/history")) return Promise.resolve(new Response(JSON.stringify({ entries: [], next_cursor: null }), { status: 200 }));

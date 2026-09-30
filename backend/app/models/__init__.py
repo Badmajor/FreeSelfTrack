@@ -27,3 +27,7 @@ __all__ = [
     "User",
     "UserProfile",
 ]
+
+from app.models.chat import Attachment, Comment, CommentMention
+
+__all__ += ["Attachment", "Comment", "CommentMention"]

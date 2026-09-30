@@ -18,6 +18,7 @@ describe("App workspace", () => {
   it("opens Kanban from the selected project", async () => {
     const fetchMock = vi.fn((input: string | URL | Request) => {
       const url = String(input);
+      if (url.includes("/comments?")) return Promise.resolve(new Response(JSON.stringify({ comments: [], has_more: false }), { status: 200 }));
       if (url.endsWith("/organizations")) return jsonResponse([organization]);
       if (url.endsWith("/organizations/organization-1/projects")) return jsonResponse([testProject]);
       if (url.endsWith("/projects/project-1/members")) return jsonResponse([user]);
@@ -54,6 +55,7 @@ describe("Kanban task workflow", () => {
     const task = makeTask({ id: "task-new", title: "Created task" });
     const fetchMock = vi.fn((input: string | URL | Request, options?: RequestInit) => {
       const url = String(input);
+      if (url.includes("/comments?")) return Promise.resolve(new Response(JSON.stringify({ comments: [], has_more: false }), { status: 200 }));
       if (url.includes("/board?")) return jsonResponse(makeBoard());
       if (url === "/api/projects/project-1/tasks" && options?.method === "POST") return jsonResponse(task);
       return jsonResponse(makeBoard());
@@ -83,6 +85,7 @@ describe("Kanban task workflow", () => {
     const saved = { ...task, title: "Updated task", description: "Details" };
     const fetchMock = vi.fn((input: string | URL | Request, options?: RequestInit) => {
       const url = String(input);
+      if (url.includes("/comments?")) return Promise.resolve(new Response(JSON.stringify({ comments: [], has_more: false }), { status: 200 }));
       if (url.includes("/board?")) return jsonResponse(makeBoard(task));
       if (url === "/api/tasks/task-1" && options?.method === "PATCH") return jsonResponse(saved);
       if (url.includes("/tasks/task-1/history")) return jsonResponse({ entries: [], next_cursor: null });
@@ -122,6 +125,7 @@ describe("Kanban task workflow", () => {
   it("moves a task through drag-and-drop to another column", async () => {
     const fetchMock = vi.fn((input: string | URL | Request, options?: RequestInit) => {
       const url = String(input);
+      if (url.includes("/comments?")) return Promise.resolve(new Response(JSON.stringify({ comments: [], has_more: false }), { status: 200 }));
       if (url.includes("/board?")) return jsonResponse(makeBoard());
       if (url === "/api/tasks/task-1" && options?.method === "PATCH") return jsonResponse(makeTask({ status_id: "status-done" }));
       return jsonResponse([]);

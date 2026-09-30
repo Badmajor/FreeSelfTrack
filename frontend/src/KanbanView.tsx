@@ -1,3 +1,4 @@
+import { TaskChat } from "./TaskChat";
 import { FormEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -9,6 +10,7 @@ import {
   getBoard,
   getColumnTasks,
   getTask,
+  getProject,
   listProjectMembers,
   getTaskHistory,
   listTaskWatchers,
@@ -155,10 +157,11 @@ function KanbanColumn({ column, width, canReorder, isReordering, isColumnDraggin
 type CardProps = { task: Task; statusName: string; onClick: (trigger: HTMLElement) => void; onDragStart: () => void };
 function TaskCard({ task, statusName, onClick, onDragStart }: CardProps) { return <article className="task-card" draggable onDragStart={onDragStart} onClick={(event) => onClick(event.currentTarget)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onClick(event.currentTarget); } }} tabIndex={0} aria-label={`Open task ${task.id}`}><strong>{task.title}</strong><span>{task.slug ?? task.id}</span><time dateTime={task.updated_at}>Updated {new Date(task.updated_at).toLocaleString()}</time><span>{task.assignee ? `Assignee: ${task.assignee.first_name} ${task.assignee.last_name}` : "Unassigned"}</span><span>Watchers: {task.watchers.length}</span><span className="task-status" aria-label={`Status: ${statusName}`}>Status: {statusName}</span></article>; }
 
-type DrawerProps = { task: Task; columns: ColumnState[]; projectId: string; projectOwnerId: string; currentUser: UserSummary; onClose: () => void; onSaved: (task: Task) => void; onStatusChange: (task: Task, statusId: string) => void };
-function TaskDrawer({ task, columns, projectId, projectOwnerId, currentUser, onClose, onSaved, onStatusChange }: DrawerProps) {
+type DrawerProps = { task: Task; columns: ColumnState[]; projectId: string; projectOwnerId: string; currentUser: UserSummary; focusCommentId?: string; onClose: () => void; onSaved: (task: Task) => void; onStatusChange: (task: Task, statusId: string) => void };
+function TaskDrawer({ task, columns, projectId, projectOwnerId, currentUser, focusCommentId, onClose, onSaved, onStatusChange }: DrawerProps) {
+  const [activity, setActivity] = useState<"chat" | "history">("chat");
   const details = useQuery({ queryKey: ["task", task.id], queryFn: () => getTask(task.id) });
-  const history = useQuery({ queryKey: ["task-history", task.id], queryFn: () => getTaskHistory(task.id) });
+  const history = useQuery({ queryKey: ["task-history", task.id], queryFn: () => getTaskHistory(task.id), enabled: activity === "history" });
   const watchers = useQuery({ queryKey: ["task-watchers", task.id], queryFn: () => listTaskWatchers(task.id) });
   const members = useQuery({ queryKey: ["project-members", projectId], queryFn: () => listProjectMembers(projectId) });
   const [title, setTitle] = useState(task.title);
@@ -203,7 +206,8 @@ function TaskDrawer({ task, columns, projectId, projectOwnerId, currentUser, onC
       <p>Watchers: {watchers.data?.length ?? task.watchers.length}</p>{watchers.isPending && <p className="muted">Loading watchers...</p>}{watchers.isError && <p className="error" role="alert">Unable to load watchers.</p>}{!watchers.isPending && !watchers.isError && !watchers.data?.length && <p className="muted">No watchers.</p>}<div className="watcher-list">{watchers.data?.map((watcher) => <span className="watcher" key={watcher.id}>{watcher.email}</span>)}</div>
       <button className="button secondary compact drawer-watch" type="button" disabled={watcherMutation.isPending} onClick={() => watcherMutation.mutate()}>{isWatching ? "Stop watching" : "Watch task"}</button>
     </div>
-    <div className="drawer-section"><h3>History</h3>{history.isPending && <p className="muted">Loading history...</p>}{history.data?.entries.map((entry: TaskHistoryEntry) => { const expanded = expandedHistory[entry.id] ?? false; const text = formatHistoryEntry(entry); return <div className="history-entry" key={entry.id}><p><time dateTime={entry.created_at}>{new Date(entry.created_at).toLocaleString()}</time> · <strong>{entry.actor.first_name} {entry.actor.last_name}</strong> · {text}</p>{entry.field_name === "description" && entry.new_value && <details open={expanded}><summary onClick={(event) => { event.preventDefault(); setExpandedHistory((current) => ({ ...current, [entry.id]: !expanded })); }}>{expanded ? "Hide details" : "Show details"}</summary><p>{entry.new_value}</p></details>}</div>; })}</div>
+    <div className="drawer-section activity-section"><div role="tablist" aria-label="Task activity" onKeyDown={(event) => { if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return; event.preventDefault(); const next = event.key === "Home" ? "chat" : event.key === "End" ? "history" : activity === "chat" ? "history" : "chat"; setActivity(next); document.getElementById("activity-" + next)?.focus(); }}><button type="button" role="tab" id="activity-chat" aria-controls="activity-chat-panel" tabIndex={activity === "chat" ? 0 : -1} aria-selected={activity === "chat"} onClick={() => setActivity("chat")}>Chat</button><button type="button" role="tab" id="activity-history" aria-controls="activity-history-panel" tabIndex={activity === "history" ? 0 : -1} aria-selected={activity === "history"} onClick={() => setActivity("history")}>History</button></div>
+    <div role="tabpanel" id="activity-chat-panel" aria-labelledby="activity-chat" hidden={activity !== "chat"}><TaskChat key={task.id} taskId={task.id} projectId={projectId} focusCommentId={focusCommentId} /></div><div role="tabpanel" id="activity-history-panel" aria-labelledby="activity-history" hidden={activity !== "history"}><h3>History</h3>{history.isError && <p className="error" role="alert">Unable to load history. <button type="button" onClick={() => void history.refetch()}>Retry history</button></p>}{history.isPending && <p className="muted">Loading history...</p>}{history.data?.entries.map((entry: TaskHistoryEntry) => { const expanded = expandedHistory[entry.id] ?? false; const text = formatHistoryEntry(entry); return <div className="history-entry" key={entry.id}><p><time dateTime={entry.created_at}>{new Date(entry.created_at).toLocaleString()}</time> · <strong>{entry.actor.first_name} {entry.actor.last_name}</strong> · {text}</p>{entry.field_name === "description" && entry.new_value && <details open={expanded}><summary onClick={(event) => { event.preventDefault(); setExpandedHistory((current) => ({ ...current, [entry.id]: !expanded })); }}>{expanded ? "Hide details" : "Show details"}</summary><p>{entry.new_value}</p></details>}</div>; })}</div></div>
   </aside>;
 }
 
@@ -214,3 +218,14 @@ function readWidths(projectId: string): Record<string, number> { try { return JS
 function appendUnique(current: Task[], next: Task[]) { const ids = new Set(current.map((task) => task.id)); return [...current, ...next.filter((task) => !ids.has(task.id))]; }
 function replaceTask(columns: ColumnState[], task: Task): ColumnState[] { return columns.map((column) => ({ ...column, tasks: column.tasks.map((item) => item.id === task.id ? task : item) })); }
 function messageFor(error: unknown) { return error instanceof Error ? error.message : "Request failed"; }
+
+export function NotificationTaskPanel({ taskId, commentId, currentUser, onClose }: { taskId: string; commentId?: string; currentUser: UserSummary; onClose: () => void }) {
+  const client = useQueryClient();
+  const task = useQuery({ queryKey: ["task", taskId], queryFn: () => getTask(taskId), retry: false });
+  const project = useQuery({ queryKey: ["project", task.data?.project_id], queryFn: () => getProject(task.data!.project_id), enabled: !!task.data, retry: false });
+  const board = useQuery({ queryKey: ["board", task.data?.project_id], queryFn: () => getBoard(task.data!.project_id), enabled: !!task.data, retry: false });
+  const update = useMutation({ mutationFn: (statusId: string) => updateTask(taskId, { status_id: statusId }), onSuccess: (saved) => client.setQueryData(["task", taskId], saved) });
+  if (task.isError || project.isError || board.isError) return <aside className="task-drawer"><button type="button" onClick={onClose}>Close</button><p role="alert">Task is unavailable.</p></aside>;
+  if (!task.data || !project.data || !board.data) return <aside className="task-drawer"><button type="button" onClick={onClose}>Close</button><p role="status">Loading task...</p></aside>;
+  return <><TaskDrawer key={taskId + (commentId ?? "")} task={task.data} columns={board.data.columns.map((column) => ({ ...column, loadingMore: false, error: "" }))} projectId={project.data.id} projectOwnerId={project.data.owner_id} currentUser={currentUser} focusCommentId={commentId} onClose={onClose} onSaved={(saved) => client.setQueryData(["task", taskId], saved)} onStatusChange={(_, statusId) => update.mutate(statusId)} />{update.isError && <p className="notification-task-error" role="alert">{messageFor(update.error)}</p>}</>;
+}

@@ -66,6 +66,7 @@ describe("Kanban interactions", () => {
   it("loads the next page independently for each column", async () => {
     const fetchMock = vi.fn((input: string | URL | Request) => {
       const url = String(input);
+      if (url.includes("/comments?")) return Promise.resolve(new Response(JSON.stringify({ comments: [], has_more: false }), { status: 200 }));
       if (url.includes("/board?")) return response(board);
       if (url.includes("status-backlog/tasks")) return response({ tasks: [{ ...task, id: "task-2", title: "Loaded later" }], next_cursor: null });
       if (url.includes("status-done/tasks")) return response({ tasks: [{ ...task, id: "task-3", status_id: "status-done", title: "Done later" }], next_cursor: null });
@@ -91,6 +92,7 @@ describe("Kanban interactions", () => {
   it("shows a mutation error and rolls the card back", async () => {
     const fetchMock = vi.fn((input: string | URL | Request, options?: RequestInit) => {
       const url = String(input);
+      if (url.includes("/comments?")) return Promise.resolve(new Response(JSON.stringify({ comments: [], has_more: false }), { status: 200 }));
       if (url.includes("/board?")) return response(board);
       if (url === "/api/tasks/task-1" && options?.method === "PATCH") return response({ detail: "You cannot change this task" }, 403);
       if (url.includes("/tasks/task-1/history")) return response({ entries: [], next_cursor: null });
@@ -113,6 +115,7 @@ describe("Kanban interactions", () => {
     const assignedTask = { ...task, assignee_id: "owner-1" };
     const fetchMock = vi.fn((input: string | URL | Request) => {
       const url = String(input);
+      if (url.includes("/comments?")) return Promise.resolve(new Response(JSON.stringify({ comments: [], has_more: false }), { status: 200 }));
       if (url.includes("/board?")) return response({ ...board, columns: [{ ...board.columns[0], tasks: [assignedTask] }, board.columns[1]] });
       if (url.includes("/tasks/task-1/history")) return response({ entries: [], next_cursor: null });
       if (url.includes("/tasks/task-1/watchers")) return response([]);
@@ -136,6 +139,7 @@ describe("Kanban interactions", () => {
     let boardRequests = 0;
     const fetchMock = vi.fn((input: string | URL | Request, options?: RequestInit) => {
       const url = String(input);
+      if (url.includes("/comments?")) return Promise.resolve(new Response(JSON.stringify({ comments: [], has_more: false }), { status: 200 }));
       if (url.includes("/board?")) {
         boardRequests += 1;
         return response(boardRequests === 1 ? board : updatedBoard);
@@ -161,6 +165,7 @@ describe("Kanban interactions", () => {
   it("keeps the column name when creation fails and prevents blank submissions", async () => {
     const fetchMock = vi.fn((input: string | URL | Request, options?: RequestInit) => {
       const url = String(input);
+      if (url.includes("/comments?")) return Promise.resolve(new Response(JSON.stringify({ comments: [], has_more: false }), { status: 200 }));
       if (url.includes("/board?")) return response(board);
       if (url === "/api/projects/project-1/statuses" && options?.method === "POST") return response({ detail: "Only the project owner can manage statuses" }, 403);
       return response([]);
@@ -192,6 +197,7 @@ describe("Kanban interactions", () => {
     let boardRequests = 0;
     const fetchMock = vi.fn((input: string | URL | Request, options?: RequestInit) => {
       const url = String(input);
+      if (url.includes("/comments?")) return Promise.resolve(new Response(JSON.stringify({ comments: [], has_more: false }), { status: 200 }));
       if (url.includes("/board?")) {
         boardRequests += 1;
         return response(boardRequests === 1 ? board : reorderedBoard);
@@ -218,6 +224,7 @@ describe("Kanban interactions", () => {
   it("rolls back column order when reorder fails and hides controls for members", async () => {
     const fetchMock = vi.fn((input: string | URL | Request, options?: RequestInit) => {
       const url = String(input);
+      if (url.includes("/comments?")) return Promise.resolve(new Response(JSON.stringify({ comments: [], has_more: false }), { status: 200 }));
       if (url.includes("/board?")) return response(board);
       if (url.includes("/statuses/reorder") && options?.method === "POST") return response({ detail: "Only the project owner can manage statuses" }, 403);
       return response([]);
