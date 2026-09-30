@@ -1,4 +1,5 @@
 from app.models.domain import (
+    DeadlineNotificationDelivery,
     Notification,
     Organization,
     OrganizationMember,
@@ -14,6 +15,7 @@ from app.models.domain import (
 )
 
 __all__ = [
+    "DeadlineNotificationDelivery",
     "Organization",
     "OrganizationMember",
     "Project",

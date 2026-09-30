@@ -1,10 +1,12 @@
+from datetime import date
 from uuid import UUID
 
-from sqlalchemy import and_, desc, func, or_, select
+from sqlalchemy import and_, desc, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models import (
+    DeadlineNotificationDelivery,
     Notification,
     Organization,
     OrganizationMember,
@@ -48,6 +50,48 @@ class DomainRepository:
             .options(selectinload(Task.assignee).selectinload(User.profile))
             .where(Task.id == task_id)
         )
+
+    async def list_due_tasks(self, current_date: date, limit: int) -> list[Task]:
+        delivered = exists().where(
+            DeadlineNotificationDelivery.task_id == Task.id,
+            DeadlineNotificationDelivery.due_date == Task.due_date,
+            DeadlineNotificationDelivery.recipient_id == Task.assignee_id,
+        )
+        result = await self.session.scalars(
+            select(Task)
+            .join(ProjectStatus, ProjectStatus.id == Task.status_id)
+            .join(Project, Project.id == Task.project_id)
+            .join(Organization, Organization.id == Project.organization_id)
+            .join(User, User.id == Task.assignee_id)
+            .join(
+                ProjectMember,
+                and_(
+                    ProjectMember.project_id == Task.project_id,
+                    ProjectMember.user_id == Task.assignee_id,
+                ),
+            )
+            .join(
+                OrganizationMember,
+                and_(
+                    OrganizationMember.organization_id == Project.organization_id,
+                    OrganizationMember.user_id == Task.assignee_id,
+                ),
+            )
+            .where(
+                Task.due_date.is_not(None),
+                Task.due_date <= current_date,
+                Task.assignee_id.is_not(None),
+                ProjectStatus.is_completed.is_(False),
+                Project.deleted_at.is_(None),
+                Organization.deleted_at.is_(None),
+                User.is_active.is_(True),
+                ~delivered,
+            )
+            .order_by(Task.due_date, Task.id)
+            .limit(limit)
+            .with_for_update(skip_locked=True)
+        )
+        return list(result)
 
     async def get_project_task_sequence(self, project_id: UUID) -> ProjectTaskSequence | None:
         return await self.session.scalar(

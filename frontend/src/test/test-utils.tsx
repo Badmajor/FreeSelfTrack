@@ -1,5 +1,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, type RenderOptions, type RenderResult } from "@testing-library/react";
+import {
+  render,
+  type RenderOptions,
+  type RenderResult,
+} from "@testing-library/react";
 import type { ReactElement } from "react";
 
 import type { Board, Project, Task } from "../api";
@@ -42,8 +46,12 @@ export function makeTask(overrides: Partial<Task> = {}): Task {
     created_by: "owner-1",
     reporter_id: "owner-1",
     assignee_id: null,
+    reporter: { id: "owner-1", first_name: "Owner", last_name: "User" },
     assignee: null,
     watchers: [],
+    story_points: null,
+    due_date: null,
+    priority: null,
     created_at: "2026-01-01T10:00:00Z",
     updated_at: "2026-01-02T10:00:00Z",
     ...overrides,
@@ -55,12 +63,26 @@ export function makeBoard(task = makeTask()): Board {
     project_id: testProject.id,
     columns: [
       {
-        status: { id: "status-backlog", project_id: testProject.id, name: "Backlog", position: 0, is_active: true },
+        status: {
+          id: "status-backlog",
+          project_id: testProject.id,
+          name: "Backlog",
+          position: 0,
+          is_active: true,
+          is_completed: false,
+        },
         tasks: [task],
         next_cursor: null,
       },
       {
-        status: { id: "status-done", project_id: testProject.id, name: "Done", position: 1, is_active: true },
+        status: {
+          id: "status-done",
+          project_id: testProject.id,
+          name: "Done",
+          position: 1,
+          is_active: true,
+          is_completed: true,
+        },
         tasks: [],
         next_cursor: null,
       },

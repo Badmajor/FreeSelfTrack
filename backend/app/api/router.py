@@ -16,6 +16,7 @@ from app.schemas.domain import (
     NotificationResponse,
     OrganizationCreate,
     OrganizationResponse,
+    ParticipantSummary,
     ProfileResponse,
     ProfileUpdate,
     ProjectCreate,
@@ -33,7 +34,6 @@ from app.schemas.domain import (
     TaskUpdate,
     UnreadCountResponse,
     UserResponse,
-    UserSummary,
     WatcherRequest,
 )
 from app.services.auth import AuthService
@@ -425,7 +425,7 @@ async def get_task_history(
     )
 
 
-@router.get("/tasks/{task_id}/watchers", response_model=list[UserSummary])
+@router.get("/tasks/{task_id}/watchers", response_model=list[ParticipantSummary])
 async def list_task_watchers(
     task_id: UUID,
     user_id: UUID = Depends(current_user_id),
@@ -434,7 +434,7 @@ async def list_task_watchers(
     return await translate_errors(service(session).list_task_watchers)(user_id, task_id)
 
 
-@router.post("/tasks/{task_id}/watchers", response_model=list[UserSummary])
+@router.post("/tasks/{task_id}/watchers", response_model=list[ParticipantSummary])
 async def add_task_watcher(
     task_id: UUID,
     data: WatcherRequest,
@@ -444,7 +444,7 @@ async def add_task_watcher(
     return await translate_errors(service(session).add_task_watcher)(user_id, task_id, data)
 
 
-@router.delete("/tasks/{task_id}/watchers/{watcher_id}", response_model=list[UserSummary])
+@router.delete("/tasks/{task_id}/watchers/{watcher_id}", response_model=list[ParticipantSummary])
 async def remove_task_watcher(
     task_id: UUID,
     watcher_id: UUID,

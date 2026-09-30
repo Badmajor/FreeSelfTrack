@@ -1,7 +1,16 @@
-from datetime import datetime
+from datetime import date, datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+
+STORY_POINTS = {1, 2, 3, 5, 8, 13, 21}
+
+
+def valid_story_points(value: object) -> object:
+    if value is not None and (type(value) is not int or value not in STORY_POINTS):
+        raise ValueError("Story points must be one of 1, 2, 3, 5, 8, 13, 21")
+    return value
 
 
 class RegisterRequest(BaseModel):
@@ -105,6 +114,7 @@ class StatusCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     position: int | None = Field(default=None, ge=0)
     is_active: bool = True
+    is_completed: bool = False
 
     @field_validator("name")
     @classmethod
@@ -119,6 +129,7 @@ class StatusUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     position: int | None = Field(default=None, ge=0)
     is_active: bool | None = None
+    is_completed: bool | None = None
 
     @field_validator("name")
     @classmethod
@@ -139,6 +150,7 @@ class StatusResponse(BaseModel):
     name: str
     position: int
     is_active: bool
+    is_completed: bool
 
 
 class StatusReorder(BaseModel):
@@ -152,7 +164,7 @@ class UserSummary(BaseModel):
     email: EmailStr
 
 
-class AssigneeSummary(BaseModel):
+class ParticipantSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
@@ -166,6 +178,11 @@ class TaskCreate(BaseModel):
     status_id: UUID
     reporter_id: UUID | None = None
     assignee_id: UUID | None = None
+    story_points: int | None = None
+    due_date: date | None = None
+    priority: Literal["low", "normal", "major", "critical"] | None = None
+
+    _story_points = field_validator("story_points", mode="before")(valid_story_points)
 
 
 class TaskUpdate(BaseModel):
@@ -174,6 +191,11 @@ class TaskUpdate(BaseModel):
     status_id: UUID | None = None
     reporter_id: UUID | None = None
     assignee_id: UUID | None = None
+    story_points: int | None = None
+    due_date: date | None = None
+    priority: Literal["low", "normal", "major", "critical"] | None = None
+
+    _story_points = field_validator("story_points", mode="before")(valid_story_points)
 
 
 class TaskResponse(BaseModel):
@@ -188,8 +210,12 @@ class TaskResponse(BaseModel):
     created_by: UUID
     reporter_id: UUID
     assignee_id: UUID | None
-    assignee: AssigneeSummary | None
-    watchers: list[UserSummary] = Field(default_factory=list)
+    reporter: ParticipantSummary
+    assignee: ParticipantSummary | None
+    story_points: int | None
+    due_date: date | None
+    priority: Literal["low", "normal", "major", "critical"] | None
+    watchers: list[ParticipantSummary] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 

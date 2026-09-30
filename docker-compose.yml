@@ -76,6 +76,20 @@ services:
       retries: 20
     networks: [app]
 
+  deadline-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: ["python", "-m", "app.workers.deadlines"]
+    environment:
+      TRACKER_DATABASE_URL: ${TRACKER_DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-tracker}:${POSTGRES_PASSWORD:-tracker}@db:5432/${POSTGRES_DB:-tracker}}
+      TRACKER_DEADLINE_WORKER_INTERVAL_SECONDS: ${DEADLINE_WORKER_INTERVAL_SECONDS:-60}
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [app]
+
   frontend:
     build:
       context: ./frontend

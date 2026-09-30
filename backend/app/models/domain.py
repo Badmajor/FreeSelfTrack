@@ -1,8 +1,11 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from typing import Literal
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
+    Date,
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
@@ -15,6 +18,8 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+
+TaskPriority = Literal["low", "normal", "major", "critical"]
 
 
 class User(Base):
@@ -133,6 +138,7 @@ class ProjectStatus(Base):
     name: Mapped[str] = mapped_column(String(120))
     position: Mapped[int] = mapped_column(Integer)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_completed: Mapped[bool] = mapped_column(Boolean, default=False)
 
     project: Mapped[Project] = relationship(back_populates="statuses")
     tasks: Mapped[list["Task"]] = relationship(back_populates="status", overlaps="tasks")
@@ -160,6 +166,9 @@ class Task(Base):
     assignee_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("users.id"), nullable=True, index=True
     )
+    story_points: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    due_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    priority: Mapped[TaskPriority | None] = mapped_column(String(16), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
@@ -186,6 +195,14 @@ class Task(Base):
         ),
         UniqueConstraint("project_id", "slug", name="uq_tasks_project_slug"),
         UniqueConstraint("project_id", "sequence_number", name="uq_tasks_project_sequence"),
+        CheckConstraint(
+            "story_points IS NULL OR story_points IN (1, 2, 3, 5, 8, 13, 21)",
+            name="ck_tasks_story_points_fibonacci",
+        ),
+        CheckConstraint(
+            "priority IS NULL OR priority IN ('low', 'normal', 'major', 'critical')",
+            name="ck_tasks_priority",
+        ),
     )
 
 
@@ -248,3 +265,18 @@ class Notification(Base):
         DateTime(timezone=True), default=lambda: datetime.now(UTC), index=True
     )
     read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class DeadlineNotificationDelivery(Base):
+    __tablename__ = "deadline_notification_deliveries"
+
+    task_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tasks.id", ondelete="CASCADE"), primary_key=True
+    )
+    due_date: Mapped[date] = mapped_column(Date, primary_key=True)
+    recipient_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )

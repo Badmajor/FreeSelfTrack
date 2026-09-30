@@ -1,6 +1,15 @@
 import { TaskChat } from "./TaskChat";
-import { FormEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
+import {
+  FormEvent,
+  KeyboardEvent as ReactKeyboardEvent,
+  PointerEvent as ReactPointerEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Eye, EyeOff } from "lucide-react";
 
 import {
   addTaskWatcher,
@@ -16,37 +25,63 @@ import {
   listTaskWatchers,
   removeTaskWatcher,
   updateTask,
+  updateStatus,
   type BoardColumn,
+  type Priority,
   type Project,
   type Task,
   type TaskHistoryEntry,
   type UserSummary,
 } from "./api";
 
-type Props = { project: Project; currentUser: UserSummary; onClose: () => void };
+type Props = {
+  project: Project;
+  currentUser: UserSummary;
+  onClose: () => void;
+};
 type ColumnState = BoardColumn & { loadingMore: boolean; error: string };
 const DEFAULT_WIDTH = 280;
+const STORY_POINTS = [1, 2, 3, 5, 8, 13, 21] as const;
+const PRIORITIES: Priority[] = ["low", "normal", "major", "critical"];
 
 export function KanbanView({ project, currentUser, onClose }: Props) {
   const queryClient = useQueryClient();
-  const board = useQuery({ queryKey: ["board", project.id], queryFn: () => getBoard(project.id) });
+  const board = useQuery({
+    queryKey: ["board", project.id],
+    queryFn: () => getBoard(project.id),
+  });
   const [columns, setColumns] = useState<ColumnState[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const lastTriggerRef = useRef<HTMLElement | null>(null);
   const [draggedTask, setDraggedTask] = useState<Task | null>(null);
-  const [widths, setWidths] = useState<Record<string, number>>(() => readWidths(project.id));
+  const [widths, setWidths] = useState<Record<string, number>>(() =>
+    readWidths(project.id),
+  );
   const [error, setError] = useState("");
   const [creatingColumn, setCreatingColumn] = useState(false);
   const [draggedColumnId, setDraggedColumnId] = useState<string | null>(null);
   const draggedColumnRef = useRef<string | null>(null);
   const canManageColumns = currentUser.id === project.owner_id;
 
-  useEffect(() => { if (board.data) setColumns(board.data.columns.map((column) => ({ ...column, loadingMore: false, error: "" }))); }, [board.data]);
-  useEffect(() => { window.localStorage.setItem(widthKey(project.id), JSON.stringify(widths)); }, [project.id, widths]);
+  useEffect(() => {
+    if (board.data)
+      setColumns(
+        board.data.columns.map((column) => ({
+          ...column,
+          loadingMore: false,
+          error: "",
+        })),
+      );
+  }, [board.data]);
+  useEffect(() => {
+    window.localStorage.setItem(widthKey(project.id), JSON.stringify(widths));
+  }, [project.id, widths]);
 
   const update = useMutation({
-    mutationFn: ({ taskId, statusId }: { taskId: string; statusId: string }) => updateTask(taskId, { status_id: statusId }),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["board", project.id] }),
+    mutationFn: ({ taskId, statusId }: { taskId: string; statusId: string }) =>
+      updateTask(taskId, { status_id: statusId }),
+    onSuccess: () =>
+      void queryClient.invalidateQueries({ queryKey: ["board", project.id] }),
     onError: (requestError) => setError(messageFor(requestError)),
   });
 
@@ -55,46 +90,301 @@ export function KanbanView({ project, currentUser, onClose }: Props) {
     update.mutate({ taskId: task.id, statusId });
   }
 
-  const reorder = useMutation({ mutationFn: (statusIds: string[]) => reorderStatuses(project.id, statusIds) });
+  const reorder = useMutation({
+    mutationFn: (statusIds: string[]) => reorderStatuses(project.id, statusIds),
+  });
+  const completionUpdate = useMutation({
+    mutationFn: ({
+      statusId,
+      isCompleted,
+    }: {
+      statusId: string;
+      isCompleted: boolean;
+    }) => updateStatus(project.id, statusId, { is_completed: isCompleted }),
+    onSuccess: (saved) => {
+      setColumns((current) =>
+        current.map((column) =>
+          column.status.id === saved.id ? { ...column, status: saved } : column,
+        ),
+      );
+      void queryClient.invalidateQueries({ queryKey: ["board", project.id] });
+    },
+    onError: (requestError) => setError(messageFor(requestError)),
+  });
 
-  function moveColumn(sourceId: string, targetId: string | null, placement: "before" | "after" | "start" | "end" = "after") {
+  function moveColumn(
+    sourceId: string,
+    targetId: string | null,
+    placement: "before" | "after" | "start" | "end" = "after",
+  ) {
     if (!canManageColumns || reorder.isPending || sourceId === targetId) return;
     const previous = columns;
-    const sourceIndex = previous.findIndex((column) => column.status.id === sourceId);
+    const sourceIndex = previous.findIndex(
+      (column) => column.status.id === sourceId,
+    );
     if (sourceIndex < 0) return;
     const next = previous.filter((column) => column.status.id !== sourceId);
-    const targetIndex = targetId === null ? next.length : next.findIndex((column) => column.status.id === targetId);
-    const insertIndex = placement === "start" ? 0 : placement === "end" || targetId === null ? next.length : targetIndex + (placement === "after" ? 1 : 0);
+    const targetIndex =
+      targetId === null
+        ? next.length
+        : next.findIndex((column) => column.status.id === targetId);
+    const insertIndex =
+      placement === "start"
+        ? 0
+        : placement === "end" || targetId === null
+          ? next.length
+          : targetIndex + (placement === "after" ? 1 : 0);
     next.splice(insertIndex, 0, previous[sourceIndex]);
     setColumns(next);
-    reorder.mutate(next.map((column) => column.status.id), {
-      onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["board", project.id] }),
-      onError: (requestError) => { setColumns(previous); setError(messageFor(requestError)); },
-    });
+    reorder.mutate(
+      next.map((column) => column.status.id),
+      {
+        onSuccess: () =>
+          void queryClient.invalidateQueries({
+            queryKey: ["board", project.id],
+          }),
+        onError: (requestError) => {
+          setColumns(previous);
+          setError(messageFor(requestError));
+        },
+      },
+    );
   }
 
   async function loadMore(column: ColumnState) {
     if (!column.next_cursor || column.loadingMore) return;
-    setColumns((current) => current.map((item) => item.status.id === column.status.id ? { ...item, loadingMore: true, error: "" } : item));
+    setColumns((current) =>
+      current.map((item) =>
+        item.status.id === column.status.id
+          ? { ...item, loadingMore: true, error: "" }
+          : item,
+      ),
+    );
     try {
-      const page = await getColumnTasks(project.id, column.status.id, column.next_cursor);
-      setColumns((current) => current.map((item) => item.status.id === column.status.id ? { ...item, tasks: appendUnique(item.tasks, page.tasks), next_cursor: page.next_cursor, loadingMore: false } : item));
+      const page = await getColumnTasks(
+        project.id,
+        column.status.id,
+        column.next_cursor,
+      );
+      setColumns((current) =>
+        current.map((item) =>
+          item.status.id === column.status.id
+            ? {
+                ...item,
+                tasks: appendUnique(item.tasks, page.tasks),
+                next_cursor: page.next_cursor,
+                loadingMore: false,
+              }
+            : item,
+        ),
+      );
     } catch (requestError) {
-      setColumns((current) => current.map((item) => item.status.id === column.status.id ? { ...item, loadingMore: false, error: messageFor(requestError) } : item));
+      setColumns((current) =>
+        current.map((item) =>
+          item.status.id === column.status.id
+            ? { ...item, loadingMore: false, error: messageFor(requestError) }
+            : item,
+        ),
+      );
     }
   }
 
-  const activeTask = useMemo(() => columns.flatMap((column) => column.tasks).find((task) => task.id === selectedTaskId) ?? null, [columns, selectedTaskId]);
-  if (board.isPending) return <section className="kanban-shell"><p className="loading">Loading Kanban...</p></section>;
-  if (board.isError) return <section className="kanban-shell"><p className="error" role="alert">{messageFor(board.error)}</p><button className="button secondary" type="button" onClick={() => void board.refetch()}>Retry</button></section>;
+  const activeTask = useMemo(
+    () =>
+      columns
+        .flatMap((column) => column.tasks)
+        .find((task) => task.id === selectedTaskId) ?? null,
+    [columns, selectedTaskId],
+  );
+  if (board.isPending)
+    return (
+      <section className="kanban-shell">
+        <p className="loading">Loading Kanban...</p>
+      </section>
+    );
+  if (board.isError)
+    return (
+      <section className="kanban-shell">
+        <p className="error" role="alert">
+          {messageFor(board.error)}
+        </p>
+        <button
+          className="button secondary"
+          type="button"
+          onClick={() => void board.refetch()}
+        >
+          Retry
+        </button>
+      </section>
+    );
 
-  return <section className="kanban-shell" aria-label={`${project.name} Kanban`}>
-    <div className="kanban-heading"><div><div className="eyebrow">Project board</div><h2>{project.name}</h2></div><div className="kanban-actions">{canManageColumns && <button className="button compact" type="button" onClick={() => setCreatingColumn((value) => !value)}>{creatingColumn ? "Cancel" : "Add column"}</button>}<button className="button secondary compact" type="button" onClick={onClose}>Back to project</button></div></div>
-    {creatingColumn && <CreateColumnForm projectId={project.id} onCreated={() => { setCreatingColumn(false); void queryClient.invalidateQueries({ queryKey: ["board", project.id] }); }} />}
-    {error && <p className="error" role="alert">{error}</p>}
-    <div className="kanban-board">{columns.map((column) => <KanbanColumn key={column.status.id} column={column} width={widths[column.status.id] ?? DEFAULT_WIDTH} onWidthChange={(width) => setWidths((current) => ({ ...current, [column.status.id]: width }))} canReorder={canManageColumns} isReordering={reorder.isPending} isColumnDragging={draggedColumnId !== null} onColumnDragStart={(event) => { event.stopPropagation(); setDraggedColumnId(column.status.id); draggedColumnRef.current = column.status.id; if (event.dataTransfer) { event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("application/x-kanban-column", column.status.id); } }} onColumnDragEnd={() => { window.setTimeout(() => { setDraggedColumnId(null); draggedColumnRef.current = null; }, 0); }} onColumnDrop={(event) => { const sourceId = draggedColumnRef.current ?? draggedColumnId; if (sourceId) { event.preventDefault(); const sourceIndex = columns.findIndex((item) => item.status.id === sourceId); const targetIndex = columns.findIndex((item) => item.status.id === column.status.id); moveColumn(sourceId, column.status.id, sourceIndex < targetIndex ? "after" : "before"); setDraggedColumnId(null); draggedColumnRef.current = null; } }} onColumnKeyDown={(event) => { if (!canManageColumns || event.target !== event.currentTarget) return; if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return; const index = columns.findIndex((item) => item.status.id === column.status.id); const target = columns[index + (event.key === "ArrowLeft" ? -1 : 1)]; if (target) { event.preventDefault(); moveColumn(column.status.id, target.status.id, event.key === "ArrowLeft" ? "before" : "after"); } }} onCreate={async (title) => { await createTask(project.id, { title, description: null, status_id: column.status.id }); await queryClient.invalidateQueries({ queryKey: ["board", project.id] }); }} onTaskClick={(taskId, trigger) => { lastTriggerRef.current = trigger; setSelectedTaskId(taskId); }} onDragStart={setDraggedTask} onDrop={(statusId) => { if (draggedTask) changeStatus(draggedTask, statusId); setDraggedTask(null); }} onLoadMore={() => void loadMore(column)} />)}</div>
-    {activeTask && <TaskDrawer key={activeTask.id} task={activeTask} columns={columns} projectId={project.id} projectOwnerId={project.owner_id} currentUser={currentUser} onClose={() => { setSelectedTaskId(null); requestAnimationFrame(() => lastTriggerRef.current?.focus()); }} onSaved={(saved) => setColumns((current) => replaceTask(current, saved))} onStatusChange={changeStatus} />}
-  </section>;
+  return (
+    <section className="kanban-shell" aria-label={`${project.name} Kanban`}>
+      <div className="kanban-heading">
+        <div>
+          <div className="eyebrow">Project board</div>
+          <h2>{project.name}</h2>
+        </div>
+        <div className="kanban-actions">
+          {canManageColumns && (
+            <button
+              className="button compact"
+              type="button"
+              onClick={() => setCreatingColumn((value) => !value)}
+            >
+              {creatingColumn ? "Cancel" : "Add column"}
+            </button>
+          )}
+          <button
+            className="button secondary compact"
+            type="button"
+            onClick={onClose}
+          >
+            Back to project
+          </button>
+        </div>
+      </div>
+      {creatingColumn && (
+        <CreateColumnForm
+          projectId={project.id}
+          onCreated={() => {
+            setCreatingColumn(false);
+            void queryClient.invalidateQueries({
+              queryKey: ["board", project.id],
+            });
+          }}
+        />
+      )}
+      {error && (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      )}
+      <div className="kanban-board">
+        {columns.map((column) => (
+          <KanbanColumn
+            key={column.status.id}
+            column={column}
+            width={widths[column.status.id] ?? DEFAULT_WIDTH}
+            onWidthChange={(width) =>
+              setWidths((current) => ({
+                ...current,
+                [column.status.id]: width,
+              }))
+            }
+            canReorder={canManageColumns}
+            canSetCompleted={canManageColumns}
+            isUpdatingCompletion={completionUpdate.isPending}
+            onCompletionChange={(isCompleted) =>
+              completionUpdate.mutate({
+                statusId: column.status.id,
+                isCompleted,
+              })
+            }
+            isReordering={reorder.isPending}
+            isColumnDragging={draggedColumnId !== null}
+            onColumnDragStart={(event) => {
+              event.stopPropagation();
+              setDraggedColumnId(column.status.id);
+              draggedColumnRef.current = column.status.id;
+              if (event.dataTransfer) {
+                event.dataTransfer.effectAllowed = "move";
+                event.dataTransfer.setData(
+                  "application/x-kanban-column",
+                  column.status.id,
+                );
+              }
+            }}
+            onColumnDragEnd={() => {
+              window.setTimeout(() => {
+                setDraggedColumnId(null);
+                draggedColumnRef.current = null;
+              }, 0);
+            }}
+            onColumnDrop={(event) => {
+              const sourceId = draggedColumnRef.current ?? draggedColumnId;
+              if (sourceId) {
+                event.preventDefault();
+                const sourceIndex = columns.findIndex(
+                  (item) => item.status.id === sourceId,
+                );
+                const targetIndex = columns.findIndex(
+                  (item) => item.status.id === column.status.id,
+                );
+                moveColumn(
+                  sourceId,
+                  column.status.id,
+                  sourceIndex < targetIndex ? "after" : "before",
+                );
+                setDraggedColumnId(null);
+                draggedColumnRef.current = null;
+              }
+            }}
+            onColumnKeyDown={(event) => {
+              if (!canManageColumns || event.target !== event.currentTarget)
+                return;
+              if (event.key !== "ArrowLeft" && event.key !== "ArrowRight")
+                return;
+              const index = columns.findIndex(
+                (item) => item.status.id === column.status.id,
+              );
+              const target =
+                columns[index + (event.key === "ArrowLeft" ? -1 : 1)];
+              if (target) {
+                event.preventDefault();
+                moveColumn(
+                  column.status.id,
+                  target.status.id,
+                  event.key === "ArrowLeft" ? "before" : "after",
+                );
+              }
+            }}
+            onCreate={async (title, storyPoints, dueDate, priority) => {
+              await createTask(project.id, {
+                title,
+                description: null,
+                status_id: column.status.id,
+                story_points: storyPoints,
+                due_date: dueDate,
+                priority,
+              });
+              await queryClient.invalidateQueries({
+                queryKey: ["board", project.id],
+              });
+            }}
+            onTaskClick={(taskId, trigger) => {
+              lastTriggerRef.current = trigger;
+              setSelectedTaskId(taskId);
+            }}
+            onDragStart={setDraggedTask}
+            onDrop={(statusId) => {
+              if (draggedTask) changeStatus(draggedTask, statusId);
+              setDraggedTask(null);
+            }}
+            onLoadMore={() => void loadMore(column)}
+          />
+        ))}
+      </div>
+      {activeTask && (
+        <TaskDrawer
+          key={activeTask.id}
+          task={activeTask}
+          columns={columns}
+          projectId={project.id}
+          projectOwnerId={project.owner_id}
+          currentUser={currentUser}
+          onClose={() => {
+            setSelectedTaskId(null);
+            requestAnimationFrame(() => lastTriggerRef.current?.focus());
+          }}
+          onSaved={(saved) =>
+            setColumns((current) => replaceTask(current, saved))
+          }
+          onStatusChange={changeStatus}
+        />
+      )}
+    </section>
+  );
 }
 
 type CreateColumnFormProps = { projectId: string; onCreated: () => void };
@@ -120,23 +410,124 @@ function CreateColumnForm({ projectId, onCreated }: CreateColumnFormProps) {
     setError("");
     create.mutate();
   };
-  return <form className="create-column-form" onSubmit={submit} aria-label="Add column form">
-    <label htmlFor="new-column-name">Column name</label>
-    <div className="create-column-controls"><input id="new-column-name" maxLength={120} value={name} onChange={(event) => { setName(event.target.value); if (error) setError(""); }} disabled={create.isPending} autoFocus /><button className="button compact" type="submit" disabled={create.isPending}>{create.isPending ? "Creating..." : "Create"}</button></div>
-    {error && <p className="error" role="alert">{error}</p>}
-  </form>;
+  return (
+    <form
+      className="create-column-form"
+      onSubmit={submit}
+      aria-label="Add column form"
+    >
+      <label htmlFor="new-column-name">Column name</label>
+      <div className="create-column-controls">
+        <input
+          id="new-column-name"
+          maxLength={120}
+          value={name}
+          onChange={(event) => {
+            setName(event.target.value);
+            if (error) setError("");
+          }}
+          disabled={create.isPending}
+          autoFocus
+        />
+        <button
+          className="button compact"
+          type="submit"
+          disabled={create.isPending}
+        >
+          {create.isPending ? "Creating..." : "Create"}
+        </button>
+      </div>
+      {error && (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      )}
+    </form>
+  );
 }
 
-type ColumnProps = { column: ColumnState; width: number; canReorder: boolean; isReordering: boolean; isColumnDragging: boolean; onColumnDragStart: (event: React.DragEvent<HTMLElement>) => void; onColumnDragEnd: () => void; onColumnDrop: (event: React.DragEvent<HTMLElement>) => void; onColumnKeyDown: (event: ReactKeyboardEvent<HTMLElement>) => void; onWidthChange: (width: number) => void; onCreate: (title: string) => Promise<void>; onTaskClick: (taskId: string, trigger: HTMLElement) => void; onDragStart: (task: Task) => void; onDrop: (statusId: string) => void; onLoadMore: () => void };
-function KanbanColumn({ column, width, canReorder, isReordering, isColumnDragging, onColumnDragStart, onColumnDragEnd, onColumnDrop, onColumnKeyDown, onWidthChange, onCreate, onTaskClick, onDragStart, onDrop, onLoadMore }: ColumnProps) {
-  const [creating, setCreating] = useState(false); const [title, setTitle] = useState(""); const [createError, setCreateError] = useState("");
-  async function submit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); if (!title.trim()) return; try { await onCreate(title.trim()); setTitle(""); setCreating(false); } catch (error) { setCreateError(messageFor(error)); } }
+type ColumnProps = {
+  column: ColumnState;
+  width: number;
+  canReorder: boolean;
+  canSetCompleted: boolean;
+  isReordering: boolean;
+  isUpdatingCompletion: boolean;
+  isColumnDragging: boolean;
+  onColumnDragStart: (event: React.DragEvent<HTMLElement>) => void;
+  onColumnDragEnd: () => void;
+  onColumnDrop: (event: React.DragEvent<HTMLElement>) => void;
+  onColumnKeyDown: (event: ReactKeyboardEvent<HTMLElement>) => void;
+  onWidthChange: (width: number) => void;
+  onCompletionChange: (isCompleted: boolean) => void;
+  onCreate: (
+    title: string,
+    storyPoints: number | null,
+    dueDate: string | null,
+    priority: Priority | null,
+  ) => Promise<void>;
+  onTaskClick: (taskId: string, trigger: HTMLElement) => void;
+  onDragStart: (task: Task) => void;
+  onDrop: (statusId: string) => void;
+  onLoadMore: () => void;
+};
+function KanbanColumn({
+  column,
+  width,
+  canReorder,
+  canSetCompleted,
+  isReordering,
+  isUpdatingCompletion,
+  isColumnDragging,
+  onColumnDragStart,
+  onColumnDragEnd,
+  onColumnDrop,
+  onColumnKeyDown,
+  onWidthChange,
+  onCompletionChange,
+  onCreate,
+  onTaskClick,
+  onDragStart,
+  onDrop,
+  onLoadMore,
+}: ColumnProps) {
+  const [creating, setCreating] = useState(false);
+  const [title, setTitle] = useState("");
+  const [storyPoints, setStoryPoints] = useState("");
+  const [dueDate, setDueDate] = useState("");
+  const [priority, setPriority] = useState<Priority | "">("");
+  const [createError, setCreateError] = useState("");
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!title.trim()) return;
+    try {
+      await onCreate(
+        title.trim(),
+        storyPoints ? Number(storyPoints) : null,
+        dueDate || null,
+        priority || null,
+      );
+      setTitle("");
+      setStoryPoints("");
+      setDueDate("");
+      setPriority("");
+      setCreating(false);
+    } catch (error) {
+      setCreateError(messageFor(error));
+    }
+  }
   const resizeStart = (event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault();
     const startX = event.clientX;
     const startWidth = width;
-    const move = (moveEvent: globalThis.PointerEvent) => onWidthChange(Math.min(520, Math.max(220, startWidth + moveEvent.clientX - startX)));
-    const stop = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", stop); };
+    const move = (moveEvent: globalThis.PointerEvent) =>
+      onWidthChange(
+        Math.min(520, Math.max(220, startWidth + moveEvent.clientX - startX)),
+      );
+    const stop = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+    };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", stop);
   };
@@ -144,88 +535,864 @@ function KanbanColumn({ column, width, canReorder, isReordering, isColumnDraggin
     event.stopPropagation();
     if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
       event.preventDefault();
-      onWidthChange(Math.min(520, Math.max(220, width + (event.key === "ArrowRight" ? 20 : -20))));
+      onWidthChange(
+        Math.min(
+          520,
+          Math.max(220, width + (event.key === "ArrowRight" ? 20 : -20)),
+        ),
+      );
     }
   };
-  return <section className="kanban-column" style={{ width }} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); if (isColumnDragging) onColumnDrop(event); else onDrop(column.status.id); }} aria-labelledby={`status-${column.status.id}`}>
-    <header className="kanban-column-header" draggable={canReorder && !isReordering} tabIndex={canReorder ? 0 : undefined} aria-label={"Reorder " + column.status.name + " column"} title="Drag to reorder column" onKeyDown={onColumnKeyDown} onDragStart={onColumnDragStart} onDragEnd={onColumnDragEnd}><div><h3 id={`status-${column.status.id}`}>{column.status.name}</h3><span>{column.tasks.length}</span></div><div className="resize-handle" role="separator" aria-orientation="vertical" aria-label={`Resize ${column.status.name} column`} aria-valuemin={220} aria-valuemax={520} aria-valuenow={width} tabIndex={0} onPointerDown={resizeStart} onKeyDown={resizeKeyDown} /></header>
-    <div className="task-list" onScroll={(event) => { const target = event.currentTarget; if (target.scrollTop + target.clientHeight >= target.scrollHeight - 24) onLoadMore(); }}>{column.tasks.map((task) => <TaskCard key={task.id} task={task} statusName={column.status.name} onClick={(trigger) => onTaskClick(task.id, trigger)} onDragStart={() => onDragStart(task)} />)}{!column.tasks.length && <p className="empty-state compact-empty">No tasks in this column.</p>}{column.loadingMore && <p className="muted">Loading more...</p>}{column.error && <p className="error" role="alert">{column.error}</p>}</div>
-    <button className="button compact" type="button" onClick={() => setCreating((value) => !value)}>{creating ? "Cancel" : "Add task"}</button>{creating && <form className="create-task-form" onSubmit={(event) => void submit(event)}><label htmlFor={`new-task-${column.status.id}`}>Title</label><input id={`new-task-${column.status.id}`} value={title} onChange={(event) => setTitle(event.target.value)} required /><button className="button" type="submit">Create</button>{createError && <p className="error" role="alert">{createError}</p>}</form>}
-  </section>;
+  return (
+    <section
+      className="kanban-column"
+      style={{ width }}
+      onDragOver={(event) => event.preventDefault()}
+      onDrop={(event) => {
+        event.preventDefault();
+        if (isColumnDragging) onColumnDrop(event);
+        else onDrop(column.status.id);
+      }}
+      aria-labelledby={`status-${column.status.id}`}
+    >
+      <header
+        className="kanban-column-header"
+        draggable={canReorder && !isReordering}
+        tabIndex={canReorder ? 0 : undefined}
+        aria-label={"Reorder " + column.status.name + " column"}
+        title="Drag to reorder column"
+        onKeyDown={onColumnKeyDown}
+        onDragStart={onColumnDragStart}
+        onDragEnd={onColumnDragEnd}
+      >
+        <div>
+          <h3 id={`status-${column.status.id}`}>{column.status.name}</h3>
+          <span>{column.tasks.length}</span>
+          {canSetCompleted ? (
+            <label
+              className="completion-toggle"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <input
+                type="checkbox"
+                checked={column.status.is_completed}
+                disabled={isUpdatingCompletion}
+                onChange={(event) => onCompletionChange(event.target.checked)}
+              />{" "}
+              Completing status
+            </label>
+          ) : column.status.is_completed ? (
+            <span className="completion-badge">Completed</span>
+          ) : null}
+        </div>
+        <div
+          className="resize-handle"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label={`Resize ${column.status.name} column`}
+          aria-valuemin={220}
+          aria-valuemax={520}
+          aria-valuenow={width}
+          tabIndex={0}
+          onPointerDown={resizeStart}
+          onKeyDown={resizeKeyDown}
+        />
+      </header>
+      <div
+        className="task-list"
+        onScroll={(event) => {
+          const target = event.currentTarget;
+          if (
+            target.scrollTop + target.clientHeight >=
+            target.scrollHeight - 24
+          )
+            onLoadMore();
+        }}
+      >
+        {column.tasks.map((task) => (
+          <TaskCard
+            key={task.id}
+            task={task}
+            status={column.status}
+            onClick={(trigger) => onTaskClick(task.id, trigger)}
+            onDragStart={() => onDragStart(task)}
+          />
+        ))}
+        {!column.tasks.length && (
+          <p className="empty-state compact-empty">No tasks in this column.</p>
+        )}
+        {column.loadingMore && <p className="muted">Loading more...</p>}
+        {column.error && (
+          <p className="error" role="alert">
+            {column.error}
+          </p>
+        )}
+      </div>
+      <button
+        className="button compact"
+        type="button"
+        onClick={() => setCreating((value) => !value)}
+      >
+        {creating ? "Cancel" : "Add task"}
+      </button>
+      {creating && (
+        <form
+          className="create-task-form"
+          onSubmit={(event) => void submit(event)}
+        >
+          <label htmlFor={`new-task-${column.status.id}`}>Title</label>
+          <input
+            id={`new-task-${column.status.id}`}
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            required
+          />
+          <div className="create-task-planning">
+            <label htmlFor={`new-task-points-${column.status.id}`}>
+              Story points
+              <select
+                id={`new-task-points-${column.status.id}`}
+                value={storyPoints}
+                onChange={(event) => setStoryPoints(event.target.value)}
+              >
+                <option value="">No estimate</option>
+                {STORY_POINTS.map((points) => (
+                  <option key={points} value={points}>
+                    {points} SP
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label htmlFor={`new-task-due-${column.status.id}`}>
+              Deadline
+              <input
+                id={`new-task-due-${column.status.id}`}
+                type="date"
+                value={dueDate}
+                onChange={(event) => setDueDate(event.target.value)}
+              />
+            </label>
+            <label htmlFor={`new-task-priority-${column.status.id}`}>
+              Priority
+              <select
+                id={`new-task-priority-${column.status.id}`}
+                value={priority}
+                onChange={(event) =>
+                  setPriority(event.target.value as Priority | "")
+                }
+              >
+                <option value="">No priority</option>
+                {PRIORITIES.map((item) => (
+                  <option key={item} value={item}>
+                    {priorityLabel(item)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <button className="button" type="submit">
+            Create
+          </button>
+          {createError && (
+            <p className="error" role="alert">
+              {createError}
+            </p>
+          )}
+        </form>
+      )}
+    </section>
+  );
 }
 
-type CardProps = { task: Task; statusName: string; onClick: (trigger: HTMLElement) => void; onDragStart: () => void };
-function TaskCard({ task, statusName, onClick, onDragStart }: CardProps) { return <article className="task-card" draggable onDragStart={onDragStart} onClick={(event) => onClick(event.currentTarget)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onClick(event.currentTarget); } }} tabIndex={0} aria-label={`Open task ${task.id}`}><strong>{task.title}</strong><span>{task.slug ?? task.id}</span><time dateTime={task.updated_at}>Updated {new Date(task.updated_at).toLocaleString()}</time><span>{task.assignee ? `Assignee: ${task.assignee.first_name} ${task.assignee.last_name}` : "Unassigned"}</span><span>Watchers: {task.watchers.length}</span><span className="task-status" aria-label={`Status: ${statusName}`}>Status: {statusName}</span></article>; }
+type CardProps = {
+  task: Task;
+  status: BoardColumn["status"];
+  onClick: (trigger: HTMLElement) => void;
+  onDragStart: () => void;
+};
+function TaskCard({ task, status, onClick, onDragStart }: CardProps) {
+  const overdue = Boolean(
+    task.due_date && !status.is_completed && utcDate() > task.due_date,
+  );
+  return (
+    <article
+      className={`task-card${overdue ? " overdue" : ""}`}
+      draggable
+      onDragStart={onDragStart}
+      onClick={(event) => onClick(event.currentTarget)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onClick(event.currentTarget);
+        }
+      }}
+      tabIndex={0}
+      aria-label={`Open task ${task.id}`}
+    >
+      <strong>{task.title}</strong>
+      <span>{task.slug ?? task.id}</span>
+      <div className="task-badges">
+        {task.story_points !== null && (
+          <span className="task-badge story-points">
+            {task.story_points} SP
+          </span>
+        )}
+        {task.priority && (
+          <span className={`task-badge priority priority-${task.priority}`}>
+            {priorityLabel(task.priority)}
+          </span>
+        )}
+        {task.due_date && (
+          <time className="task-badge" dateTime={task.due_date}>
+            Due {formatDate(task.due_date)}
+          </time>
+        )}
+      </div>
+      <time dateTime={task.updated_at}>
+        Updated {new Date(task.updated_at).toLocaleString()}
+      </time>
+      <span>
+        {task.assignee
+          ? `Assignee: ${task.assignee.first_name} ${task.assignee.last_name}`
+          : "Unassigned"}
+      </span>
+      <span>Watchers: {task.watchers.length}</span>
+      <span className="task-status" aria-label={`Status: ${status.name}`}>
+        Status: {status.name}
+      </span>
+    </article>
+  );
+}
 
-type DrawerProps = { task: Task; columns: ColumnState[]; projectId: string; projectOwnerId: string; currentUser: UserSummary; focusCommentId?: string; onClose: () => void; onSaved: (task: Task) => void; onStatusChange: (task: Task, statusId: string) => void };
-function TaskDrawer({ task, columns, projectId, projectOwnerId, currentUser, focusCommentId, onClose, onSaved, onStatusChange }: DrawerProps) {
+type DrawerProps = {
+  task: Task;
+  columns: ColumnState[];
+  projectId: string;
+  projectOwnerId: string;
+  currentUser: UserSummary;
+  focusCommentId?: string;
+  onClose: () => void;
+  onSaved: (task: Task) => void;
+  onStatusChange: (task: Task, statusId: string) => void;
+};
+function TaskDrawer({
+  task,
+  columns,
+  projectId,
+  projectOwnerId,
+  currentUser,
+  focusCommentId,
+  onClose,
+  onSaved,
+  onStatusChange,
+}: DrawerProps) {
+  const queryClient = useQueryClient();
   const [activity, setActivity] = useState<"chat" | "history">("chat");
-  const details = useQuery({ queryKey: ["task", task.id], queryFn: () => getTask(task.id) });
-  const history = useQuery({ queryKey: ["task-history", task.id], queryFn: () => getTaskHistory(task.id), enabled: activity === "history" });
-  const watchers = useQuery({ queryKey: ["task-watchers", task.id], queryFn: () => listTaskWatchers(task.id) });
-  const members = useQuery({ queryKey: ["project-members", projectId], queryFn: () => listProjectMembers(projectId) });
+  const details = useQuery({
+    queryKey: ["task", task.id],
+    queryFn: () => getTask(task.id),
+  });
+  const history = useQuery({
+    queryKey: ["task-history", task.id],
+    queryFn: () => getTaskHistory(task.id),
+    enabled: activity === "history",
+  });
+  const watchers = useQuery({
+    queryKey: ["task-watchers", task.id],
+    queryFn: () => listTaskWatchers(task.id),
+  });
+  const members = useQuery({
+    queryKey: ["project-members", projectId],
+    queryFn: () => listProjectMembers(projectId),
+  });
   const [title, setTitle] = useState(task.title);
   const [description, setDescription] = useState(task.description ?? "");
   const [reporterId, setReporterId] = useState(task.reporter_id);
   const [assigneeId, setAssigneeId] = useState(task.assignee_id ?? "");
-  const [expandedHistory, setExpandedHistory] = useState<Record<string, boolean>>({});
+  const [storyPoints, setStoryPoints] = useState(
+    task.story_points === null ? "" : String(task.story_points),
+  );
+  const [dueDate, setDueDate] = useState(task.due_date ?? "");
+  const [priority, setPriority] = useState<Priority | "">(task.priority ?? "");
+  const [expandedHistory, setExpandedHistory] = useState<
+    Record<string, boolean>
+  >({});
   const [saveError, setSaveError] = useState("");
-  const save = useMutation({ mutationFn: () => updateTask(task.id, { title, description }), onSuccess: onSaved, onError: (error) => setSaveError(messageFor(error)) });
-  const participantUpdate = useMutation({
-    mutationFn: (change: { reporter_id?: string; assignee_id?: string | null }) => updateTask(task.id, change),
-    onSuccess: (saved) => { onSaved(saved); setReporterId(saved.reporter_id); setAssigneeId(saved.assignee_id ?? ""); },
-    onError: (error) => { setReporterId(task.reporter_id); setAssigneeId(task.assignee_id ?? ""); setSaveError(messageFor(error)); },
+  const currentTask = details.data ?? task;
+  const canManagePlanning =
+    currentUser.id === projectOwnerId ||
+    currentUser.id === currentTask.reporter_id ||
+    currentUser.id === currentTask.assignee_id;
+  const save = useMutation({
+    mutationFn: () =>
+      updateTask(task.id, {
+        title,
+        description,
+        ...(canManagePlanning
+          ? {
+              story_points: storyPoints ? Number(storyPoints) : null,
+              due_date: dueDate || null,
+              priority: priority || null,
+            }
+          : {}),
+      }),
+    onSuccess: (saved) => {
+      onSaved(saved);
+      queryClient.setQueryData(["task", task.id], saved);
+      setStoryPoints(
+        saved.story_points === null ? "" : String(saved.story_points),
+      );
+      setDueDate(saved.due_date ?? "");
+      setPriority(saved.priority ?? "");
+      void queryClient.invalidateQueries({
+        queryKey: ["task-history", task.id],
+      });
+    },
+    onError: (error) => setSaveError(messageFor(error)),
   });
-  const isWatching = watchers.data?.some((watcher) => watcher.id === currentUser.id) ?? task.watchers.some((watcher) => watcher.id === currentUser.id);
+  const participantUpdate = useMutation({
+    mutationFn: (change: {
+      reporter_id?: string;
+      assignee_id?: string | null;
+    }) => updateTask(task.id, change),
+    onSuccess: (saved) => {
+      onSaved(saved);
+      queryClient.setQueryData(["task", task.id], saved);
+      setReporterId(saved.reporter_id);
+      setAssigneeId(saved.assignee_id ?? "");
+    },
+    onError: (error) => {
+      setReporterId(task.reporter_id);
+      setAssigneeId(task.assignee_id ?? "");
+      setSaveError(messageFor(error));
+    },
+  });
+  const isWatching =
+    watchers.data?.some((watcher) => watcher.id === currentUser.id) ??
+    task.watchers.some((watcher) => watcher.id === currentUser.id);
   const watcherMutation = useMutation({
-    mutationFn: () => isWatching ? removeTaskWatcher(task.id, currentUser.id) : addTaskWatcher(task.id),
+    mutationFn: () =>
+      isWatching
+        ? removeTaskWatcher(task.id, currentUser.id)
+        : addTaskWatcher(task.id),
     onSuccess: () => void watchers.refetch(),
     onError: (error) => setSaveError(messageFor(error)),
   });
-  const canChangeReporter = currentUser.id === projectOwnerId || currentUser.id === task.reporter_id;
-  const canChangeAssignee = currentUser.id === projectOwnerId || currentUser.id === task.assignee_id || !task.assignee_id;
+  const canChangeReporter =
+    currentUser.id === projectOwnerId || currentUser.id === task.reporter_id;
+  const canChangeAssignee =
+    currentUser.id === projectOwnerId ||
+    currentUser.id === task.assignee_id ||
+    !task.assignee_id;
 
   useEffect(() => {
-    if (details.data) { setTitle(details.data.title); setDescription(details.data.description ?? ""); setReporterId(details.data.reporter_id); setAssigneeId(details.data.assignee_id ?? ""); }
+    if (details.data) {
+      setTitle(details.data.title);
+      setDescription(details.data.description ?? "");
+      setReporterId(details.data.reporter_id);
+      setAssigneeId(details.data.assignee_id ?? "");
+      setStoryPoints(
+        details.data.story_points === null
+          ? ""
+          : String(details.data.story_points),
+      );
+      setDueDate(details.data.due_date ?? "");
+      setPriority(details.data.priority ?? "");
+    }
   }, [details.data]);
-  useEffect(() => { document.getElementById("task-title")?.focus(); }, []);
-  useEffect(() => { setReporterId(task.reporter_id); setAssigneeId(task.assignee_id ?? ""); }, [task.assignee_id, task.reporter_id]);
+  useEffect(() => {
+    document.getElementById("task-title")?.focus();
+  }, []);
+  useEffect(() => {
+    setReporterId(task.reporter_id);
+    setAssigneeId(task.assignee_id ?? "");
+  }, [task.assignee_id, task.reporter_id]);
 
-  return <aside className="task-drawer" role="dialog" aria-modal="true" aria-labelledby="task-drawer-title">
-    <div className="drawer-header"><h2 id="task-drawer-title">Task details</h2><div className="drawer-actions"><button className="button drawer-save" type="submit" form="task-edit-form" disabled={save.isPending}>{save.isPending ? "Saving..." : "Save changes"}</button><button className="icon-button" type="button" aria-label="Close task details" onClick={onClose}>×</button></div></div>
-    {details.isPending && <p className="loading">Loading task...</p>}
-    <form id="task-edit-form" onSubmit={(event) => { event.preventDefault(); if (!save.isPending) { setSaveError(""); save.mutate(); } }}>
-      <label htmlFor="task-title">Title</label><input id="task-title" value={title} onChange={(event) => setTitle(event.target.value)} />
-      <label htmlFor="task-description">Description</label><textarea id="task-description" value={description} onChange={(event) => setDescription(event.target.value)} />
-      <label htmlFor="task-status">Status</label><select id="task-status" value={task.status_id} onChange={(event) => onStatusChange(task, event.target.value)}>{columns.map((column) => <option key={column.status.id} value={column.status.id}>{column.status.name}</option>)}</select>
-      {saveError && <p className="error" role="alert">{saveError}</p>}
-    </form>
-    <div className="drawer-section drawer-participants"><h3>Participants</h3>
-      <label htmlFor="task-reporter">Reporter</label><select id="task-reporter" value={reporterId} disabled={!canChangeReporter || participantUpdate.isPending} onChange={(event) => { setReporterId(event.target.value); participantUpdate.mutate({ reporter_id: event.target.value }); }}>{members.data?.map((member) => <option key={member.id} value={member.id}>{member.email}</option>)}</select>
-      <label htmlFor="task-assignee">Assignee</label><select id="task-assignee" value={assigneeId} disabled={!canChangeAssignee || participantUpdate.isPending} onChange={(event) => { const value = event.target.value || null; setAssigneeId(event.target.value); participantUpdate.mutate({ assignee_id: value }); }}><option value="">Unassigned</option>{members.data?.map((member) => <option key={member.id} value={member.id}>{member.email}</option>)}</select>
-      <p>Watchers: {watchers.data?.length ?? task.watchers.length}</p>{watchers.isPending && <p className="muted">Loading watchers...</p>}{watchers.isError && <p className="error" role="alert">Unable to load watchers.</p>}{!watchers.isPending && !watchers.isError && !watchers.data?.length && <p className="muted">No watchers.</p>}<div className="watcher-list">{watchers.data?.map((watcher) => <span className="watcher" key={watcher.id}>{watcher.email}</span>)}</div>
-      <button className="button secondary compact drawer-watch" type="button" disabled={watcherMutation.isPending} onClick={() => watcherMutation.mutate()}>{isWatching ? "Stop watching" : "Watch task"}</button>
-    </div>
-    <div className="drawer-section activity-section"><div role="tablist" aria-label="Task activity" onKeyDown={(event) => { if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return; event.preventDefault(); const next = event.key === "Home" ? "chat" : event.key === "End" ? "history" : activity === "chat" ? "history" : "chat"; setActivity(next); document.getElementById("activity-" + next)?.focus(); }}><button type="button" role="tab" id="activity-chat" aria-controls="activity-chat-panel" tabIndex={activity === "chat" ? 0 : -1} aria-selected={activity === "chat"} onClick={() => setActivity("chat")}>Chat</button><button type="button" role="tab" id="activity-history" aria-controls="activity-history-panel" tabIndex={activity === "history" ? 0 : -1} aria-selected={activity === "history"} onClick={() => setActivity("history")}>History</button></div>
-    <div role="tabpanel" id="activity-chat-panel" aria-labelledby="activity-chat" hidden={activity !== "chat"}><TaskChat key={task.id} taskId={task.id} projectId={projectId} focusCommentId={focusCommentId} /></div><div role="tabpanel" id="activity-history-panel" aria-labelledby="activity-history" hidden={activity !== "history"}><h3>History</h3>{history.isError && <p className="error" role="alert">Unable to load history. <button type="button" onClick={() => void history.refetch()}>Retry history</button></p>}{history.isPending && <p className="muted">Loading history...</p>}{history.data?.entries.map((entry: TaskHistoryEntry) => { const expanded = expandedHistory[entry.id] ?? false; const text = formatHistoryEntry(entry); return <div className="history-entry" key={entry.id}><p><time dateTime={entry.created_at}>{new Date(entry.created_at).toLocaleString()}</time> · <strong>{entry.actor.first_name} {entry.actor.last_name}</strong> · {text}</p>{entry.field_name === "description" && entry.new_value && <details open={expanded}><summary onClick={(event) => { event.preventDefault(); setExpandedHistory((current) => ({ ...current, [entry.id]: !expanded })); }}>{expanded ? "Hide details" : "Show details"}</summary><p>{entry.new_value}</p></details>}</div>; })}</div></div>
-  </aside>;
+  return (
+    <aside
+      className="task-drawer"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="task-drawer-title"
+    >
+      <div className="drawer-header">
+        <h2 id="task-drawer-title">Task details</h2>
+        <div className="drawer-actions">
+          <button
+            className="button drawer-save"
+            type="submit"
+            form="task-edit-form"
+            disabled={save.isPending}
+          >
+            {save.isPending ? "Saving..." : "Save changes"}
+          </button>
+          <button
+            className="icon-button"
+            type="button"
+            aria-label="Close task details"
+            onClick={onClose}
+          >
+            ×
+          </button>
+        </div>
+      </div>
+      {details.isPending && <p className="loading">Loading task...</p>}
+      <form
+        id="task-edit-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!save.isPending) {
+            setSaveError("");
+            save.mutate();
+          }
+        }}
+      >
+        <label htmlFor="task-title">Title</label>
+        <input
+          id="task-title"
+          value={title}
+          onChange={(event) => setTitle(event.target.value)}
+        />
+        <label htmlFor="task-description">Description</label>
+        <textarea
+          id="task-description"
+          value={description}
+          onChange={(event) => setDescription(event.target.value)}
+        />
+        <div className="task-field-grid">
+          <div className="task-field-row">
+            <label htmlFor="task-status">Status</label>
+            <select
+              id="task-status"
+              value={task.status_id}
+              onChange={(event) => onStatusChange(task, event.target.value)}
+            >
+              {columns.map((column) => (
+                <option key={column.status.id} value={column.status.id}>
+                  {column.status.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="task-field-row">
+            <label htmlFor="task-story-points">Story points</label>
+            {canManagePlanning ? (
+              <select
+                id="task-story-points"
+                value={storyPoints}
+                disabled={save.isPending}
+                onChange={(event) => setStoryPoints(event.target.value)}
+              >
+                <option value="">No estimate</option>
+                {STORY_POINTS.map((points) => (
+                  <option key={points} value={points}>
+                    {points} SP
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <p className="readonly-value" id="task-story-points">
+                {currentTask.story_points === null
+                  ? "No estimate"
+                  : `${currentTask.story_points} SP`}
+              </p>
+            )}
+          </div>
+          <div className="task-field-row">
+            <label htmlFor="task-due-date">Deadline</label>
+            {canManagePlanning ? (
+              <input
+                id="task-due-date"
+                type="date"
+                value={dueDate}
+                disabled={save.isPending}
+                onChange={(event) => setDueDate(event.target.value)}
+              />
+            ) : (
+              <p className="readonly-value" id="task-due-date">
+                {currentTask.due_date
+                  ? formatDate(currentTask.due_date)
+                  : "No deadline"}
+              </p>
+            )}
+          </div>
+          <div className="task-field-row">
+            <label htmlFor="task-priority">Priority</label>
+            {canManagePlanning ? (
+              <select
+                id="task-priority"
+                value={priority}
+                disabled={save.isPending}
+                onChange={(event) =>
+                  setPriority(event.target.value as Priority | "")
+                }
+              >
+                <option value="">No priority</option>
+                {PRIORITIES.map((item) => (
+                  <option key={item} value={item}>
+                    {priorityLabel(item)}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <p className="readonly-value" id="task-priority">
+                {currentTask.priority
+                  ? priorityLabel(currentTask.priority)
+                  : "No priority"}
+              </p>
+            )}
+          </div>
+        </div>
+        {saveError && (
+          <p className="error" role="alert">
+            {saveError}
+          </p>
+        )}
+      </form>
+      <div className="drawer-section drawer-participants">
+        <h3>Participants</h3>
+        <div className="participant-row">
+          <label htmlFor="task-reporter">Reporter</label>
+          <select
+            id="task-reporter"
+            value={reporterId}
+            disabled={!canChangeReporter || participantUpdate.isPending}
+            onChange={(event) => {
+              setReporterId(event.target.value);
+              participantUpdate.mutate({ reporter_id: event.target.value });
+            }}
+          >
+            {members.data?.map((member) => (
+              <option key={member.id} value={member.id}>
+                {profileName(member.profile)}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="participant-row">
+          <label htmlFor="task-assignee">Assignee</label>
+          <select
+            id="task-assignee"
+            value={assigneeId}
+            disabled={!canChangeAssignee || participantUpdate.isPending}
+            onChange={(event) => {
+              const value = event.target.value || null;
+              setAssigneeId(event.target.value);
+              participantUpdate.mutate({ assignee_id: value });
+            }}
+          >
+            <option value="">Unassigned</option>
+            {members.data?.map((member) => (
+              <option key={member.id} value={member.id}>
+                {profileName(member.profile)}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="participant-row watcher-row">
+          <span className="task-field-label">Watchers</span>
+          <div className="watcher-control">
+            <div
+              className="watcher-list"
+              aria-label={`Watchers: ${watchers.data?.length ?? task.watchers.length}`}
+            >
+              {watchers.data?.map((watcher) => (
+                <span className="watcher" key={watcher.id}>
+                  {participantName(watcher)}
+                </span>
+              ))}
+            </div>
+            {watchers.isPending && <p className="muted">Loading watchers...</p>}
+            {watchers.isError && (
+              <p className="error" role="alert">
+                Unable to load watchers.
+              </p>
+            )}
+            {!watchers.isPending &&
+              !watchers.isError &&
+              !watchers.data?.length && <p className="muted">No watchers.</p>}
+            <button
+              className="icon-button drawer-watch"
+              type="button"
+              disabled={watcherMutation.isPending}
+              aria-label={isWatching ? "Stop watching" : "Watch task"}
+              title={isWatching ? "Stop watching" : "Watch task"}
+              onClick={() => watcherMutation.mutate()}
+            >
+              {isWatching ? (
+                <EyeOff aria-hidden="true" />
+              ) : (
+                <Eye aria-hidden="true" />
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+      <div className="drawer-section activity-section">
+        <div
+          role="tablist"
+          aria-label="Task activity"
+          onKeyDown={(event) => {
+            if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key))
+              return;
+            event.preventDefault();
+            const next =
+              event.key === "Home"
+                ? "chat"
+                : event.key === "End"
+                  ? "history"
+                  : activity === "chat"
+                    ? "history"
+                    : "chat";
+            setActivity(next);
+            document.getElementById("activity-" + next)?.focus();
+          }}
+        >
+          <button
+            type="button"
+            role="tab"
+            id="activity-chat"
+            aria-controls="activity-chat-panel"
+            tabIndex={activity === "chat" ? 0 : -1}
+            aria-selected={activity === "chat"}
+            onClick={() => setActivity("chat")}
+          >
+            Chat
+          </button>
+          <button
+            type="button"
+            role="tab"
+            id="activity-history"
+            aria-controls="activity-history-panel"
+            tabIndex={activity === "history" ? 0 : -1}
+            aria-selected={activity === "history"}
+            onClick={() => setActivity("history")}
+          >
+            History
+          </button>
+        </div>
+        <div
+          role="tabpanel"
+          id="activity-chat-panel"
+          aria-labelledby="activity-chat"
+          hidden={activity !== "chat"}
+        >
+          <TaskChat
+            key={task.id}
+            taskId={task.id}
+            projectId={projectId}
+            focusCommentId={focusCommentId}
+          />
+        </div>
+        <div
+          role="tabpanel"
+          id="activity-history-panel"
+          aria-labelledby="activity-history"
+          hidden={activity !== "history"}
+        >
+          <h3>History</h3>
+          {history.isError && (
+            <p className="error" role="alert">
+              Unable to load history.{" "}
+              <button type="button" onClick={() => void history.refetch()}>
+                Retry history
+              </button>
+            </p>
+          )}
+          {history.isPending && <p className="muted">Loading history...</p>}
+          {history.data?.entries.map((entry: TaskHistoryEntry) => {
+            const expanded = expandedHistory[entry.id] ?? false;
+            const text = formatHistoryEntry(entry);
+            return (
+              <div className="history-entry" key={entry.id}>
+                <p>
+                  <time dateTime={entry.created_at}>
+                    {new Date(entry.created_at).toLocaleString()}
+                  </time>{" "}
+                  ·{" "}
+                  <strong>
+                    {entry.actor.first_name} {entry.actor.last_name}
+                  </strong>{" "}
+                  · {text}
+                </p>
+                {entry.field_name === "description" && entry.new_value && (
+                  <details open={expanded}>
+                    <summary
+                      onClick={(event) => {
+                        event.preventDefault();
+                        setExpandedHistory((current) => ({
+                          ...current,
+                          [entry.id]: !expanded,
+                        }));
+                      }}
+                    >
+                      {expanded ? "Hide details" : "Show details"}
+                    </summary>
+                    <p>{entry.new_value}</p>
+                  </details>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </aside>
+  );
 }
 
-function formatHistoryEntry(entry: TaskHistoryEntry) { const labels: Record<string, string> = { status_changed: "changed status", title_changed: "changed title", description_changed: "changed description", reporter_changed: "changed reporter", assignee_changed: "changed assignee", watcher_added: "added a watcher", watcher_removed: "removed a watcher" }; const label = labels[entry.event_type] ?? entry.event_type; if (entry.event_type === "status_changed") return `${label}: ${entry.old_value ?? "none"} -> ${entry.new_value ?? "none"}`; if (entry.event_type === "watcher_added") return `${label} ${entry.new_value ?? ""}`; if (entry.event_type === "watcher_removed") return `${label} ${entry.old_value ?? ""}`; return `${label}${entry.field_name === "description" ? ": " + shorten(entry.new_value) : `: ${entry.old_value ?? "none"} -> ${entry.new_value ?? "none"}`}`; }
-function shorten(value: string | null | undefined) { if (!value) return "none"; return value.length > 120 ? value.slice(0, 120) + "..." : value; }
-function widthKey(projectId: string) { return `freeselftrack.kanban.widths.${projectId}`; }
-function readWidths(projectId: string): Record<string, number> { try { return JSON.parse(window.localStorage.getItem(widthKey(projectId)) ?? "{}"); } catch { return {}; } }
-function appendUnique(current: Task[], next: Task[]) { const ids = new Set(current.map((task) => task.id)); return [...current, ...next.filter((task) => !ids.has(task.id))]; }
-function replaceTask(columns: ColumnState[], task: Task): ColumnState[] { return columns.map((column) => ({ ...column, tasks: column.tasks.map((item) => item.id === task.id ? task : item) })); }
-function messageFor(error: unknown) { return error instanceof Error ? error.message : "Request failed"; }
+function formatHistoryEntry(entry: TaskHistoryEntry) {
+  const labels: Record<string, string> = {
+    status_changed: "changed status",
+    title_changed: "changed title",
+    description_changed: "changed description",
+    reporter_changed: "changed reporter",
+    assignee_changed: "changed assignee",
+    watcher_added: "added a watcher",
+    watcher_removed: "removed a watcher",
+    story_points_changed: "changed story points",
+    due_date_changed: "changed deadline",
+    priority_changed: "changed priority",
+  };
+  const label = labels[entry.event_type] ?? entry.event_type;
+  if (entry.event_type === "status_changed")
+    return `${label}: ${entry.old_value ?? "none"} -> ${entry.new_value ?? "none"}`;
+  if (entry.event_type === "watcher_added")
+    return `${label} ${entry.new_value ?? ""}`;
+  if (entry.event_type === "watcher_removed")
+    return `${label} ${entry.old_value ?? ""}`;
+  return `${label}${entry.field_name === "description" ? ": " + shorten(entry.new_value) : `: ${entry.old_value ?? "none"} -> ${entry.new_value ?? "none"}`}`;
+}
+function priorityLabel(priority: Priority) {
+  return priority.charAt(0).toUpperCase() + priority.slice(1);
+}
+function profileName(
+  profile: { first_name: string; last_name: string } | undefined,
+) {
+  return profile
+    ? `${profile.first_name} ${profile.last_name}`
+    : "Unknown user";
+}
+function participantName(participant: {
+  first_name: string;
+  last_name: string;
+}) {
+  return `${participant.first_name} ${participant.last_name}`;
+}
+function shorten(value: string | null | undefined) {
+  if (!value) return "none";
+  return value.length > 120 ? value.slice(0, 120) + "..." : value;
+}
+function utcDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+function formatDate(value: string) {
+  return new Intl.DateTimeFormat(undefined, {
+    timeZone: "UTC",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  }).format(new Date(`${value}T00:00:00Z`));
+}
+function widthKey(projectId: string) {
+  return `freeselftrack.kanban.widths.${projectId}`;
+}
+function readWidths(projectId: string): Record<string, number> {
+  try {
+    return JSON.parse(window.localStorage.getItem(widthKey(projectId)) ?? "{}");
+  } catch {
+    return {};
+  }
+}
+function appendUnique(current: Task[], next: Task[]) {
+  const ids = new Set(current.map((task) => task.id));
+  return [...current, ...next.filter((task) => !ids.has(task.id))];
+}
+function replaceTask(columns: ColumnState[], task: Task): ColumnState[] {
+  return columns.map((column) => ({
+    ...column,
+    tasks: column.tasks.map((item) => (item.id === task.id ? task : item)),
+  }));
+}
+function messageFor(error: unknown) {
+  return error instanceof Error ? error.message : "Request failed";
+}
 
-export function NotificationTaskPanel({ taskId, commentId, currentUser, onClose }: { taskId: string; commentId?: string; currentUser: UserSummary; onClose: () => void }) {
+export function NotificationTaskPanel({
+  taskId,
+  commentId,
+  currentUser,
+  onClose,
+}: {
+  taskId: string;
+  commentId?: string;
+  currentUser: UserSummary;
+  onClose: () => void;
+}) {
   const client = useQueryClient();
-  const task = useQuery({ queryKey: ["task", taskId], queryFn: () => getTask(taskId), retry: false });
-  const project = useQuery({ queryKey: ["project", task.data?.project_id], queryFn: () => getProject(task.data!.project_id), enabled: !!task.data, retry: false });
-  const board = useQuery({ queryKey: ["board", task.data?.project_id], queryFn: () => getBoard(task.data!.project_id), enabled: !!task.data, retry: false });
-  const update = useMutation({ mutationFn: (statusId: string) => updateTask(taskId, { status_id: statusId }), onSuccess: (saved) => client.setQueryData(["task", taskId], saved) });
-  if (task.isError || project.isError || board.isError) return <aside className="task-drawer"><button type="button" onClick={onClose}>Close</button><p role="alert">Task is unavailable.</p></aside>;
-  if (!task.data || !project.data || !board.data) return <aside className="task-drawer"><button type="button" onClick={onClose}>Close</button><p role="status">Loading task...</p></aside>;
-  return <><TaskDrawer key={taskId + (commentId ?? "")} task={task.data} columns={board.data.columns.map((column) => ({ ...column, loadingMore: false, error: "" }))} projectId={project.data.id} projectOwnerId={project.data.owner_id} currentUser={currentUser} focusCommentId={commentId} onClose={onClose} onSaved={(saved) => client.setQueryData(["task", taskId], saved)} onStatusChange={(_, statusId) => update.mutate(statusId)} />{update.isError && <p className="notification-task-error" role="alert">{messageFor(update.error)}</p>}</>;
+  const task = useQuery({
+    queryKey: ["task", taskId],
+    queryFn: () => getTask(taskId),
+    retry: false,
+  });
+  const project = useQuery({
+    queryKey: ["project", task.data?.project_id],
+    queryFn: () => getProject(task.data!.project_id),
+    enabled: !!task.data,
+    retry: false,
+  });
+  const board = useQuery({
+    queryKey: ["board", task.data?.project_id],
+    queryFn: () => getBoard(task.data!.project_id),
+    enabled: !!task.data,
+    retry: false,
+  });
+  const update = useMutation({
+    mutationFn: (statusId: string) =>
+      updateTask(taskId, { status_id: statusId }),
+    onSuccess: (saved) => client.setQueryData(["task", taskId], saved),
+  });
+  if (task.isError || project.isError || board.isError)
+    return (
+      <aside className="task-drawer">
+        <button type="button" onClick={onClose}>
+          Close
+        </button>
+        <p role="alert">Task is unavailable.</p>
+      </aside>
+    );
+  if (!task.data || !project.data || !board.data)
+    return (
+      <aside className="task-drawer">
+        <button type="button" onClick={onClose}>
+          Close
+        </button>
+        <p role="status">Loading task...</p>
+      </aside>
+    );
+  return (
+    <>
+      <TaskDrawer
+        key={taskId + (commentId ?? "")}
+        task={task.data}
+        columns={board.data.columns.map((column) => ({
+          ...column,
+          loadingMore: false,
+          error: "",
+        }))}
+        projectId={project.data.id}
+        projectOwnerId={project.data.owner_id}
+        currentUser={currentUser}
+        focusCommentId={commentId}
+        onClose={onClose}
+        onSaved={(saved) => client.setQueryData(["task", taskId], saved)}
+        onStatusChange={(_, statusId) => update.mutate(statusId)}
+      />
+      {update.isError && (
+        <p className="notification-task-error" role="alert">
+          {messageFor(update.error)}
+        </p>
+      )}
+    </>
+  );
 }

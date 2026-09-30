@@ -18,13 +18,13 @@ from app.models import (
 )
 from app.repositories.domain import DomainRepository
 from app.schemas.domain import (
-    AssigneeSummary,
     BoardColumnResponse,
     BoardResponse,
     ConfirmRequest,
     MembershipRequest,
     NotificationResponse,
     OrganizationCreate,
+    ParticipantSummary,
     ProfileResponse,
     ProjectCreate,
     ProjectUpdate,
@@ -39,7 +39,6 @@ from app.schemas.domain import (
     TaskResponse,
     TaskUpdate,
     UnreadCountResponse,
-    UserSummary,
     WatcherRequest,
 )
 from app.services.errors import (
@@ -264,7 +263,11 @@ class DomainService:
             archived_statuses = await self.repository.list_archived_statuses(project_id)
             position = -(len(archived_statuses) + 1000)
         project_status = ProjectStatus(
-            project_id=project_id, name=data.name, position=position, is_active=data.is_active
+            project_id=project_id,
+            name=data.name,
+            position=position,
+            is_active=data.is_active,
+            is_completed=data.is_completed,
         )
         self.session.add(project_status)
         statuses.insert(position, project_status)
@@ -293,6 +296,8 @@ class DomainService:
             return await self.restore_status(user_id, project_id, status_id)
         if data.name is not None:
             project_status.name = data.name
+        if data.is_completed is not None:
+            project_status.is_completed = data.is_completed
         if data.position is not None and data.position != project_status.position:
             statuses = await self.repository.list_statuses(project_id)
             statuses.remove(project_status)
@@ -372,8 +377,20 @@ class DomainService:
         sequence.next_number += 1
         slug = f"{project_slug_prefix(project.name)}-{sequence_number}"
         await self._require_organization_user(project.organization_id, reporter_id)
+        await self.repository.add_project_member(project_id, reporter_id)
         if data.assignee_id is not None:
             await self._require_organization_user(project.organization_id, data.assignee_id)
+            await self.repository.add_project_member(project_id, data.assignee_id)
+        if (
+            data.story_points is not None or data.due_date is not None or data.priority is not None
+        ) and user_id not in {
+            project.owner_id,
+            reporter_id,
+            data.assignee_id,
+        }:
+            raise PermissionDeniedError(
+                "Only the project owner, reporter, or assignee can set planning fields"
+            )
         task = Task(
             project_id=project_id,
             status_id=project_status.id,
@@ -384,8 +401,40 @@ class DomainService:
             created_by=user_id,
             reporter_id=reporter_id,
             assignee_id=data.assignee_id,
+            story_points=data.story_points,
+            due_date=data.due_date,
+            priority=data.priority,
         )
         self.session.add(task)
+        await self.session.flush()
+        if data.priority is not None:
+            await self._record_history(
+                task,
+                user_id,
+                "priority_changed",
+                "priority",
+                None,
+                data.priority,
+            )
+        if data.story_points is not None:
+            await self._record_history(
+                task,
+                user_id,
+                "story_points_changed",
+                "story_points",
+                None,
+                str(data.story_points),
+            )
+        if data.due_date is not None:
+            await self._record_history(
+                task,
+                user_id,
+                "due_date_changed",
+                "due_date",
+                None,
+                data.due_date.isoformat(),
+            )
+            await self._queue_deadline_change_notifications(task, user_id)
         await self.session.commit()
         return task
 
@@ -409,19 +458,25 @@ class DomainService:
         project = await self.repository.get_project(task.project_id)
         if project is None:
             raise NotFoundError("Task not found")
+        can_manage_planning = user_id in {project.owner_id, task.reporter_id, task.assignee_id}
         events: list[tuple[str, str, dict[str, str]]] = []
         if data.title is not None and data.title != task.title:
-            old_value = task.title
+            old_title = task.title
             task.title = data.title
             await self._record_history(
-                task, user_id, "title_changed", "title", old_value, data.title
+                task, user_id, "title_changed", "title", old_title, data.title
             )
             events.append(("title_changed", "Task title changed", {"title": data.title}))
         if "description" in data.model_fields_set and data.description != task.description:
-            old_value = task.description
+            old_description = task.description
             task.description = data.description
             await self._record_history(
-                task, user_id, "description_changed", "description", old_value, data.description
+                task,
+                user_id,
+                "description_changed",
+                "description",
+                old_description,
+                data.description,
             )
             events.append(("description_changed", "Task description changed", {}))
         if data.status_id is not None and data.status_id != task.status_id:
@@ -456,12 +511,13 @@ class DomainService:
             if data.reporter_id is None:
                 raise InvalidWorkflowError("A task must have a reporter")
             await self._require_organization_user(project.organization_id, data.reporter_id)
+            await self.repository.add_project_member(task.project_id, data.reporter_id)
             if data.reporter_id != task.reporter_id:
-                old_value = await self._display_name(task.reporter_id)
-                new_value = await self._display_name(data.reporter_id)
+                old_reporter = await self._display_name(task.reporter_id)
+                new_reporter = await self._display_name(data.reporter_id)
                 task.reporter_id = data.reporter_id
                 await self._record_history(
-                    task, user_id, "reporter_changed", "reporter", old_value, new_value
+                    task, user_id, "reporter_changed", "reporter", old_reporter, new_reporter
                 )
                 events.append(
                     (
@@ -474,12 +530,17 @@ class DomainService:
             self._require_assignee_permission(user_id, task, project.owner_id, data.assignee_id)
             if data.assignee_id is not None:
                 await self._require_organization_user(project.organization_id, data.assignee_id)
+                await self.repository.add_project_member(task.project_id, data.assignee_id)
             if data.assignee_id != task.assignee_id:
-                old_value = await self._display_name(task.assignee_id) if task.assignee_id else None
-                new_value = await self._display_name(data.assignee_id) if data.assignee_id else None
+                old_assignee = (
+                    await self._display_name(task.assignee_id) if task.assignee_id else None
+                )
+                new_assignee = (
+                    await self._display_name(data.assignee_id) if data.assignee_id else None
+                )
                 task.assignee_id = data.assignee_id
                 await self._record_history(
-                    task, user_id, "assignee_changed", "assignee", old_value, new_value
+                    task, user_id, "assignee_changed", "assignee", old_assignee, new_assignee
                 )
                 events.append(
                     (
@@ -488,7 +549,47 @@ class DomainService:
                         {"assignee_id": str(data.assignee_id) if data.assignee_id else ""},
                     )
                 )
+        if "story_points" in data.model_fields_set and data.story_points != task.story_points:
+            if not can_manage_planning:
+                raise PermissionDeniedError(
+                    "Only the project owner, reporter, or assignee can change story points"
+                )
+            old_points = str(task.story_points) if task.story_points is not None else None
+            new_points = str(data.story_points) if data.story_points is not None else None
+            task.story_points = data.story_points
+            await self._record_history(
+                task, user_id, "story_points_changed", "story_points", old_points, new_points
+            )
+        if "priority" in data.model_fields_set and data.priority != task.priority:
+            if not can_manage_planning:
+                raise PermissionDeniedError(
+                    "Only the project owner, reporter, or assignee can change priority"
+                )
+            old_priority = task.priority
+            task.priority = data.priority
+            await self._record_history(
+                task,
+                user_id,
+                "priority_changed",
+                "priority",
+                old_priority,
+                data.priority,
+            )
+        deadline_changed = "due_date" in data.model_fields_set and data.due_date != task.due_date
+        if deadline_changed:
+            if not can_manage_planning:
+                raise PermissionDeniedError(
+                    "Only the project owner, reporter, or assignee can change deadline"
+                )
+            old_deadline = task.due_date.isoformat() if task.due_date is not None else None
+            new_deadline = data.due_date.isoformat() if data.due_date is not None else None
+            task.due_date = data.due_date
+            await self._record_history(
+                task, user_id, "due_date_changed", "due_date", old_deadline, new_deadline
+            )
         await self._queue_notifications(task, user_id, events)
+        if deadline_changed:
+            await self._queue_deadline_change_notifications(task, user_id)
         await self.session.commit()
         return task
 
@@ -497,13 +598,16 @@ class DomainService:
     ) -> TaskResponse:
         return await self._task_response(await self.update_task(user_id, task_id, data))
 
-    async def list_task_watchers(self, user_id: UUID, task_id: UUID) -> list[User]:
+    async def list_task_watchers(self, user_id: UUID, task_id: UUID) -> list[ParticipantSummary]:
         await self.get_task(user_id, task_id)
-        return await self.repository.list_task_watchers(task_id)
+        return [
+            self._participant_summary(user)
+            for user in await self.repository.list_task_watchers(task_id)
+        ]
 
     async def add_task_watcher(
         self, user_id: UUID, task_id: UUID, data: WatcherRequest
-    ) -> list[User]:
+    ) -> list[ParticipantSummary]:
         task = await self.get_task(user_id, task_id)
         project = await self.repository.get_project(task.project_id)
         if project is None:
@@ -520,11 +624,14 @@ class DomainService:
                 task, user_id, "watcher_added", "watcher", None, await self._display_name(target_id)
             )
         await self.session.commit()
-        return await self.repository.list_task_watchers(task.id)
+        return [
+            self._participant_summary(user)
+            for user in await self.repository.list_task_watchers(task.id)
+        ]
 
     async def remove_task_watcher(
         self, user_id: UUID, task_id: UUID, watcher_id: UUID
-    ) -> list[User]:
+    ) -> list[ParticipantSummary]:
         task = await self.get_task(user_id, task_id)
         project = await self.repository.get_project(task.project_id)
         if project is None:
@@ -537,7 +644,10 @@ class DomainService:
         await self.repository.remove_task_watcher(task.id, watcher_id)
         await self._record_history(task, user_id, "watcher_removed", "watcher", old_value, None)
         await self.session.commit()
-        return await self.repository.list_task_watchers(task.id)
+        return [
+            self._participant_summary(user)
+            for user in await self.repository.list_task_watchers(task.id)
+        ]
 
     async def list_notifications(self, user_id: UUID) -> list[NotificationResponse]:
         return [
@@ -641,11 +751,14 @@ class DomainService:
 
     async def _task_response(self, task: Task) -> TaskResponse:
         watchers = await self.repository.list_task_watchers(task.id)
+        reporter = await self.repository.get_user(task.reporter_id)
         assignee = (
             await self.repository.get_user(task.assignee_id)
             if task.assignee_id is not None
             else None
         )
+        if reporter is None or reporter.profile is None:
+            raise NotFoundError("Task reporter not found")
         return TaskResponse(
             id=task.id,
             project_id=task.project_id,
@@ -656,18 +769,28 @@ class DomainService:
             created_by=task.created_by,
             reporter_id=task.reporter_id,
             assignee_id=task.assignee_id,
+            story_points=task.story_points,
+            due_date=task.due_date,
+            priority=task.priority,
+            reporter=self._participant_summary(reporter),
             assignee=(
-                AssigneeSummary(
-                    id=assignee.id,
-                    first_name=assignee.profile.first_name,
-                    last_name=assignee.profile.last_name,
-                )
+                self._participant_summary(assignee)
                 if assignee is not None and assignee.profile is not None
                 else None
             ),
-            watchers=[UserSummary.model_validate(user) for user in watchers],
+            watchers=[self._participant_summary(user) for user in watchers],
             created_at=task.created_at,
             updated_at=task.updated_at,
+        )
+
+    @staticmethod
+    def _participant_summary(user: User) -> ParticipantSummary:
+        if user.profile is None:
+            raise NotFoundError("User profile not found")
+        return ParticipantSummary(
+            id=user.id,
+            first_name=user.profile.first_name,
+            last_name=user.profile.last_name,
         )
 
     async def _require_organization_user(self, organization_id: UUID, user_id: UUID) -> User:
@@ -728,6 +851,41 @@ class DomainService:
                         message=message,
                         event_data=payload,
                     )
+
+    async def _queue_deadline_change_notifications(self, task: Task, actor_id: UUID) -> None:
+        project = await self.repository.get_project(task.project_id)
+        if project is None:
+            return
+        project_members = await self.repository.list_project_members(task.project_id)
+        organization_members = await self.repository.list_organization_members(
+            project.organization_id
+        )
+        organization_ids = {user.id for user in organization_members if user.is_active}
+        allowed_ids = {
+            user.id for user in project_members if user.is_active and user.id in organization_ids
+        }
+        role_ids = {task.reporter_id}
+        if task.assignee_id is not None:
+            role_ids.add(task.assignee_id)
+        recipients = (
+            role_ids | set(await self.repository.list_task_watcher_ids(task.id))
+        ) & allowed_ids
+        due_date = task.due_date.isoformat() if task.due_date is not None else None
+        if due_date is None:
+            message = f"Deadline removed from {task.slug}"
+        else:
+            message = f"Deadline for {task.slug} changed to {due_date}"
+        payload = json.dumps(
+            {"project_id": str(task.project_id), "due_date": due_date}, separators=(",", ":")
+        )
+        for recipient_id in recipients - {actor_id}:
+            self.repository.add_notification(
+                recipient_id=recipient_id,
+                task_id=task.id,
+                event_type="due_date_changed",
+                message=message,
+                event_data=payload,
+            )
 
     @staticmethod
     def _require_assignee_permission(
