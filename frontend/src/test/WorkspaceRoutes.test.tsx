@@ -157,9 +157,9 @@ it("opens a notification on the addressable task route", async () => {
     id: "notification-1",
     recipient_id: user.id,
     task_id: task.id,
-    event_type: "status_changed",
-    message: "Task changed",
-    event_data: JSON.stringify({ project_id: project.id }),
+    event_type: "task_link_added",
+    message: "Task linked",
+    event_data: JSON.stringify({ project_id: project.id, tab: "links" }),
     created_at: "2026-10-01T08:00:00Z",
     read_at: null,
   };
@@ -201,9 +201,15 @@ it("opens a notification on the addressable task route", async () => {
       </QueryClientProvider>
     </MemoryRouter>,
   );
-  await userEvent.click(await screen.findByText("Task changed"));
+  await userEvent.click(await screen.findByText("Task linked"));
   expect(
     await screen.findByRole("region", { name: "Tracker Kanban" }),
   ).toBeInTheDocument();
   expect(await screen.findByDisplayValue("First task")).toBeInTheDocument();
+  const tabs = screen.getAllByRole("tab");
+  expect(tabs.map((tab) => tab.textContent)).toEqual(["Chat", "Links", "History"]);
+  expect(screen.getByRole("tab", { name: "Links" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
 });

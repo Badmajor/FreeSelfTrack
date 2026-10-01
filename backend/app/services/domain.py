@@ -2,6 +2,7 @@ import binascii
 import json
 import re
 from datetime import UTC, datetime
+from typing import Literal
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +15,7 @@ from app.models import (
     ProjectTaskSequence,
     Task,
     TaskHistory,
+    TaskLink,
     User,
 )
 from app.repositories.domain import DomainRepository
@@ -35,8 +37,12 @@ from app.schemas.domain import (
     TaskCreate,
     TaskHistoryPageResponse,
     TaskHistoryResponse,
+    TaskLinkCreate,
+    TaskLinkResponse,
+    TaskLinkTaskSummary,
     TaskPageResponse,
     TaskResponse,
+    TaskSearchResponse,
     TaskUpdate,
     UnreadCountResponse,
     WatcherRequest,
@@ -92,7 +98,7 @@ class DomainService:
 
     async def list_projects(self, user_id: UUID, organization_id: UUID) -> list[Project]:
         await self.get_organization(user_id, organization_id)
-        return await self.repository.list_projects_for_user(organization_id, user_id)
+        return await self.repository.list_projects_for_organization(organization_id)
 
     async def create_project(self, user_id: UUID, data: ProjectCreate) -> Project:
         await self.get_organization(user_id, data.organization_id)
@@ -123,6 +129,16 @@ class DomainService:
             project is None
             or project.deleted_at is not None
             or not await self.repository.has_project_access(project_id, user_id)
+        ):
+            raise NotFoundError("Project not found")
+        return project
+
+    async def get_project_for_read(self, user_id: UUID, project_id: UUID) -> Project:
+        project = await self.repository.get_project(project_id)
+        if (
+            project is None
+            or project.deleted_at is not None
+            or not await self.repository.has_organization_access(project.organization_id, user_id)
         ):
             raise NotFoundError("Project not found")
         return project
@@ -283,11 +299,11 @@ class DomainService:
         return project_status
 
     async def list_statuses(self, user_id: UUID, project_id: UUID) -> list[ProjectStatus]:
-        await self.get_project(user_id, project_id)
+        await self.get_project_for_read(user_id, project_id)
         return await self.repository.list_statuses(project_id)
 
     async def list_archived_statuses(self, user_id: UUID, project_id: UUID) -> list[ProjectStatus]:
-        await self.get_project(user_id, project_id)
+        await self.get_project_for_read(user_id, project_id)
         return await self.repository.list_archived_statuses(project_id)
 
     async def update_status(
@@ -460,7 +476,10 @@ class DomainService:
 
     async def get_task(self, user_id: UUID, task_id: UUID) -> Task:
         task = await self.repository.get_task(task_id)
-        if task is None or not await self.repository.has_project_access(task.project_id, user_id):
+        if task is None:
+            raise NotFoundError("Task not found")
+        project = await self.get_project_for_read(user_id, task.project_id)
+        if project.deleted_at is not None:
             raise NotFoundError("Task not found")
         return task
 
@@ -469,6 +488,8 @@ class DomainService:
 
     async def update_task(self, user_id: UUID, task_id: UUID, data: TaskUpdate) -> Task:
         task = await self.get_task(user_id, task_id)
+        if not await self.repository.has_project_access(task.project_id, user_id):
+            raise PermissionDeniedError("Project membership is required to update tasks")
         project = await self.repository.get_project(task.project_id)
         if project is None:
             raise NotFoundError("Task not found")
@@ -612,6 +633,108 @@ class DomainService:
     ) -> TaskResponse:
         return await self._task_response(await self.update_task(user_id, task_id, data))
 
+    async def search_organization_tasks(
+        self, user_id: UUID, organization_id: UUID, slug: str, limit: int
+    ) -> TaskSearchResponse:
+        await self.get_organization(user_id, organization_id)
+        normalized = slug.strip()
+        if not normalized:
+            raise InvalidWorkflowError("Task slug is required")
+        rows = await self.repository.search_organization_tasks(organization_id, normalized, limit)
+        return TaskSearchResponse(
+            items=[self._task_link_summary(task, project, status) for task, project, status in rows]
+        )
+
+    async def list_task_links(self, user_id: UUID, task_id: UUID) -> list[TaskLinkResponse]:
+        task = await self.get_task(user_id, task_id)
+        responses: list[TaskLinkResponse] = []
+        for link in await self.repository.list_task_links(task_id):
+            other_id = link.task_b_id if task.id == link.task_a_id else link.task_a_id
+            other = await self.repository.get_task(other_id)
+            project = (
+                await self.repository.get_project(other.project_id) if other is not None else None
+            )
+            if project is None or project.deleted_at is not None:
+                continue
+            responses.append(await self._task_link_response(task, link))
+        return responses
+
+    async def create_task_link(
+        self, user_id: UUID, task_id: UUID, data: TaskLinkCreate
+    ) -> tuple[TaskLinkResponse, bool]:
+        source = await self.get_task(user_id, task_id)
+        target = await self.repository.get_task(data.target_task_id)
+        if target is None:
+            raise NotFoundError("Task not found")
+        source_project = await self.repository.get_project(source.project_id)
+        target_project = await self.repository.get_project(target.project_id)
+        if (
+            source_project is None
+            or target_project is None
+            or target_project.deleted_at is not None
+            or source_project.organization_id != target_project.organization_id
+        ):
+            raise NotFoundError("Task not found")
+        if source.id == target.id:
+            raise InvalidWorkflowError("A task cannot link to itself")
+        await self.get_organization(user_id, source_project.organization_id)
+        if not (
+            await self.repository.has_project_access(source.project_id, user_id)
+            or await self.repository.has_project_access(target.project_id, user_id)
+        ):
+            raise PermissionDeniedError("Project membership is required to manage links")
+        task_a_id, task_b_id = sorted((source.id, target.id), key=lambda value: value.int)
+        relation_type = "related" if data.relation_type == "related" else "blocks"
+        blocking_task_id = None
+        if data.relation_type == "blocks":
+            blocking_task_id = source.id
+        elif data.relation_type == "depends_on":
+            blocking_task_id = target.id
+        # Lock in canonical order so concurrent requests for the same pair serialize.
+        await self.repository.lock_task_pair(task_a_id, task_b_id)
+        existing = await self.repository.get_task_link_pair(task_a_id, task_b_id)
+        if existing is not None:
+            if (
+                existing.relation_type == relation_type
+                and existing.blocking_task_id == blocking_task_id
+            ):
+                return await self._task_link_response(source, existing), False
+            raise ConflictError("Tasks are already linked with another relation")
+        link = TaskLink(
+            task_a_id=task_a_id,
+            task_b_id=task_b_id,
+            relation_type=relation_type,
+            blocking_task_id=blocking_task_id,
+            created_by=user_id,
+        )
+        self.session.add(link)
+        await self.session.flush()
+        await self._record_link_change(source, target, user_id, link, "task_link_added")
+        await self._record_link_change(target, source, user_id, link, "task_link_added")
+        await self._queue_link_notifications(source, target, user_id, link, "task_link_added")
+        await self.session.commit()
+        return await self._task_link_response(source, link), True
+
+    async def delete_task_link(self, user_id: UUID, task_id: UUID, link_id: UUID) -> None:
+        source = await self.get_task(user_id, task_id)
+        link = await self.repository.get_task_link(link_id)
+        if link is None or source.id not in {link.task_a_id, link.task_b_id}:
+            raise NotFoundError("Task link not found")
+        other_id = link.task_b_id if source.id == link.task_a_id else link.task_a_id
+        target = await self.repository.get_task(other_id)
+        if target is None:
+            raise NotFoundError("Task link not found")
+        if not (
+            await self.repository.has_project_access(source.project_id, user_id)
+            or await self.repository.has_project_access(target.project_id, user_id)
+        ):
+            raise PermissionDeniedError("Project membership is required to manage links")
+        await self._record_link_change(source, target, user_id, link, "task_link_removed")
+        await self._record_link_change(target, source, user_id, link, "task_link_removed")
+        await self._queue_link_notifications(source, target, user_id, link, "task_link_removed")
+        await self.session.delete(link)
+        await self.session.commit()
+
     async def list_task_watchers(self, user_id: UUID, task_id: UUID) -> list[ParticipantSummary]:
         await self.get_task(user_id, task_id)
         return [
@@ -623,6 +746,8 @@ class DomainService:
         self, user_id: UUID, task_id: UUID, data: WatcherRequest
     ) -> list[ParticipantSummary]:
         task = await self.get_task(user_id, task_id)
+        if not await self.repository.has_project_access(task.project_id, user_id):
+            raise PermissionDeniedError("Project membership is required to manage watchers")
         project = await self.repository.get_project(task.project_id)
         if project is None:
             raise NotFoundError("Task not found")
@@ -647,6 +772,8 @@ class DomainService:
         self, user_id: UUID, task_id: UUID, watcher_id: UUID
     ) -> list[ParticipantSummary]:
         task = await self.get_task(user_id, task_id)
+        if not await self.repository.has_project_access(task.project_id, user_id):
+            raise PermissionDeniedError("Project membership is required to manage watchers")
         project = await self.repository.get_project(task.project_id)
         if project is None:
             raise NotFoundError("Task not found")
@@ -682,7 +809,7 @@ class DomainService:
         return NotificationResponse.model_validate(notification)
 
     async def get_board(self, user_id: UUID, project_id: UUID, limit: int) -> BoardResponse:
-        await self.get_project(user_id, project_id)
+        await self.get_project_for_read(user_id, project_id)
         columns = []
         for project_status in await self.repository.list_statuses(project_id):
             tasks = await self.repository.list_tasks_for_status(
@@ -704,7 +831,7 @@ class DomainService:
     async def get_column_tasks(
         self, user_id: UUID, project_id: UUID, status_id: UUID, limit: int, cursor: str | None
     ) -> TaskPageResponse:
-        await self.get_project(user_id, project_id)
+        await self.get_project_for_read(user_id, project_id)
         project_status = await self._get_project_status(project_id, status_id)
         if not project_status.is_active:
             raise NotFoundError("Status not found")
@@ -796,6 +923,91 @@ class DomainService:
             created_at=task.created_at,
             updated_at=task.updated_at,
         )
+
+    @staticmethod
+    def _task_link_summary(
+        task: Task, project: Project, status: ProjectStatus
+    ) -> TaskLinkTaskSummary:
+        return TaskLinkTaskSummary(
+            id=task.id,
+            slug=task.slug,
+            title=task.title,
+            project_id=project.id,
+            project_name=project.name,
+            status_id=status.id,
+            status_name=status.name,
+        )
+
+    async def _task_link_response(self, source: Task, link: TaskLink) -> TaskLinkResponse:
+        other_id = link.task_b_id if source.id == link.task_a_id else link.task_a_id
+        other = await self.repository.get_task(other_id)
+        if other is None:
+            raise NotFoundError("Linked task not found")
+        project = await self.repository.get_project(other.project_id)
+        status = await self.repository.get_status(other.status_id)
+        creator = await self.repository.get_user(link.created_by)
+        if project is None or status is None or creator is None or creator.profile is None:
+            raise NotFoundError("Linked task not found")
+        if link.relation_type == "related":
+            relation_type: Literal["blocks", "depends_on", "related"] = "related"
+        elif link.blocking_task_id == source.id:
+            relation_type = "blocks"
+        else:
+            relation_type = "depends_on"
+        return TaskLinkResponse(
+            id=link.id,
+            relation_type=relation_type,
+            task=self._task_link_summary(other, project, status),
+            created_by=self._participant_summary(creator),
+            created_at=link.created_at,
+        )
+
+    async def _record_link_change(
+        self, task: Task, other: Task, actor_id: UUID, link: TaskLink, event_type: str
+    ) -> None:
+        relation = (
+            "related"
+            if link.relation_type == "related"
+            else "blocks"
+            if link.blocking_task_id == task.id
+            else "depends_on"
+        )
+        await self._record_history(
+            task,
+            actor_id,
+            event_type,
+            "links",
+            None if event_type == "task_link_added" else f"{relation}: {other.slug} {other.title}",
+            f"{relation}: {other.slug} {other.title}" if event_type == "task_link_added" else None,
+        )
+
+    async def _queue_link_notifications(
+        self, source: Task, target: Task, actor_id: UUID, link: TaskLink, event_type: str
+    ) -> None:
+        recipients: set[UUID] = set()
+        for task in (source, target):
+            recipients.add(task.reporter_id)
+            if task.assignee_id is not None:
+                recipients.add(task.assignee_id)
+            recipients.update(await self.repository.list_task_watcher_ids(task.id))
+        payload = json.dumps(
+            {
+                "project_id": str(source.project_id),
+                "linked_task_id": str(target.id),
+                "link_id": str(link.id),
+                "tab": "links",
+            },
+            separators=(",", ":"),
+        )
+        action = "linked" if event_type == "task_link_added" else "unlinked"
+        for recipient_id in recipients - {actor_id}:
+            self.repository.add_notification(
+                recipient_id=recipient_id,
+                task_id=source.id,
+                event_type=event_type,
+                message=f"Task {source.slug} {action} with {target.slug}",
+                event_data=payload,
+            )
 
     @staticmethod
     def _participant_summary(user: User) -> ParticipantSummary:

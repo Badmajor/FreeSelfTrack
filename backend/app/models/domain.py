@@ -206,6 +206,34 @@ class Task(Base):
     )
 
 
+class TaskLink(Base):
+    __tablename__ = "task_links"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    task_a_id: Mapped[UUID] = mapped_column(ForeignKey("tasks.id", ondelete="CASCADE"), index=True)
+    task_b_id: Mapped[UUID] = mapped_column(ForeignKey("tasks.id", ondelete="CASCADE"), index=True)
+    relation_type: Mapped[str] = mapped_column(String(16))
+    blocking_task_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("tasks.id", ondelete="CASCADE"), nullable=True
+    )
+    created_by: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+    creator: Mapped[User] = relationship(foreign_keys=[created_by])
+
+    __table_args__ = (
+        CheckConstraint("task_a_id < task_b_id", name="ck_task_links_canonical_pair"),
+        CheckConstraint(
+            "(relation_type = 'related' AND blocking_task_id IS NULL) OR "
+            "(relation_type = 'blocks' AND blocking_task_id IN (task_a_id, task_b_id))",
+            name="ck_task_links_type_direction",
+        ),
+        UniqueConstraint("task_a_id", "task_b_id", name="uq_task_links_pair"),
+    )
+
+
 class TaskHistory(Base):
     __tablename__ = "task_history"
 

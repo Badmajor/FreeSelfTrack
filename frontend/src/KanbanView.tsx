@@ -1,4 +1,5 @@
 import { TaskChat } from "./TaskChat";
+import { TaskLinks, type LinkSelection } from "./TaskLinks";
 import {
   FormEvent,
   KeyboardEvent as ReactKeyboardEvent,
@@ -9,7 +10,7 @@ import {
   useState,
 } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, Link2 } from "lucide-react";
 
 import {
   addTaskWatcher,
@@ -36,6 +37,12 @@ type Props = {
   currentUser: UserSummary;
   onClose?: () => void;
   onOpenTask?: (taskId: string) => void;
+  onOpenLinkedTask?: (projectId: string, taskId: string) => void;
+  canWrite?: boolean;
+  linkSelection?: LinkSelection | null;
+  onStartLinkSelection?: (selection: LinkSelection) => void;
+  onCancelLinkSelection?: () => void;
+  onSelectLinkedTask?: (taskId: string) => void;
 };
 type ColumnState = BoardColumn & { loadingMore: boolean; error: string };
 const DEFAULT_WIDTH = 280;
@@ -47,6 +54,12 @@ export function KanbanView({
   currentUser,
   onClose,
   onOpenTask,
+  onOpenLinkedTask = (_, taskId) => onOpenTask?.(taskId),
+  canWrite = true,
+  linkSelection,
+  onStartLinkSelection = () => undefined,
+  onCancelLinkSelection = () => undefined,
+  onSelectLinkedTask = () => undefined,
 }: Props) {
   const queryClient = useQueryClient();
   const board = useQuery({
@@ -175,6 +188,18 @@ export function KanbanView({
           )}
         </div>
       </div>
+      {linkSelection && (
+        <div className="link-selection-banner" role="status">
+          <Link2 aria-hidden="true" />
+          <span>
+            Select a task for <strong>{linkSelection.sourceSlug}</strong> ·{" "}
+            {linkSelection.relationType.replace("_", " ")}
+          </span>
+          <button type="button" className="button secondary compact" onClick={onCancelLinkSelection}>
+            Cancel
+          </button>
+        </div>
+      )}
       {error && (
         <p className="error" role="alert">
           {error}
@@ -192,6 +217,8 @@ export function KanbanView({
                 [column.status.id]: width,
               }))
             }
+            canWrite={canWrite}
+            selecting={Boolean(linkSelection)}
             onCreate={async (title, storyPoints, dueDate, priority) => {
               await createTask(project.id, {
                 title,
@@ -206,6 +233,10 @@ export function KanbanView({
               });
             }}
             onTaskClick={(taskId, trigger) => {
+              if (linkSelection) {
+                if (taskId !== linkSelection.sourceTaskId) onSelectLinkedTask(taskId);
+                return;
+              }
               if (onOpenTask) {
                 onOpenTask(taskId);
                 return;
@@ -228,8 +259,12 @@ export function KanbanView({
           task={activeTask}
           columns={columns}
           projectId={project.id}
+          organizationId={project.organization_id}
           projectOwnerId={project.owner_id}
           currentUser={currentUser}
+          canWrite={canWrite}
+          onOpenLinkedTask={onOpenLinkedTask}
+          onStartLinkSelection={onStartLinkSelection}
           onClose={() => {
             setSelectedTaskId(null);
             requestAnimationFrame(() => lastTriggerRef.current?.focus());
@@ -258,6 +293,8 @@ type ColumnProps = {
   onDragStart: (task: Task) => void;
   onDrop: (statusId: string) => void;
   onLoadMore: () => void;
+  canWrite: boolean;
+  selecting: boolean;
 };
 function KanbanColumn({
   column,
@@ -268,6 +305,8 @@ function KanbanColumn({
   onDragStart,
   onDrop,
   onLoadMore,
+  canWrite,
+  selecting,
 }: ColumnProps) {
   const [creating, setCreating] = useState(false);
   const [title, setTitle] = useState("");
@@ -370,7 +409,8 @@ function KanbanColumn({
             task={task}
             status={column.status}
             onClick={(trigger) => onTaskClick(task.id, trigger)}
-            onDragStart={() => onDragStart(task)}
+            onDragStart={() => { if (canWrite && !selecting) onDragStart(task); }}
+            selecting={selecting}
           />
         ))}
         {!column.tasks.length && (
@@ -383,14 +423,14 @@ function KanbanColumn({
           </p>
         )}
       </div>
-      <button
+      {canWrite && !selecting && <button
         className="button compact"
         type="button"
         onClick={() => setCreating((value) => !value)}
       >
         {creating ? "Cancel" : "Add task"}
-      </button>
-      {creating && (
+      </button>}
+      {canWrite && !selecting && creating && (
         <form
           className="create-task-form"
           onSubmit={(event) => void submit(event)}
@@ -464,15 +504,16 @@ type CardProps = {
   status: BoardColumn["status"];
   onClick: (trigger: HTMLElement) => void;
   onDragStart: () => void;
+  selecting: boolean;
 };
-function TaskCard({ task, status, onClick, onDragStart }: CardProps) {
+function TaskCard({ task, status, onClick, onDragStart, selecting }: CardProps) {
   const overdue = Boolean(
     task.due_date && !status.is_completed && utcDate() > task.due_date,
   );
   return (
     <article
-      className={`task-card${overdue ? " overdue" : ""}`}
-      draggable
+      className={`task-card${overdue ? " overdue" : ""}${selecting ? " link-selectable" : ""}`}
+      draggable={!selecting}
       onDragStart={onDragStart}
       onClick={(event) => onClick(event.currentTarget)}
       onKeyDown={(event) => {
@@ -482,7 +523,7 @@ function TaskCard({ task, status, onClick, onDragStart }: CardProps) {
         }
       }}
       tabIndex={0}
-      aria-label={`Open task ${task.id}`}
+      aria-label={`${selecting ? "Select" : "Open"} task ${task.id}`}
     >
       <strong>{task.title}</strong>
       <span>{task.slug ?? task.id}</span>
@@ -523,9 +564,14 @@ type DrawerProps = {
   task: Task;
   columns: ColumnState[];
   projectId: string;
+  organizationId: string;
   projectOwnerId: string;
   currentUser: UserSummary;
+  canWrite: boolean;
   focusCommentId?: string;
+  initialActivity?: "chat" | "links" | "history";
+  onOpenLinkedTask: (projectId: string, taskId: string) => void;
+  onStartLinkSelection: (selection: LinkSelection) => void;
   onClose: () => void;
   onSaved: (task: Task) => void;
   onStatusChange: (task: Task, statusId: string) => void;
@@ -534,15 +580,22 @@ function TaskDrawer({
   task,
   columns,
   projectId,
+  organizationId,
   projectOwnerId,
   currentUser,
+  canWrite,
   focusCommentId,
+  initialActivity = "chat",
+  onOpenLinkedTask,
+  onStartLinkSelection,
   onClose,
   onSaved,
   onStatusChange,
 }: DrawerProps) {
   const queryClient = useQueryClient();
-  const [activity, setActivity] = useState<"chat" | "history">("chat");
+  const [activity, setActivity] = useState<"chat" | "links" | "history">(
+    initialActivity,
+  );
   const details = useQuery({
     queryKey: ["task", task.id],
     queryFn: () => getTask(task.id),
@@ -555,10 +608,12 @@ function TaskDrawer({
   const watchers = useQuery({
     queryKey: ["task-watchers", task.id],
     queryFn: () => listTaskWatchers(task.id),
+    enabled: canWrite,
   });
   const members = useQuery({
     queryKey: ["project-members", projectId],
     queryFn: () => listProjectMembers(projectId),
+    enabled: canWrite,
   });
   const [title, setTitle] = useState(task.title);
   const [description, setDescription] = useState(task.description ?? "");
@@ -575,9 +630,10 @@ function TaskDrawer({
   const [saveError, setSaveError] = useState("");
   const currentTask = details.data ?? task;
   const canManagePlanning =
-    currentUser.id === projectOwnerId ||
+    canWrite &&
+    (currentUser.id === projectOwnerId ||
     currentUser.id === currentTask.reporter_id ||
-    currentUser.id === currentTask.assignee_id;
+    currentUser.id === currentTask.assignee_id);
   const save = useMutation({
     mutationFn: () =>
       updateTask(task.id, {
@@ -634,11 +690,13 @@ function TaskDrawer({
     onError: (error) => setSaveError(messageFor(error)),
   });
   const canChangeReporter =
-    currentUser.id === projectOwnerId || currentUser.id === task.reporter_id;
+    canWrite &&
+    (currentUser.id === projectOwnerId || currentUser.id === task.reporter_id);
   const canChangeAssignee =
-    currentUser.id === projectOwnerId ||
-    currentUser.id === task.assignee_id ||
-    !task.assignee_id;
+    canWrite &&
+    (currentUser.id === projectOwnerId ||
+      currentUser.id === task.assignee_id ||
+      !task.assignee_id);
 
   useEffect(() => {
     if (details.data) {
@@ -673,14 +731,14 @@ function TaskDrawer({
       <div className="drawer-header">
         <h2 id="task-drawer-title">Task details</h2>
         <div className="drawer-actions">
-          <button
+          {canWrite && <button
             className="button drawer-save"
             type="submit"
             form="task-edit-form"
             disabled={save.isPending}
           >
             {save.isPending ? "Saving..." : "Save changes"}
-          </button>
+          </button>}
           <button
             className="icon-button"
             type="button"
@@ -706,12 +764,14 @@ function TaskDrawer({
         <input
           id="task-title"
           value={title}
+          readOnly={!canWrite}
           onChange={(event) => setTitle(event.target.value)}
         />
         <label htmlFor="task-description">Description</label>
         <textarea
           id="task-description"
           value={description}
+          readOnly={!canWrite}
           onChange={(event) => setDescription(event.target.value)}
         />
         <div className="task-field-grid">
@@ -720,6 +780,7 @@ function TaskDrawer({
             <select
               id="task-status"
               value={task.status_id}
+              disabled={!canWrite}
               onChange={(event) => onStatusChange(task, event.target.value)}
             >
               {columns.map((column) => (
@@ -866,7 +927,7 @@ function TaskDrawer({
             {!watchers.isPending &&
               !watchers.isError &&
               !watchers.data?.length && <p className="muted">No watchers.</p>}
-            <button
+            {canWrite && <button
               className="icon-button drawer-watch"
               type="button"
               disabled={watcherMutation.isPending}
@@ -879,7 +940,7 @@ function TaskDrawer({
               ) : (
                 <Eye aria-hidden="true" />
               )}
-            </button>
+            </button>}
           </div>
         </div>
       </div>
@@ -891,14 +952,14 @@ function TaskDrawer({
             if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key))
               return;
             event.preventDefault();
+            const tabs = ["chat", "links", "history"] as const;
+            const current = tabs.indexOf(activity);
             const next =
               event.key === "Home"
-                ? "chat"
+                ? tabs[0]
                 : event.key === "End"
-                  ? "history"
-                  : activity === "chat"
-                    ? "history"
-                    : "chat";
+                  ? tabs[2]
+                  : tabs[(current + (event.key === "ArrowRight" ? 1 : 2)) % 3];
             setActivity(next);
             document.getElementById("activity-" + next)?.focus();
           }}
@@ -913,6 +974,17 @@ function TaskDrawer({
             onClick={() => setActivity("chat")}
           >
             Chat
+          </button>
+          <button
+            type="button"
+            role="tab"
+            id="activity-links"
+            aria-controls="activity-links-panel"
+            tabIndex={activity === "links" ? 0 : -1}
+            aria-selected={activity === "links"}
+            onClick={() => setActivity("links")}
+          >
+            Links
           </button>
           <button
             type="button"
@@ -935,8 +1007,24 @@ function TaskDrawer({
           <TaskChat
             key={task.id}
             taskId={task.id}
-            projectId={projectId}
+            organizationId={organizationId}
             focusCommentId={focusCommentId}
+          />
+        </div>
+        <div
+          role="tabpanel"
+          id="activity-links-panel"
+          aria-labelledby="activity-links"
+          hidden={activity !== "links"}
+        >
+          <TaskLinks
+            taskId={task.id}
+            taskSlug={task.slug}
+            projectId={projectId}
+            organizationId={organizationId}
+            canManage={canWrite}
+            onOpenTask={onOpenLinkedTask}
+            onStartSelection={onStartLinkSelection}
           />
         </div>
         <div
@@ -1075,12 +1163,18 @@ function messageFor(error: unknown) {
 export function NotificationTaskPanel({
   taskId,
   commentId,
+  initialActivity = "chat",
   currentUser,
+  onOpenLinkedTask,
+  onStartLinkSelection,
   onClose,
 }: {
   taskId: string;
   commentId?: string;
+  initialActivity?: "chat" | "links" | "history";
   currentUser: UserSummary;
+  onOpenLinkedTask: (projectId: string, taskId: string) => void;
+  onStartLinkSelection: (selection: LinkSelection) => void;
   onClose: () => void;
 }) {
   const client = useQueryClient();
@@ -1098,6 +1192,12 @@ export function NotificationTaskPanel({
   const board = useQuery({
     queryKey: ["board", task.data?.project_id],
     queryFn: () => getBoard(task.data!.project_id),
+    enabled: !!task.data,
+    retry: false,
+  });
+  const members = useQuery({
+    queryKey: ["project-members", task.data?.project_id],
+    queryFn: () => listProjectMembers(task.data!.project_id),
     enabled: !!task.data,
     retry: false,
   });
@@ -1135,9 +1235,14 @@ export function NotificationTaskPanel({
           error: "",
         }))}
         projectId={project.data.id}
+        organizationId={project.data.organization_id}
         projectOwnerId={project.data.owner_id}
         currentUser={currentUser}
+        canWrite={members.isSuccess}
         focusCommentId={commentId}
+        initialActivity={initialActivity}
+        onOpenLinkedTask={onOpenLinkedTask}
+        onStartLinkSelection={onStartLinkSelection}
         onClose={onClose}
         onSaved={(saved) => client.setQueryData(["task", taskId], saved)}
         onStatusChange={(_, statusId) => update.mutate(statusId)}

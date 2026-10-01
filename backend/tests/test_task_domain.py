@@ -352,7 +352,7 @@ async def test_membership_authorization_ownership_and_soft_delete_lifecycle(
     )
     assert remove_old_owner.status_code == 200
     removed_owner_view = await client.get(f"/api/projects/{project_id}", headers=owner_headers)
-    assert removed_owner_view.status_code == 404
+    assert removed_owner_view.status_code == 200
 
     missing_confirmation = await client.request(
         "DELETE", f"/api/projects/{project_id}", json={"confirm": False}, headers=member_headers
@@ -898,8 +898,8 @@ async def test_project_list_matches_membership_and_board_access(
     member_id = added.json()["id"]
     response = await client.get(listing, headers=member)
     assert response.status_code == 200
-    assert response.json() == []
-    assert (await client.get(board_url, headers=member)).status_code == 404
+    assert [item["id"] for item in response.json()] == [project_id]
+    assert (await client.get(board_url, headers=member)).status_code == 200
     added = await client.post(
         f"/api/projects/{project_id}/members",
         headers=owner,
@@ -911,18 +911,20 @@ async def test_project_list_matches_membership_and_board_access(
     ]
     assert (await client.get(board_url, headers=member)).status_code == 200
     member_project = await create_project(client, member, org_id, "Member project")
-    assert [item["id"] for item in (await client.get(listing, headers=owner)).json()] == [
-        project_id
-    ]
+    assert {item["id"] for item in (await client.get(listing, headers=owner)).json()} == {
+        project_id,
+        member_project["id"],
+    }
     removed = await client.delete(f"/api/projects/{project_id}/members/{member_id}", headers=owner)
     assert removed.status_code == 200
-    assert [item["id"] for item in (await client.get(listing, headers=member)).json()] == [
-        member_project["id"]
-    ]
-    assert (await client.get(board_url, headers=member)).status_code == 404
+    assert {item["id"] for item in (await client.get(listing, headers=member)).json()} == {
+        project_id,
+        member_project["id"],
+    }
+    assert (await client.get(board_url, headers=member)).status_code == 200
     other_org = await create_organization(client, member, "Another organization")
     await create_project(client, member, other_org["id"], "Other project")
-    assert len((await client.get(listing, headers=member)).json()) == 1
+    assert len((await client.get(listing, headers=member)).json()) == 2
     # Organization deletion must still include projects hidden from the owner's list.
     deleted = await client.request(
         "DELETE", f"/api/organizations/{org_id}", headers=owner, json={"confirm": True}
@@ -933,3 +935,248 @@ async def test_project_list_matches_membership_and_board_access(
     assert restored.status_code == 200
     assert (await client.get(listing, headers=owner)).json() == []
     assert (await client.get(listing, headers=member)).json() == []
+
+
+async def test_task_links_and_organization_read_only_access(
+    client: AsyncClient, user_ids: tuple[UUID, UUID]
+) -> None:
+    owner = await authenticate(client, user_ids[0])
+    reader = await authenticate(client, user_ids[1])
+    organization = await create_organization(client, owner, "Linked work")
+    org_id = organization["id"]
+    assert (
+        await client.post(
+            f"/api/organizations/{org_id}/members",
+            headers=owner,
+            json={"email": f"{user_ids[1]}@example.com"},
+        )
+    ).status_code == 200
+    first_project = await create_project(client, owner, org_id, "Alpha")
+    second_project = await create_project(client, owner, org_id, "Beta")
+    first_status = (
+        await client.get(f"/api/projects/{first_project['id']}/statuses", headers=owner)
+    ).json()[0]
+    second_status = (
+        await client.get(f"/api/projects/{second_project['id']}/statuses", headers=owner)
+    ).json()[0]
+    first_task = (
+        await client.post(
+            f"/api/projects/{first_project['id']}/tasks",
+            headers=owner,
+            json={"title": "Source", "status_id": first_status["id"]},
+        )
+    ).json()
+    second_task = (
+        await client.post(
+            f"/api/projects/{second_project['id']}/tasks",
+            headers=owner,
+            json={"title": "Target", "status_id": second_status["id"]},
+        )
+    ).json()
+
+    assert (await client.get(f"/api/tasks/{first_task['id']}", headers=reader)).status_code == 200
+    assert (
+        await client.get(f"/api/projects/{first_project['id']}/board", headers=reader)
+    ).status_code == 200
+    assert (
+        await client.patch(
+            f"/api/tasks/{first_task['id']}",
+            headers=reader,
+            json={"title": "Forbidden"},
+        )
+    ).status_code == 403
+    found = await client.get(
+        f"/api/organizations/{org_id}/tasks/search",
+        headers=reader,
+        params={"slug": f"  {second_task['slug'].lower()}  "},
+    )
+    assert found.status_code == 200
+    assert [item["id"] for item in found.json()["items"]] == [second_task["id"]]
+
+    denied = await client.post(
+        f"/api/tasks/{first_task['id']}/links",
+        headers=reader,
+        json={"target_task_id": second_task["id"], "relation_type": "blocks"},
+    )
+    assert denied.status_code == 403
+    assert (
+        await client.post(
+            f"/api/projects/{second_project['id']}/members",
+            headers=owner,
+            json={"email": f"{user_ids[1]}@example.com"},
+        )
+    ).status_code == 200
+    created = await client.post(
+        f"/api/tasks/{first_task['id']}/links",
+        headers=reader,
+        json={"target_task_id": second_task["id"], "relation_type": "blocks"},
+    )
+    assert created.status_code == 201, created.text
+    link = created.json()
+    assert link["relation_type"] == "blocks"
+    reverse = await client.get(f"/api/tasks/{second_task['id']}/links", headers=reader)
+    assert reverse.status_code == 200
+    assert reverse.json()[0]["relation_type"] == "depends_on"
+
+    repeated = await client.post(
+        f"/api/tasks/{first_task['id']}/links",
+        headers=reader,
+        json={"target_task_id": second_task["id"], "relation_type": "blocks"},
+    )
+    assert repeated.status_code == 200
+    conflict = await client.post(
+        f"/api/tasks/{first_task['id']}/links",
+        headers=reader,
+        json={"target_task_id": second_task["id"], "relation_type": "related"},
+    )
+    assert conflict.status_code == 409
+    self_link = await client.post(
+        f"/api/tasks/{first_task['id']}/links",
+        headers=reader,
+        json={"target_task_id": first_task["id"], "relation_type": "related"},
+    )
+    assert self_link.status_code == 422
+
+    for task in (first_task, second_task):
+        history = (await client.get(f"/api/tasks/{task['id']}/history", headers=reader)).json()[
+            "entries"
+        ]
+        assert sum(item["event_type"] == "task_link_added" for item in history) == 1
+    notifications = (await client.get("/api/notifications", headers=owner)).json()
+    assert sum(item["event_type"] == "task_link_added" for item in notifications) == 1
+
+    removed = await client.delete(
+        f"/api/tasks/{first_task['id']}/links/{link['id']}", headers=reader
+    )
+    assert removed.status_code == 204
+    assert (await client.get(f"/api/tasks/{first_task['id']}/links", headers=reader)).json() == []
+
+    other_org = await create_organization(client, owner, "Other")
+    other_project = await create_project(client, owner, other_org["id"], "Other")
+    other_status = (
+        await client.get(f"/api/projects/{other_project['id']}/statuses", headers=owner)
+    ).json()[0]
+    other_task = (
+        await client.post(
+            f"/api/projects/{other_project['id']}/tasks",
+            headers=owner,
+            json={"title": "Foreign", "status_id": other_status["id"]},
+        )
+    ).json()
+    hidden = await client.post(
+        f"/api/tasks/{first_task['id']}/links",
+        headers=owner,
+        json={"target_task_id": other_task["id"], "relation_type": "related"},
+    )
+    assert hidden.status_code == 404
+
+
+async def test_task_link_relative_types_cycles_and_ambiguous_search(
+    client: AsyncClient, user_ids: tuple[UUID, UUID]
+) -> None:
+    owner = await authenticate(client, user_ids[0])
+    organization = await create_organization(client, owner, "Relations")
+    projects = [
+        await create_project(client, owner, organization["id"], name)
+        for name in ("Alpha", "Beta", "Gamma", "Delta")
+    ]
+    tasks = []
+    for project in projects:
+        status = (
+            await client.get(f"/api/projects/{project['id']}/statuses", headers=owner)
+        ).json()[0]
+        tasks.append(
+            (
+                await client.post(
+                    f"/api/projects/{project['id']}/tasks",
+                    headers=owner,
+                    json={"title": f"Task {project['name']}", "status_id": status["id"]},
+                )
+            ).json()
+        )
+
+    async def link(source: int, target: int, relation: str = "blocks"):
+        response = await client.post(
+            f"/api/tasks/{tasks[source]['id']}/links",
+            headers=owner,
+            json={"target_task_id": tasks[target]["id"], "relation_type": relation},
+        )
+        assert response.status_code == 201, response.text
+
+    await link(0, 1)
+    await link(1, 2)
+    await link(2, 0)
+    await link(0, 3, "related")
+
+    expected = [
+        {"blocks", "depends_on", "related"},
+        {"blocks", "depends_on"},
+        {"blocks", "depends_on"},
+        {"related"},
+    ]
+    for task, relations in zip(tasks, expected, strict=True):
+        response = await client.get(f"/api/tasks/{task['id']}/links", headers=owner)
+        assert response.status_code == 200
+        assert {item["relation_type"] for item in response.json()} == relations
+
+    twin_projects = [
+        await create_project(client, owner, organization["id"], "Twin") for _ in range(2)
+    ]
+    twin_tasks = []
+    for project in twin_projects:
+        status = (
+            await client.get(f"/api/projects/{project['id']}/statuses", headers=owner)
+        ).json()[0]
+        twin_tasks.append(
+            (
+                await client.post(
+                    f"/api/projects/{project['id']}/tasks",
+                    headers=owner,
+                    json={"title": "Duplicate slug", "status_id": status["id"]},
+                )
+            ).json()
+        )
+    assert twin_tasks[0]["slug"] == twin_tasks[1]["slug"]
+    search_url = f"/api/organizations/{organization['id']}/tasks/search"
+    found = await client.get(
+        search_url,
+        headers=owner,
+        params={"slug": f"  {twin_tasks[0]['slug'].lower()}  ", "limit": 20},
+    )
+    assert {item["id"] for item in found.json()["items"]} == {
+        twin_tasks[0]["id"],
+        twin_tasks[1]["id"],
+    }
+    prefix = twin_tasks[0]["slug"].rsplit("-", 1)[0] + "-"
+    prefix_found = await client.get(
+        search_url,
+        headers=owner,
+        params={"slug": prefix.lower(), "limit": 20},
+    )
+    assert {item["id"] for item in prefix_found.json()["items"]} == {
+        twin_tasks[0]["id"],
+        twin_tasks[1]["id"],
+    }
+    preserved_link = await client.post(
+        f"/api/tasks/{tasks[0]['id']}/links",
+        headers=owner,
+        json={"target_task_id": twin_tasks[0]["id"], "relation_type": "related"},
+    )
+    assert preserved_link.status_code == 201
+    deleted = await client.request(
+        "DELETE",
+        f"/api/projects/{twin_projects[0]['id']}",
+        headers=owner,
+        json={"confirm": True},
+    )
+    assert deleted.status_code == 204
+    visible = await client.get(
+        search_url,
+        headers=owner,
+        params={"slug": twin_tasks[0]["slug"], "limit": 1},
+    )
+    assert [item["id"] for item in visible.json()["items"]] == [twin_tasks[1]["id"]]
+    # Existing links must not reveal a task after its project is soft-deleted.
+    source_links = await client.get(f"/api/tasks/{tasks[0]['id']}/links", headers=owner)
+    assert source_links.status_code == 200
+    assert twin_tasks[0]["id"] not in {item["task"]["id"] for item in source_links.json()}

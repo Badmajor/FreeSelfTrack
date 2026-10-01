@@ -281,6 +281,60 @@ export async function restoreStatus(
   );
 }
 
+
+export type TaskLinkRelation = "blocks" | "depends_on" | "related";
+export type TaskLinkTask = {
+  id: string;
+  slug: string;
+  title: string;
+  project_id: string;
+  project_name: string;
+  status_id: string;
+  status_name: string;
+};
+export type TaskLink = {
+  id: string;
+  relation_type: TaskLinkRelation;
+  task: TaskLinkTask;
+  created_by: Participant;
+  created_at: string;
+};
+export type TaskSearchResult = { items: TaskLinkTask[] };
+
+export function listTaskLinks(taskId: string): Promise<TaskLink[]> {
+  return request<TaskLink[]>(`/tasks/${taskId}/links`);
+}
+export function createTaskLink(
+  taskId: string,
+  targetTaskId: string,
+  relationType: TaskLinkRelation,
+): Promise<TaskLink> {
+  return request<TaskLink>(`/tasks/${taskId}/links`, {
+    method: "POST",
+    body: JSON.stringify({
+      target_task_id: targetTaskId,
+      relation_type: relationType,
+    }),
+  });
+}
+export async function deleteTaskLink(
+  taskId: string,
+  linkId: string,
+): Promise<void> {
+  await request<unknown>(`/tasks/${taskId}/links/${linkId}`, {
+    method: "DELETE",
+  });
+}
+export function searchOrganizationTasks(
+  organizationId: string,
+  slug: string,
+): Promise<TaskSearchResult> {
+  const query = new URLSearchParams({ slug, limit: "20" });
+  return request<TaskSearchResult>(
+    `/organizations/${organizationId}/tasks/search?${query}`,
+  );
+}
+
 export type BoardColumn = {
   status: Status;
   tasks: Task[];

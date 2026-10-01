@@ -29,8 +29,11 @@ from app.schemas.domain import (
     StatusUpdate,
     TaskCreate,
     TaskHistoryPageResponse,
+    TaskLinkCreate,
+    TaskLinkResponse,
     TaskPageResponse,
     TaskResponse,
+    TaskSearchResponse,
     TaskUpdate,
     UnreadCountResponse,
     UserResponse,
@@ -204,7 +207,7 @@ async def get_project(
     user_id: UUID = Depends(current_user_id),
     session: AsyncSession = Depends(get_session),
 ) -> Any:
-    return await translate_errors(service(session).get_project)(user_id, project_id)
+    return await translate_errors(service(session).get_project_for_read)(user_id, project_id)
 
 
 @router.patch("/projects/{project_id}", response_model=ProjectResponse)
@@ -423,6 +426,58 @@ async def get_task_history(
     return await translate_errors(service(session).get_task_history)(
         user_id, task_id, limit, cursor
     )
+
+
+@router.get("/organizations/{organization_id}/tasks/search", response_model=TaskSearchResponse)
+async def search_organization_tasks(
+    organization_id: UUID,
+    slug: str = Query(min_length=1, max_length=80),
+    limit: int = Query(default=20, ge=1, le=50),
+    user_id: UUID = Depends(current_user_id),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    return await translate_errors(service(session).search_organization_tasks)(
+        user_id, organization_id, slug, limit
+    )
+
+
+@router.get("/tasks/{task_id}/links", response_model=list[TaskLinkResponse])
+async def list_task_links(
+    task_id: UUID,
+    user_id: UUID = Depends(current_user_id),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    return await translate_errors(service(session).list_task_links)(user_id, task_id)
+
+
+@router.post(
+    "/tasks/{task_id}/links",
+    response_model=TaskLinkResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_task_link(
+    task_id: UUID,
+    data: TaskLinkCreate,
+    response: Response,
+    user_id: UUID = Depends(current_user_id),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    result, created = await translate_errors(service(session).create_task_link)(
+        user_id, task_id, data
+    )
+    response.status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
+    return result
+
+
+@router.delete("/tasks/{task_id}/links/{link_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_task_link(
+    task_id: UUID,
+    link_id: UUID,
+    user_id: UUID = Depends(current_user_id),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    await translate_errors(service(session).delete_task_link)(user_id, task_id, link_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/tasks/{task_id}/watchers", response_model=list[ParticipantSummary])

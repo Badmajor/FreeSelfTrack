@@ -8,5 +8,7 @@ docs/product/
 docs/tasks/
 **/AGENTS.md
 AGENTS.md
-.github/instructions/**
-.github/prompts/**
+.github/instructions/
+.github/prompts/
+*_cache/
+backlog.md

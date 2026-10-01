@@ -61,7 +61,7 @@ class ChatService:
 
     async def authorize(self, user_id: UUID, task_id: UUID) -> Task:
         task = await self.domain.get_task(user_id, task_id)
-        project = await self.domain.get_project(user_id, task.project_id)
+        project = await self.domain.get_project_for_read(user_id, task.project_id)
         await self.domain.get_organization(user_id, project.organization_id)
         return task
 
@@ -128,15 +128,11 @@ class ChatService:
             if existing.fingerprint != fingerprint:
                 raise ConflictError("Request ID already used for another message")
             return self.response(existing)
-        members = await self.users.list_project_members(task.project_id)
-        project = await self.domain.get_project(user_id, task.project_id)
+        project = await self.domain.get_project_for_read(user_id, task.project_id)
         organization_members = await self.users.list_organization_members(project.organization_id)
-        organization_ids = {member.id for member in organization_members if member.is_active}
-        allowed = {
-            member.id for member in members if member.is_active and member.id in organization_ids
-        }
+        allowed = {member.id for member in organization_members if member.is_active}
         if not mention_ids.issubset(allowed):
-            raise InvalidWorkflowError("Mentioned users must be current project members")
+            raise InvalidWorkflowError("Mentioned users must be active organization members")
         row = Comment(
             task_id=task_id,
             author_id=user_id,

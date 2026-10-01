@@ -1531,3 +1531,96 @@ select {
     border-bottom: 1px solid #d9e2ec;
   }
 }
+
+.link-selection-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border: 1px solid #7fb6b3;
+  background: #eef8f6;
+  color: #173f3f;
+}
+.link-selection-banner svg { width: 18px; height: 18px; flex: 0 0 auto; }
+.link-selection-banner span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.task-card.link-selectable {
+  cursor: crosshair;
+  outline: 1px dashed #287c7c;
+  outline-offset: -3px;
+}
+.task-card.link-selectable:hover,
+.task-card.link-selectable:focus-visible {
+  background: #eef8f6;
+  outline: 2px solid #287c7c;
+  outline-offset: -2px;
+}
+.task-links { display: grid; gap: 14px; }
+.task-link-controls { display: grid; gap: 8px; }
+.task-link-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 36px;
+  align-items: end;
+  gap: 8px;
+}
+.task-link-field { display: grid; min-width: 0; gap: 6px; }
+.task-link-field label { margin: 0; }
+.task-link-field input,
+.task-link-field select { width: 100%; min-width: 0; height: 40px; min-height: 40px; }
+.select-task-link {
+  width: 36px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.link-selection-banner .button {
+  width: auto;
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0 12px;
+}
+.select-task-link svg,
+.task-link-target svg { width: 16px; height: 16px; }
+.task-link-results,
+.task-links-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.task-link-results button,
+.task-link-target {
+  width: 100%;
+  border: 1px solid #cbd8e6;
+  background: #fff;
+  color: #102a43;
+  text-align: left;
+  padding: 9px 10px;
+  display: grid;
+  gap: 2px;
+  cursor: pointer;
+}
+.task-link-results button:hover,
+.task-link-target:hover {
+  border-color: #287c7c;
+  background: #f2f9f8;
+}
+.task-link-results small,
+.task-link-target small { color: #627d98; }
+.task-links-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 36px;
+  gap: 8px;
+  align-items: center;
+}
+.task-link-kind {
+  grid-column: 1 / -1;
+  color: #486581;
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.task-link-target { position: relative; padding-right: 34px; }
+.task-link-target svg { position: absolute; right: 10px; top: 10px; }

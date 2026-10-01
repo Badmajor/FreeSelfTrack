@@ -138,8 +138,23 @@ async def test_chat_cursor_and_private_attachments(client: AsyncClient):
     assert (await client.get(url, headers=outsider)).status_code == 404
     assert (await client.get(download, headers=outsider)).status_code == 404
     await client.delete(f"/api/projects/{project['id']}/members/{member_id}", headers=owner)
-    assert (await client.get(url, headers=member)).status_code == 404
-    assert (await client.get(download, headers=member)).status_code == 404
+    assert (await client.get(url, headers=member)).status_code == 200
+    assert (await client.get(download, headers=member)).status_code == 200
+    organization_message = await post(
+        client,
+        task,
+        member,
+        text="Organization-only reply",
+        mentions=[task["reporter_id"]],
+        files=[("files", ("note.txt", b"organization attachment"))],
+    )
+    assert organization_message.status_code == 201, organization_message.text
+    assert len(organization_message.json()["attachments"]) == 1
+    owner_notifications = (await client.get("/api/notifications", headers=owner)).json()
+    assert any(
+        item["event_type"] == "comment_created" and item["task_id"] == task["id"]
+        for item in owner_notifications
+    )
     assert (await client.get(download)).status_code == 401
 
 

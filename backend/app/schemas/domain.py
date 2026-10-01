@@ -220,6 +220,33 @@ class TaskResponse(BaseModel):
     updated_at: datetime
 
 
+class TaskLinkCreate(BaseModel):
+    target_task_id: UUID
+    relation_type: Literal["blocks", "depends_on", "related"]
+
+
+class TaskLinkTaskSummary(BaseModel):
+    id: UUID
+    slug: str
+    title: str
+    project_id: UUID
+    project_name: str
+    status_id: UUID
+    status_name: str
+
+
+class TaskLinkResponse(BaseModel):
+    id: UUID
+    relation_type: Literal["blocks", "depends_on", "related"]
+    task: TaskLinkTaskSummary
+    created_by: ParticipantSummary
+    created_at: datetime
+
+
+class TaskSearchResponse(BaseModel):
+    items: list[TaskLinkTaskSummary]
+
+
 class BoardColumnResponse(BaseModel):
     status: StatusResponse
     tasks: list[TaskResponse]

@@ -16,6 +16,7 @@ from app.models import (
     ProjectTaskSequence,
     Task,
     TaskHistory,
+    TaskLink,
     TaskWatcher,
     User,
 )
@@ -259,6 +260,56 @@ class DomainRepository:
         return (
             await self.session.scalar(select(Task.id).where(Task.status_id == status_id).limit(1))
         ) is not None
+
+    async def get_task_link(self, link_id: UUID) -> TaskLink | None:
+        return await self.session.scalar(
+            select(TaskLink)
+            .options(selectinload(TaskLink.creator).selectinload(User.profile))
+            .where(TaskLink.id == link_id)
+        )
+
+    async def lock_task_pair(self, task_a_id: UUID, task_b_id: UUID) -> None:
+        await self.session.execute(
+            select(Task.id)
+            .where(Task.id.in_((task_a_id, task_b_id)))
+            .order_by(Task.id)
+            .with_for_update()
+        )
+
+    async def get_task_link_pair(self, task_a_id: UUID, task_b_id: UUID) -> TaskLink | None:
+        return await self.session.scalar(
+            select(TaskLink)
+            .options(selectinload(TaskLink.creator).selectinload(User.profile))
+            .where(TaskLink.task_a_id == task_a_id, TaskLink.task_b_id == task_b_id)
+        )
+
+    async def list_task_links(self, task_id: UUID) -> list[TaskLink]:
+        result = await self.session.scalars(
+            select(TaskLink)
+            .options(selectinload(TaskLink.creator).selectinload(User.profile))
+            .where(or_(TaskLink.task_a_id == task_id, TaskLink.task_b_id == task_id))
+            .order_by(TaskLink.created_at, TaskLink.id)
+        )
+        return list(result)
+
+    async def search_organization_tasks(
+        self, organization_id: UUID, slug: str, limit: int
+    ) -> list[tuple[Task, Project, ProjectStatus]]:
+        rows = await self.session.execute(
+            select(Task, Project, ProjectStatus)
+            .join(Project, Project.id == Task.project_id)
+            .join(Organization, Organization.id == Project.organization_id)
+            .join(ProjectStatus, ProjectStatus.id == Task.status_id)
+            .where(
+                Project.organization_id == organization_id,
+                Project.deleted_at.is_(None),
+                Organization.deleted_at.is_(None),
+                func.lower(Task.slug).startswith(slug.casefold(), autoescape=True),
+            )
+            .order_by(Project.name, Task.id)
+            .limit(limit)
+        )
+        return [(task, project, status) for task, project, status in rows]
 
     async def list_task_history(
         self, task_id: UUID, limit: int, cursor: tuple[object, UUID] | None = None

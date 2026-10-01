@@ -8,8 +8,8 @@ import { renderWithQueryClient } from "./test-utils";
 const person = { user_id: "member", first_name: "Anna", last_name: "Smith" };
 const row = (sequence = 1): api.ChatMessage => ({ id: "message-" + sequence, task_id: "task", sequence, author: person, text: "Message " + sequence, mentions: [], attachments: [], created_at: "2026-09-30T10:00:00Z" });
 function mount(focusCommentId?: string) {
-  vi.spyOn(api, "listProjectMembers").mockResolvedValue([{ id: "member", email: "member@example.com", is_active: true, profile: person }]);
-  return renderWithQueryClient(<TaskChat taskId="task" projectId="project" focusCommentId={focusCommentId} />);
+  vi.spyOn(api, "listOrganizationMembers").mockResolvedValue([{ id: "member", email: "member@example.com", is_active: true, profile: person }]);
+  return renderWithQueryClient(<TaskChat taskId="task" organizationId="organization" focusCommentId={focusCommentId} />);
 }
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 

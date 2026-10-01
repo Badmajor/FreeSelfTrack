@@ -32,6 +32,7 @@ import {
   archiveStatus,
   createOrganization,
   createProject,
+  createTaskLink,
   createStatus,
   deleteOrganization,
   deleteProject,
@@ -42,6 +43,7 @@ import {
   listArchivedStatuses,
   listNotifications,
   listOrganizations,
+  listProjectMembers,
   listProjects,
   listStatuses,
   openNotification,
@@ -56,6 +58,7 @@ import {
 } from "./api";
 import { KanbanView, NotificationTaskPanel } from "./KanbanView";
 import { MembersRoutePage } from "./MembersPage";
+import type { LinkSelection } from "./TaskLinks";
 
 type Props = {
   user: AuthUser;
@@ -64,6 +67,14 @@ type Props = {
 };
 
 export function AuthenticatedApp(props: Props) {
+  const [linkSelection, setLinkSelection] = useState<LinkSelection | null>(null);
+  const kanban = (
+    <KanbanPage
+      user={props.user}
+      linkSelection={linkSelection}
+      onLinkSelection={setLinkSelection}
+    />
+  );
   return (
     <Routes>
       <Route element={<AuthenticatedLayout {...props} />}>
@@ -98,11 +109,11 @@ export function AuthenticatedApp(props: Props) {
         />
         <Route
           path="projects/:projectId/kanban"
-          element={<KanbanPage user={props.user} />}
+          element={kanban}
         />
         <Route
           path="projects/:projectId/kanban/tasks/:taskId"
-          element={<KanbanPage user={props.user} />}
+          element={kanban}
         />
         <Route path="notifications" element={<NotificationsPage />} />
         <Route
@@ -1052,32 +1063,103 @@ function WorkflowRow({
   );
 }
 
-function KanbanPage({ user }: { user: AuthUser }) {
+function KanbanPage({
+  user,
+  linkSelection,
+  onLinkSelection,
+}: {
+  user: AuthUser;
+  linkSelection: LinkSelection | null;
+  onLinkSelection: (selection: LinkSelection | null) => void;
+}) {
   const { projectId = "", taskId } = useParams();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const client = useQueryClient();
   const project = useQuery({
     queryKey: ["project", projectId],
     queryFn: () => getProject(projectId),
     retry: false,
+  });
+  const members = useQuery({
+    queryKey: ["project-members", projectId],
+    queryFn: () => listProjectMembers(projectId),
+    retry: false,
+  });
+  const createLink = useMutation({
+    mutationFn: (targetTaskId: string) => {
+      if (!linkSelection) throw new Error("Link selection is not active.");
+      return createTaskLink(
+        linkSelection.sourceTaskId,
+        targetTaskId,
+        linkSelection.relationType,
+      );
+    },
+    onSuccess: async () => {
+      if (!linkSelection) return;
+      const source = linkSelection;
+      onLinkSelection(null);
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ["task-links", source.sourceTaskId] }),
+        client.invalidateQueries({ queryKey: ["task-history", source.sourceTaskId] }),
+      ]);
+      navigate(
+        `/projects/${source.sourceProjectId}/kanban/tasks/${source.sourceTaskId}?tab=links`,
+      );
+    },
   });
   if (project.isPending) return <PageState>Loading Kanban...</PageState>;
   if (project.isError || !project.data)
     return <NotFoundResource label="Project" />;
   return (
     <Page title={project.data.name} eyebrow="Kanban">
+      {createLink.isError && (
+        <p className="error" role="alert">
+          {createLink.error instanceof Error
+            ? createLink.error.message
+            : "Unable to create task link."}
+        </p>
+      )}
       <KanbanView
         project={project.data}
         currentUser={user}
+        canWrite={members.isSuccess}
+        linkSelection={
+          linkSelection?.organizationId === project.data.organization_id
+            ? linkSelection
+            : null
+        }
         onOpenTask={(id) =>
           navigate(`/projects/${projectId}/kanban/tasks/${id}`)
         }
+        onOpenLinkedTask={(linkedProjectId, id) =>
+          navigate(`/projects/${linkedProjectId}/kanban/tasks/${id}?tab=links`)
+        }
+        onStartLinkSelection={(selection) => {
+          onLinkSelection(selection);
+          navigate(`/projects/${projectId}/kanban`);
+        }}
+        onCancelLinkSelection={() => {
+          createLink.reset();
+          onLinkSelection(null);
+        }}
+        onSelectLinkedTask={(id) => createLink.mutate(id)}
       />
       {taskId && (
         <NotificationTaskPanel
           taskId={taskId}
           commentId={searchParams.get("comment") ?? undefined}
+          initialActivity={
+            searchParams.get("tab") === "links" ? "links" : "chat"
+          }
           currentUser={user}
+          onOpenLinkedTask={(linkedProjectId, id) =>
+            navigate(`/projects/${linkedProjectId}/kanban/tasks/${id}?tab=links`)
+          }
+          onStartLinkSelection={(selection) => {
+            onLinkSelection(selection);
+            navigate(`/projects/${projectId}/kanban`);
+          }}
           onClose={() => navigate(`/projects/${projectId}/kanban`)}
         />
       )}
@@ -1105,16 +1187,25 @@ function NotificationsPage() {
       if (!notification.task_id) return;
       const task = await getTask(notification.task_id);
       let commentId: string | undefined;
+      let tab: string | undefined;
       try {
         const data = notification.event_data
-          ? (JSON.parse(notification.event_data) as { comment_id?: string })
+          ? (JSON.parse(notification.event_data) as {
+              comment_id?: string;
+              tab?: string;
+            })
           : null;
         commentId = data?.comment_id;
+        tab = data?.tab;
       } catch {
         commentId = undefined;
+        tab = undefined;
       }
+      const params = new URLSearchParams();
+      if (commentId) params.set("comment", commentId);
+      if (tab === "links") params.set("tab", "links");
       navigate(
-        `/projects/${task.project_id}/kanban/tasks/${task.id}${commentId ? `?comment=${commentId}` : ""}`,
+        `/projects/${task.project_id}/kanban/tasks/${task.id}${params.size ? `?${params}` : ""}`,
       );
     },
   });

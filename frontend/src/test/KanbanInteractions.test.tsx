@@ -267,4 +267,47 @@ describe("Kanban interactions", () => {
       screen.getByRole("separator", { name: "Resize Backlog column" }),
     ).toBeInTheDocument();
   });
+  it("selects a linked task by keyboard and cancels without opening the drawer", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: unknown) =>
+        String(input).includes("/board?") ? response(board) : response([]),
+      ),
+    );
+    const select = vi.fn();
+    const cancel = vi.fn();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <KanbanView
+          project={project}
+          currentUser={{ id: "owner-1", email: "owner@example.com" }}
+          linkSelection={{
+            sourceTaskId: "source-task",
+            sourceProjectId: "source-project",
+            sourceSlug: "SRC-1",
+            organizationId: project.organization_id,
+            relationType: "related",
+          }}
+          onSelectLinkedTask={select}
+          onCancelLinkSelection={cancel}
+        />
+      </QueryClientProvider>,
+    );
+
+    const card = await screen.findByRole("article", {
+      name: "Select task task-1",
+    });
+    card.focus();
+    await userEvent.keyboard("{Enter}");
+    expect(select).toHaveBeenCalledWith("task-1");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add task" })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
 });
