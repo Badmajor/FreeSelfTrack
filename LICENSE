@@ -1,0 +1,113 @@
+FreeSelfTrack Attribution License 1.0 (FSTAL-1.0)
+
+Copyright (c) 2026 Viktor Balonkin
+
+Original project:
+https://github.com/Badmajor/FreeSelfTrack
+
+1. GRANT OF RIGHTS
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of the original FreeSelfTrack source code and associated documentation
+(the "Software"), to use, copy, modify, merge, publish, distribute,
+sublicense, and/or sell copies of the Software, and to permit persons to
+whom the Software is provided to do the same, subject to the conditions
+of this License.
+
+The Software may be used for both non-commercial and commercial purposes.
+
+The Software may be self-hosted, incorporated into other software, modified,
+and distributed in source or compiled form.
+
+2. ATTRIBUTION
+
+Any distribution of the Software or a derivative work based on the Software
+must retain the following attribution:
+
+"FreeSelfTrack by Viktor Balonkin"
+https://github.com/Badmajor/FreeSelfTrack
+
+The attribution must be included in at least one of the following places:
+
+* a LICENSE or NOTICE file distributed with the Software;
+* the source code;
+* documentation accompanying the Software;
+* an "About", "Credits", or equivalent section of a graphical or web
+  application based on the Software.
+
+The attribution must be reasonably visible and must not be intentionally
+removed or obscured.
+
+3. MODIFICATIONS
+
+If you distribute a modified version of the Software, you must clearly
+indicate that the Software has been modified.
+
+You may add your own copyright notices for your modifications, provided that
+the original copyright notice and attribution are retained.
+
+4. REDISTRIBUTION AND COMMERCIAL USE
+
+You may distribute the Software and derivative works for free or for a fee.
+
+You may provide paid hosting, support, installation, customization,
+consulting, integration, or other services based on or related to the
+Software.
+
+Charging a fee for such services or for distribution does not remove the
+obligation to retain the attribution required by this License.
+
+5. TRADEMARKS AND ENDORSEMENT
+
+This License does not grant permission to use the name "Viktor Balonkin",
+"FreeSelfTrack", or any associated logos or trademarks for advertising,
+endorsement, or promotion of a product or service without prior written
+permission, except where reasonably necessary to provide the attribution
+required by this License.
+
+The attribution requirement does not imply that Viktor Balonkin endorses,
+supports, or is affiliated with any modified or derivative version of the
+Software.
+
+6. THIRD-PARTY COMPONENTS
+
+This License applies only to the original source code of FreeSelfTrack
+created by Viktor Balonkin.
+
+Third-party software, libraries, frameworks, Docker images, fonts, icons,
+and other components included in, referenced by, or distributed with
+FreeSelfTrack are not covered by this License unless explicitly stated
+otherwise.
+
+Such third-party components remain subject to their respective licenses
+and terms.
+
+Nothing in this License grants rights to third-party components beyond
+the rights granted by their respective licenses.
+
+7. NO WARRANTY
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+
+IN NO EVENT SHALL VIKTOR BALONKIN BE LIABLE FOR ANY CLAIM, DAMAGES, OR
+OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE,
+ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+OTHER DEALINGS IN THE SOFTWARE.
+
+8. LICENSE VERSION
+
+This version of the License is identified as:
+
+FreeSelfTrack Attribution License 1.0 (FSTAL-1.0)
+
+Future versions of FreeSelfTrack may be distributed under a different
+license. Versions of the Software already distributed under this License
+remain subject to the terms of this License unless the recipient agrees
+to a different license.
+
+9. ACCEPTANCE
+
+By exercising any rights granted by this License, you agree to comply
+with the conditions of this License.
