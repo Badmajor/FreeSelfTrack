@@ -57,6 +57,8 @@ services:
     environment:
       TRACKER_DATABASE_URL: ${TRACKER_DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-tracker}:${POSTGRES_PASSWORD:-tracker}@db:5432/${POSTGRES_DB:-tracker}}
       TRACKER_AUTH_SECRET_KEY: ${AUTH_SECRET_KEY:-dev-compose-secret-key-change-me-please-32-chars}
+      TRACKER_REDIS_URL: redis://redis:6379/0
+      TRACKER_TRUSTED_PROXY_NETWORKS: ${TRUSTED_PROXY_NETWORKS:-[]}
       TRACKER_CORS_ORIGINS: '["http://localhost:${FRONTEND_PORT:-5173}"]'
     depends_on:
       minio-init:
@@ -84,6 +86,27 @@ services:
     environment:
       TRACKER_DATABASE_URL: ${TRACKER_DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-tracker}:${POSTGRES_PASSWORD:-tracker}@db:5432/${POSTGRES_DB:-tracker}}
       TRACKER_DEADLINE_WORKER_INTERVAL_SECONDS: ${DEADLINE_WORKER_INTERVAL_SECONDS:-60}
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [app]
+
+  registration-mail-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: ["python", "-m", "app.workers.registration_mail"]
+    environment:
+      TRACKER_DATABASE_URL: ${TRACKER_DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-tracker}:${POSTGRES_PASSWORD:-tracker}@db:5432/${POSTGRES_DB:-tracker}}
+      TRACKER_AUTH_SECRET_KEY: ${AUTH_SECRET_KEY:-dev-compose-secret-key-change-me-please-32-chars}
+      TRACKER_PUBLIC_APP_URL: ${PUBLIC_APP_URL:-http://localhost:5173}
+      TRACKER_SMTP_HOST: ${SMTP_HOST:-localhost}
+      TRACKER_SMTP_PORT: ${SMTP_PORT:-587}
+      TRACKER_SMTP_SECURITY: ${SMTP_SECURITY:-starttls}
+      TRACKER_SMTP_USERNAME: ${SMTP_USERNAME:-}
+      TRACKER_SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      TRACKER_SMTP_SENDER: ${SMTP_SENDER:-noreply@example.com}
     depends_on:
       backend:
         condition: service_healthy

@@ -81,8 +81,8 @@ export async function register(
   password: string,
   firstName: string,
   lastName: string,
-): Promise<AuthUser> {
-  return request<AuthUser>("/auth/register", {
+): Promise<{ message: string }> {
+  return request<{ message: string }>("/auth/register", {
     method: "POST",
     body: JSON.stringify({
       email,
@@ -578,4 +578,14 @@ export async function getAttachment(
 }
 export function getProject(id: string): Promise<Project> {
   return request<Project>(`/projects/${id}`);
+}
+
+export async function verifyEmail(
+  token: string,
+  password: string,
+): Promise<{ message: string }> {
+  return request<{ message: string }>("/auth/verify-email", {
+    method: "POST",
+    body: JSON.stringify({ token, password }),
+  });
 }

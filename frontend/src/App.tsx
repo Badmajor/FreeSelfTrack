@@ -10,6 +10,7 @@ import {
   type AuthUser,
   type Profile,
 } from "./api";
+import { VerifyEmail } from "./VerifyEmail";
 import { AuthenticatedApp } from "./WorkspaceApp";
 
 type Mode = "login" | "register";
@@ -26,6 +27,9 @@ function savedUser(): AuthUser | null {
 }
 
 export function App() {
+  const [verificationToken, setVerificationToken] = useState(() =>
+    new URLSearchParams(window.location.hash.slice(1)).get("verify"),
+  );
   const queryClient = useQueryClient();
   const initialUser = savedUser();
   const [mode, setMode] = useState<Mode>(initialUser ? "login" : "register");
@@ -48,7 +52,7 @@ export function App() {
         await register(email, password, firstName, lastName);
         setPassword("");
         setMode("login");
-        setNotice("Account created. Sign in to continue.");
+        setNotice("Check your email to confirm your registration, then sign in.");
       } else {
         const response = await login(email, password);
         localStorage.setItem(
@@ -86,6 +90,17 @@ export function App() {
     setUser(next);
     localStorage.setItem("freeselftrack.user", JSON.stringify(next));
   }
+
+  if (verificationToken)
+    return (
+      <VerifyEmail
+        token={verificationToken}
+        onDone={() => {
+          setVerificationToken(null);
+          setMode("login");
+        }}
+      />
+    );
 
   if (user)
     return (
@@ -177,7 +192,7 @@ export function App() {
             autoComplete={
               mode === "register" ? "new-password" : "current-password"
             }
-            minLength={mode === "register" ? 8 : 1}
+            minLength={mode === "register" ? 12 : 1}
             maxLength={128}
             required
             value={password}

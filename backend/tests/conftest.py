@@ -3,6 +3,7 @@ from collections.abc import AsyncIterator
 from uuid import UUID, uuid4
 
 import pytest_asyncio
+from fakeredis.aioredis import FakeRedis
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -11,7 +12,9 @@ os.environ.setdefault("TRACKER_DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 
 from app.db.base import Base  # noqa: E402
 from app.db.session import get_session  # noqa: E402
+from app.dependencies.auth_protection import auth_limiter  # noqa: E402
 from app.main import app  # noqa: E402
+from app.services.auth_protection import AuthLimiter  # noqa: E402
 
 
 @pytest_asyncio.fixture
@@ -32,10 +35,13 @@ async def client() -> AsyncIterator[AsyncClient]:
         async with session_factory() as session:
             yield session
 
+    redis = FakeRedis(decode_responses=True)
+    app.dependency_overrides[auth_limiter] = lambda: AuthLimiter(redis)
     app.dependency_overrides[get_session] = test_session
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as test_client:
         yield test_client
     app.dependency_overrides.clear()
+    await redis.aclose()
     await engine.dispose()
 
 

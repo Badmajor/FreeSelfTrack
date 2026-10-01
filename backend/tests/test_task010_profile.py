@@ -1,3 +1,4 @@
+from auth_helpers import confirm_registration
 from httpx import AsyncClient
 
 
@@ -17,8 +18,8 @@ async def test_registration_requires_and_returns_profile(client: AsyncClient) ->
             "last_name": "Lovelace",
         },
     )
-    assert registered.status_code == 201
-    assert registered.json()["profile"]["first_name"] == "Ada"
+    assert registered.status_code == 202
+    await confirm_registration(client, "profile@example.com")
 
     token = (
         await client.post(

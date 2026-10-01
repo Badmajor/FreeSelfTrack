@@ -8,13 +8,50 @@ It allows you to run your own task management system on your own server and keep
 
 > **Project status:** Early development / MVP
 
+## Table of Contents
+
+- [Features](#features)
+- [Why Self-Hosted?](#why-self-hosted)
+- [Quick Start](#quick-start)
+- [1. Requirements](#1-requirements)
+- [2. Install Docker](#2-install-docker)
+- [3. Download FreeSelfTrack](#3-download-freeselftrack)
+- [4. Configure the Application](#4-configure-the-application)
+- [Connect an SMTP Server](#connect-an-smtp-server)
+- [5. Start FreeSelfTrack](#5-start-freeselftrack)
+- [6. Open FreeSelfTrack](#6-open-freeselftrack)
+- [7. First Login](#7-first-login)
+- [Architecture](#architecture)
+- [Data Storage](#data-storage)
+- [Stop FreeSelfTrack](#stop-freeselftrack)
+- [Completely Remove FreeSelfTrack](#completely-remove-freeselftrack)
+- [Updating FreeSelfTrack](#updating-freeselftrack)
+- [Viewing Logs](#viewing-logs)
+- [Health Checks](#health-checks)
+- [Using Your Own Domain](#using-your-own-domain)
+- [Example Nginx Configuration](#example-nginx-configuration)
+- [Security](#security)
+- [Backups](#backups)
+- [Changing the Port](#changing-the-port)
+- [Local Development](#local-development)
+- [Technology Stack](#technology-stack)
+- [Project Structure](#project-structure)
+- [API](#api)
+- [Current Limitations](#current-limitations)
+- [Troubleshooting](#troubleshooting)
+- [Removing FreeSelfTrack](#removing-freeselftrack)
+- [Development](#development)
+- [License](#license)
+- [Author](#author)
+- [Feedback](#feedback)
+
 ## Features
 
 FreeSelfTrack is designed for managing projects, tasks, and team workflows.
 
 Current features include:
 
-* user registration and authentication;
+* user registration with SMTP email confirmation and authentication;
 * organizations;
 * organization members;
 * projects;
@@ -73,7 +110,7 @@ The easiest way to run FreeSelfTrack is with Docker Compose.
 
 For a standard installation, you do **not** need to install Python, Node.js, PostgreSQL, or Redis separately.
 
-You only need Docker with Docker Compose support.
+To run the containers, you need Docker with Docker Compose support. New user registration also requires an accessible SMTP server, either your own or your email provider's.
 
 ## 1. Requirements
 
@@ -83,7 +120,8 @@ At minimum, you need:
 * Docker;
 * Docker Compose;
 * SSH access to the server;
-* an available TCP port for the web interface.
+* an available TCP port for the web interface;
+* an SMTP server and connection settings for confirmation emails.
 
 For a small team, you can start with approximately:
 
@@ -164,7 +202,7 @@ Open the file:
 nano .env
 ```
 
-At minimum, change the database password and application secret.
+At minimum, change the database password and application secret, configure SMTP, and set the public application address in `PUBLIC_APP_URL`.
 
 Example:
 
@@ -187,7 +225,32 @@ MINIO_ROOT_PASSWORD=CHANGE_THIS_MINIO_PASSWORD
 
 FRONTEND_BIND_ADDRESS=0.0.0.0
 FRONTEND_PORT=5173
+
+PUBLIC_APP_URL=http://localhost:5173
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_SECURITY=starttls
+SMTP_USERNAME=YOUR_SMTP_USERNAME
+SMTP_PASSWORD=YOUR_SMTP_PASSWORD
+SMTP_SENDER=noreply@example.com
 ```
+
+## Connect an SMTP Server
+
+New accounts are created only after email confirmation. Registration cannot be completed without working SMTP; existing users can still sign in. Compose does not include a mail server: configure your own server or your email provider's settings.
+
+| Variable | Value |
+| --- | --- |
+| `PUBLIC_APP_URL` | Frontend address reachable by users, such as `https://tasks.example.com` or `http://SERVER_IP:5173`. Confirmation links use this address. Use `localhost` only for local development. |
+| `SMTP_HOST` | SMTP hostname or address reachable from the container. `localhost` inside the worker refers to that container itself. |
+| `SMTP_PORT` | SMTP port: usually `587` for STARTTLS or `465` for TLS. |
+| `SMTP_SECURITY` | `starttls` for STARTTLS or `tls` for TLS from the start of the connection. Use `plain` only with an isolated local test mail server. |
+| `SMTP_USERNAME`, `SMTP_PASSWORD` | Credentials supplied by your email provider; use an app password if required. Leave both empty for a server that requires no authentication. |
+| `SMTP_SENDER` | Sender email address authorized by your SMTP server. |
+
+Replace the example values in `.env` with your settings. Both `starttls` and `tls` verify the server certificate. Do not publish `.env` containing mail credentials.
+
+Compose automatically starts `registration-mail-worker`, which sends queued messages from PostgreSQL and retries failed deliveries. After changing `.env`, apply the settings with `docker compose up -d`. If a link does not open your application, check `PUBLIC_APP_URL` and request a new email by submitting registration again.
 
 ## Important
 
@@ -273,9 +336,14 @@ where `203.0.113.10` is the IP address of your server.
 
 Open FreeSelfTrack in your browser.
 
-Create a user through the registration form.
+1. Submit the registration form with an email address you can access and a password of at least 12 characters.
+2. Open the confirmation email and follow its link.
+3. Enter the password you chose during registration and confirm your email. Opening the link alone does not create an account.
+4. Sign in with your email and password.
 
-After registration, you can create an organization:
+Links expire after one hour by default and can be used once. If a link expires, submit registration again. The application displays the same message for new and already registered addresses; existing accounts remain unchanged.
+
+After confirming your email and signing in, you can create an organization:
 
 ```text
 Organization
@@ -370,6 +438,10 @@ Used by the application for auxiliary operations and background processing.
 ### Deadline Worker
 
 A background worker that periodically checks task deadlines and creates corresponding notifications.
+
+### Registration Mail Worker
+
+The `registration-mail-worker` container sends confirmation emails through the configured SMTP server. PostgreSQL stores the queue, request expiration and delivery state. Temporary failures are retried until the registration request expires.
 
 ---
 
@@ -505,6 +577,12 @@ Deadline worker logs:
 
 ```bash
 docker compose logs -f deadline-worker
+```
+
+Registration mail worker logs:
+
+```bash
+docker compose logs -f registration-mail-worker
 ```
 
 View the last 100 lines from the backend:
@@ -643,6 +721,8 @@ server {
 
 You can then use Let's Encrypt and Certbot to enable HTTPS.
 
+When switching to your domain, update `PUBLIC_APP_URL` in `.env`, for example to `https://tasks.example.com`, and run `docker compose up -d` so new emails use the correct links.
+
 ---
 
 # Security
@@ -697,18 +777,18 @@ cat freeselftrack-backup.sql | \
   psql -U tracker tracker
 ```
 
-> Before restoring a database, it is recommended to stop the backend and worker so that the application does not modify the database during the restore operation.
+> Before restoring a database, it is recommended to stop the backend and both workers so that the application does not modify the database during the restore operation.
 
 For example:
 
 ```bash
-docker compose stop backend deadline-worker
+docker compose stop backend deadline-worker registration-mail-worker
 ```
 
 Restore the database and then start the services:
 
 ```bash
-docker compose start backend deadline-worker
+docker compose start backend deadline-worker registration-mail-worker
 ```
 
 ---
@@ -725,7 +805,10 @@ If port `5173` is already in use, change:
 
 ```env
 FRONTEND_PORT=8080
+PUBLIC_APP_URL=http://SERVER_IP:8080
 ```
+
+If users access the application through an HTTPS domain, keep that public address in `PUBLIC_APP_URL`.
 
 Then restart the application:
 
@@ -751,7 +834,8 @@ The backend requires:
 
 * Python 3.13+;
 * PostgreSQL;
-* Redis.
+* Redis;
+* an SMTP server or local test mail sink for registration.
 
 The project uses `uv` for Python dependency management.
 
@@ -779,6 +863,18 @@ FastAPI documentation:
 ```text
 http://localhost:8000/docs
 ```
+
+### Sending Email in Local Development
+
+For direct Python processes, use environment variables prefixed with `TRACKER_`: `TRACKER_SMTP_HOST`, `TRACKER_SMTP_PORT`, `TRACKER_SMTP_SECURITY`, `TRACKER_SMTP_USERNAME`, `TRACKER_SMTP_PASSWORD`, `TRACKER_SMTP_SENDER`, and `TRACKER_PUBLIC_APP_URL`. You can also set them in `backend/.env`; the root `.env` is used by Docker Compose.
+
+In a separate terminal, from `backend/`, run:
+
+```bash
+uv run python -m app.workers.registration_mail
+```
+
+The API and worker must share `TRACKER_DATABASE_URL` and `TRACKER_AUTH_SECRET_KEY`. For the default Vite setup, use `TRACKER_PUBLIC_APP_URL=http://localhost:5173`.
 
 ## Frontend
 
@@ -900,6 +996,21 @@ Before using FreeSelfTrack for critical production workloads, we recommend:
 ---
 
 # Troubleshooting
+
+## Confirmation Email Does Not Arrive
+
+Check the mail worker and its logs:
+
+```bash
+docker compose ps registration-mail-worker
+docker compose logs --tail=100 registration-mail-worker
+```
+
+Check the spam folder, SMTP connectivity from the container, port and encryption mode, credentials, and authorized sender address. The `confirmation_delivery_retry` event means delivery will be retried; `mail_database_unavailable` indicates that the worker cannot access PostgreSQL.
+
+The form's “Check your email” response means the request was accepted, not that the message has already arrived. After correcting `.env`, run `docker compose up -d`. If the request's one-hour lifetime has expired, register again; frequent attempts may be temporarily rate-limited. If the email arrives but its link points to the wrong address, correct `PUBLIC_APP_URL`.
+
+---
 
 ## Containers are not starting
 

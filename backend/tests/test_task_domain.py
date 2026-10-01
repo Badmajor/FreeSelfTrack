@@ -1,5 +1,6 @@
 from uuid import UUID, uuid4
 
+from auth_helpers import confirm_registration
 from httpx import AsyncClient
 
 
@@ -14,7 +15,8 @@ async def authenticate(client: AsyncClient, user_id: UUID) -> dict[str, str]:
             "last_name": "User",
         },
     )
-    assert response.status_code == 201
+    assert response.status_code == 202
+    await confirm_registration(client, email)
     response = await client.post(
         "/api/auth/login",
         json={

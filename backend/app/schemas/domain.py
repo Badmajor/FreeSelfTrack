@@ -15,7 +15,7 @@ def valid_story_points(value: object) -> object:
 
 class RegisterRequest(BaseModel):
     email: EmailStr
-    password: str = Field(min_length=8, max_length=128)
+    password: str = Field(min_length=12, max_length=128)
     first_name: str = Field(min_length=1, max_length=100)
     last_name: str = Field(min_length=1, max_length=100)
 
@@ -28,9 +28,22 @@ class RegisterRequest(BaseModel):
         return value
 
 
+class RegistrationResponse(BaseModel):
+    message: str = "Check your email to confirm your registration, then sign in."
+
+
+class VerifyEmailRequest(BaseModel):
+    token: str = Field(min_length=1, max_length=1024)
+    password: str = Field(max_length=128)
+
+
+class VerificationResponse(BaseModel):
+    message: str = "Confirmation processed. You can sign in with your account credentials."
+
+
 class LoginRequest(BaseModel):
     email: EmailStr
-    password: str = Field(min_length=1, max_length=128)
+    password: str = Field(max_length=128)
 
 
 class ProfileResponse(BaseModel):

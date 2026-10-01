@@ -1,6 +1,7 @@
 from datetime import date
 from uuid import UUID, uuid4
 
+from auth_helpers import confirm_registration
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,7 +19,8 @@ async def authenticate(client: AsyncClient, login_id: UUID) -> dict[str, str]:
             "last_name": "User",
         },
     )
-    assert registered.status_code == 201
+    assert registered.status_code == 202
+    await confirm_registration(client, email)
     logged_in = await client.post(
         "/api/auth/login",
         json={"email": email, "password": "correct horse battery staple"},
