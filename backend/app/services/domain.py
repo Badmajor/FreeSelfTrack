@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from typing import Literal
 from uuid import UUID
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.cursor import decode_cursor, encode_cursor
@@ -708,7 +709,20 @@ class DomainService:
             created_by=user_id,
         )
         self.session.add(link)
-        await self.session.flush()
+        try:
+            await self.session.flush()
+        except IntegrityError as error:
+            await self.session.rollback()
+            existing = await self.repository.get_task_link_pair(task_a_id, task_b_id)
+            if existing is None:
+                raise
+            if (
+                existing.relation_type == relation_type
+                and existing.blocking_task_id == blocking_task_id
+            ):
+                source_after_race = await self.get_task(user_id, task_id)
+                return await self._task_link_response(source_after_race, existing), False
+            raise ConflictError("Tasks are already linked with another relation") from error
         await self._record_link_change(source, target, user_id, link, "task_link_added")
         await self._record_link_change(target, source, user_id, link, "task_link_added")
         await self._queue_link_notifications(source, target, user_id, link, "task_link_added")
