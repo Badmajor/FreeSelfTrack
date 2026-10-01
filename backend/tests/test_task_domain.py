@@ -512,6 +512,12 @@ async def test_status_archive_is_owner_only_and_requires_empty_non_last_status(
         json={"status_id": backlog["id"]},
         headers=owner_headers,
     )
+    another_completing = await client.patch(
+        f"/api/projects/{project['id']}/statuses/{in_progress['id']}",
+        json={"is_completed": True},
+        headers=owner_headers,
+    )
+    assert another_completing.status_code == 200
     archived = await client.delete(
         f"/api/projects/{project['id']}/statuses/{done['id']}", headers=owner_headers
     )
@@ -521,6 +527,11 @@ async def test_status_archive_is_owner_only_and_requires_empty_non_last_status(
         f"/api/projects/{project['id']}/statuses/archive", headers=owner_headers
     )
     assert [item["id"] for item in archive.json()] == [done["id"]]
+    member_archive = await client.get(
+        f"/api/projects/{project['id']}/statuses/archive", headers=member_headers
+    )
+    assert member_archive.status_code == 200
+    assert [item["id"] for item in member_archive.json()] == [done["id"]]
     restored = await client.post(
         f"/api/projects/{project['id']}/statuses/{done['id']}/restore", headers=owner_headers
     )
@@ -541,6 +552,48 @@ async def test_status_archive_is_owner_only_and_requires_empty_non_last_status(
         f"/api/projects/{project['id']}/statuses/{done['id']}", headers=owner_headers
     )
     assert last.status_code == 409
+
+
+async def test_project_requires_an_active_completing_status(
+    client: AsyncClient, user_ids: tuple[UUID, UUID]
+) -> None:
+    owner_headers = await authenticate(client, user_ids[0])
+    organization = await create_organization(client, owner_headers, "Workflow")
+    project = await create_project(client, owner_headers, organization["id"], "Tracker")
+    statuses = (
+        await client.get(f"/api/projects/{project['id']}/statuses", headers=owner_headers)
+    ).json()
+    done = next(status for status in statuses if status["name"] == "Done")
+    backlog = next(status for status in statuses if status["name"] == "Backlog")
+
+    assert done["is_completed"] is True
+    assert sum(status["is_completed"] for status in statuses) == 1
+
+    disable_last = await client.patch(
+        f"/api/projects/{project['id']}/statuses/{done['id']}",
+        json={"is_completed": False},
+        headers=owner_headers,
+    )
+    assert disable_last.status_code == 409
+    archive_last = await client.delete(
+        f"/api/projects/{project['id']}/statuses/{done['id']}",
+        headers=owner_headers,
+    )
+    assert archive_last.status_code == 409
+
+    second = await client.patch(
+        f"/api/projects/{project['id']}/statuses/{backlog['id']}",
+        json={"is_completed": True},
+        headers=owner_headers,
+    )
+    assert second.status_code == 200
+    disable_done = await client.patch(
+        f"/api/projects/{project['id']}/statuses/{done['id']}",
+        json={"is_completed": False},
+        headers=owner_headers,
+    )
+    assert disable_done.status_code == 200
+    assert disable_done.json()["is_completed"] is False
 
 
 async def test_task_participants_watchers_and_notifications(

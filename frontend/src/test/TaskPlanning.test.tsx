@@ -90,56 +90,21 @@ describe("task planning", () => {
     ).not.toHaveClass("overdue");
   });
 
-  it("lets only the project owner configure a completing status", async () => {
-    const board = makeBoard();
-    const updated = { ...board.columns[0].status, is_completed: true };
-    const fetchMock = vi.fn((input: unknown, options?: RequestInit) => {
-      const url = String(input);
-      if (url.includes("/board?")) return jsonResponse(board);
-      if (
-        url.endsWith("/statuses/status-backlog") &&
-        options?.method === "PATCH"
-      ) {
-        return jsonResponse(updated);
-      }
-      return jsonResponse([]);
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    render(
-      <QueryClientProvider client={createTestQueryClient()}>
-        <KanbanView
-          project={testProject}
-          currentUser={{ id: "owner-1", email: "owner@example.com" }}
-          onClose={vi.fn()}
-        />
-      </QueryClientProvider>,
-    );
-
-    const backlog = (
-      await screen.findByRole("heading", { name: "Backlog" })
-    ).closest("header");
-    await userEvent.click(
-      within(backlog as HTMLElement).getByRole("checkbox", {
-        name: "Completing status",
-      }),
-    );
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/api/projects/project-1/statuses/status-backlog",
-        expect.objectContaining({
-          method: "PATCH",
-          body: JSON.stringify({ is_completed: true }),
-        }),
+  it("shows completing state without an editable control on Kanban", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: unknown) =>
+        String(input).includes("/board?")
+          ? jsonResponse(makeBoard())
+          : jsonResponse([]),
       ),
     );
-
-    cleanup();
-    renderView(board, { id: "member-1", email: "member@example.com" });
-    await screen.findByRole("heading", { name: "Backlog" });
+    renderView(makeBoard(), { id: "owner-1", email: "owner@example.com" });
+    await screen.findByRole("heading", { name: "Done" });
+    expect(screen.getByText("Completed")).toBeInTheDocument();
     expect(
       screen.queryByRole("checkbox", { name: "Completing status" }),
     ).not.toBeInTheDocument();
-    expect(screen.getByText("Completed")).toBeInTheDocument();
   });
 
   it("renders planning fields read-only for an unrelated project member", async () => {

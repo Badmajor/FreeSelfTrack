@@ -12,73 +12,10 @@ import {
 } from "./test-utils";
 
 const user = { id: "owner-1", email: "owner@example.com", is_active: true };
-const organization = {
-  id: "organization-1",
-  owner_id: "owner-1",
-  name: "Acme",
-};
-
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   window.localStorage.clear();
-});
-
-describe("App workspace", () => {
-  it("opens Kanban from the selected project", async () => {
-    const fetchMock = vi.fn((input: string | URL | Request) => {
-      const url = String(input);
-      if (url.includes("/comments?"))
-        return Promise.resolve(
-          new Response(JSON.stringify({ comments: [], has_more: false }), {
-            status: 200,
-          }),
-        );
-      if (url.endsWith("/organizations")) return jsonResponse([organization]);
-      if (url.endsWith("/organizations/organization-1/projects"))
-        return jsonResponse([testProject]);
-      if (url.endsWith("/projects/project-1/members"))
-        return jsonResponse([user]);
-      if (url.includes("/notifications/unread-count"))
-        return jsonResponse({ count: 0 });
-      if (url.includes("/projects/project-1/board?"))
-        return jsonResponse(makeBoard());
-      return jsonResponse([]);
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    window.localStorage.setItem("freeselftrack.access_token", "token");
-    window.localStorage.setItem("freeselftrack.user", JSON.stringify(user));
-    const { App } = await import("../App");
-
-    render(
-      <QueryClientProvider client={createTestQueryClient()}>
-        <App />
-      </QueryClientProvider>,
-    );
-
-    await screen.findByRole("heading", { name: "Product" });
-    expect(screen.getByLabelText("Organization")).toHaveValue("organization-1");
-    expect(screen.getByLabelText("Project")).toHaveValue("project-1");
-
-    expect(
-      screen.queryByRole("button", { name: "Add member" }),
-    ).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Members" }));
-    expect(
-      await screen.findByRole("heading", { name: "Members" }),
-    ).toBeInTheDocument();
-    expect(screen.getByLabelText("Project")).toHaveValue("project-1");
-    await userEvent.click(
-      screen.getByRole("button", { name: "Back to workspace" }),
-    );
-    expect(screen.getByLabelText("Organization")).toHaveValue("organization-1");
-    expect(screen.getByLabelText("Project")).toHaveValue("project-1");
-    await userEvent.click(screen.getByRole("button", { name: "Open Kanban" }));
-    expect(
-      await screen.findByRole("region", { name: "Product Kanban" }),
-    ).toBeInTheDocument();
-    expect(screen.getByText("First task")).toBeInTheDocument();
-  });
 });
 
 describe("Kanban task workflow", () => {

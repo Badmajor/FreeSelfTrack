@@ -128,6 +128,15 @@ export async function listOrganizations(): Promise<Organization[]> {
   return request<Organization[]>("/organizations");
 }
 
+export async function deleteOrganization(
+  organizationId: string,
+): Promise<void> {
+  await request<unknown>(`/organizations/${organizationId}`, {
+    method: "DELETE",
+    body: JSON.stringify({ confirm: true }),
+  });
+}
+
 export async function createProject(
   organizationId: string,
   name: string,
@@ -233,12 +242,43 @@ export async function createStatus(
 export async function updateStatus(
   projectId: string,
   statusId: string,
-  data: Partial<Pick<Status, "is_completed">>,
+  data: Partial<
+    Pick<Status, "name" | "position" | "is_active" | "is_completed">
+  >,
 ): Promise<Status> {
   return request<Status>(`/projects/${projectId}/statuses/${statusId}`, {
     method: "PATCH",
     body: JSON.stringify(data),
   });
+}
+
+export async function listStatuses(projectId: string): Promise<Status[]> {
+  return request<Status[]>(`/projects/${projectId}/statuses`);
+}
+
+export async function listArchivedStatuses(
+  projectId: string,
+): Promise<Status[]> {
+  return request<Status[]>(`/projects/${projectId}/statuses/archive`);
+}
+
+export async function archiveStatus(
+  projectId: string,
+  statusId: string,
+): Promise<Status> {
+  return request<Status>(`/projects/${projectId}/statuses/${statusId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function restoreStatus(
+  projectId: string,
+  statusId: string,
+): Promise<Status> {
+  return request<Status>(
+    `/projects/${projectId}/statuses/${statusId}/restore`,
+    { method: "POST" },
+  );
 }
 
 export type BoardColumn = {

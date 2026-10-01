@@ -5,6 +5,7 @@ import {
   type RenderResult,
 } from "@testing-library/react";
 import type { ReactElement } from "react";
+import { MemoryRouter } from "react-router-dom";
 
 import type { Board, Project, Task } from "../api";
 
@@ -23,7 +24,9 @@ export function renderWithQueryClient(
 ): RenderResult {
   const queryClient = createTestQueryClient();
   return render(
-    <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>,
+    <MemoryRouter>
+      <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>
+    </MemoryRouter>,
     options,
   );
 }

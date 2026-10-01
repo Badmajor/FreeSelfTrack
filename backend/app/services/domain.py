@@ -106,7 +106,14 @@ class DomainService:
         self.session.add(ProjectTaskSequence(project_id=project.id, next_number=1))
         await self.repository.add_project_member(project.id, user_id)
         for position, name in enumerate(DEFAULT_STATUSES):
-            self.session.add(ProjectStatus(project_id=project.id, name=name, position=position))
+            self.session.add(
+                ProjectStatus(
+                    project_id=project.id,
+                    name=name,
+                    position=position,
+                    is_completed=name == "Done",
+                )
+            )
         await self.session.commit()
         return project
 
@@ -280,8 +287,7 @@ class DomainService:
         return await self.repository.list_statuses(project_id)
 
     async def list_archived_statuses(self, user_id: UUID, project_id: UUID) -> list[ProjectStatus]:
-        project = await self.get_project(user_id, project_id)
-        self._require_owner(user_id, project.owner_id)
+        await self.get_project(user_id, project_id)
         return await self.repository.list_archived_statuses(project_id)
 
     async def update_status(
@@ -297,6 +303,10 @@ class DomainService:
         if data.name is not None:
             project_status.name = data.name
         if data.is_completed is not None:
+            if project_status.is_completed and not data.is_completed:
+                statuses = await self.repository.list_statuses(project_id)
+                if sum(status.is_completed for status in statuses) <= 1:
+                    raise ConflictError("At least one active completing status must remain")
             project_status.is_completed = data.is_completed
         if data.position is not None and data.position != project_status.position:
             statuses = await self.repository.list_statuses(project_id)
@@ -335,6 +345,10 @@ class DomainService:
             raise ConflictError("Move all tasks before archiving this status")
         if len(await self.repository.list_statuses(project_id)) <= 1:
             raise ConflictError("At least one active status must remain")
+        if project_status.is_completed:
+            statuses = await self.repository.list_statuses(project_id)
+            if sum(status.is_completed for status in statuses) <= 1:
+                raise ConflictError("At least one active completing status must remain")
         project_status.is_active = False
         archived_statuses = await self.repository.list_archived_statuses(project_id)
         project_status.position = -(len(archived_statuses) + 1000)
