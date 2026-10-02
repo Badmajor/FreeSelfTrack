@@ -84,8 +84,14 @@ export function App() {
           if (active) setUser(result.user);
         })
         .catch((err: unknown) => {
-          if (active && !(err instanceof ApiError && err.status === 401))
-            setRestoreError("Unable to restore your session. Try again.");
+          if (active && !(err instanceof ApiError && err.status === 401)) {
+            setMode("login");
+            setRestoreError(
+              err instanceof ApiError && err.status === 403
+                ? "Session restoration was rejected. Open the configured application address or contact your administrator."
+                : "Unable to restore your session. Try again or sign in.",
+            );
+          }
         })
         .finally(() => {
           if (active) setRestoring(false);
@@ -139,18 +145,6 @@ export function App() {
     );
 
   if (restoring) return <p role="status">Restoring session...</p>;
-  if (restoreError)
-    return (
-      <main className="shell">
-        <section className="auth-panel">
-          <p role="alert">{restoreError}</p>
-          <button className="button" onClick={() => window.location.reload()}>
-            Retry
-          </button>
-        </section>
-      </main>
-    );
-
   if (user)
     return (
       <>
@@ -167,6 +161,18 @@ export function App() {
     <main className="shell">
       <section className="auth-panel" aria-labelledby="auth-title">
         <div className="eyebrow">FreeSelfTrack</div>
+        {restoreError && (
+          <div>
+            <p role="alert">{restoreError}</p>
+            <button
+              className="button secondary"
+              type="button"
+              onClick={() => window.location.reload()}
+            >
+              Retry
+            </button>
+          </div>
+        )}
         <h1 id="auth-title">
           {mode === "register" ? "Create your account" : "Welcome back"}
         </h1>

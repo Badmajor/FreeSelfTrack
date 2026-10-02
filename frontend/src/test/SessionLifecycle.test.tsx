@@ -171,6 +171,10 @@ it("shows a retry state when restoration fails due to the network", async () => 
     "Unable to restore",
   );
   expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+  expect(
+    screen.getByRole("heading", { name: "Welcome back" }),
+  ).toBeInTheDocument();
+  expect(screen.getByLabelText("Email")).toBeInTheDocument();
 });
 
 it("requests a reset using a neutral response", async () => {
@@ -317,4 +321,32 @@ it("refreshes an expired access token before changing a password, but preserves 
     changePassword("wrong", "a sufficiently long new password"),
   ).rejects.toThrow("Invalid email or password");
   expect(refreshCount).toBe(1);
+});
+
+it("explains rejected restoration while keeping sign-in available", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith("/auth/refresh"))
+        return jsonResponse({ detail: "Invalid request origin" }, 403);
+      if (url.endsWith("/auth/login")) return jsonResponse(auth());
+      if (url.includes("unread-count")) return jsonResponse({ count: 0 });
+      return jsonResponse([]);
+    }),
+  );
+  renderWithQueryClient(<App />);
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "configured application address",
+  );
+  const actor = userEvent.setup();
+  await actor.type(screen.getByLabelText("Email"), user.email);
+  await actor.type(screen.getByLabelText("Password"), "existing password");
+  await actor.click(screen.getByRole("button", { name: "Sign in" }));
+  expect(
+    await screen.findByRole("heading", { name: "Organizations" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByText(/Session restoration was rejected/),
+  ).not.toBeInTheDocument();
 });
