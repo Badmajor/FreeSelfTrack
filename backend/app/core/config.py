@@ -1,5 +1,6 @@
 import ipaddress
 import math
+import re
 from collections import Counter
 from functools import lru_cache
 from typing import Literal
@@ -62,6 +63,58 @@ class Settings(BaseSettings):
             raise ValueError("Configure a random signing key of at least 32 bytes")
         return value
 
+    trusted_hosts: list[str] = ["localhost", "127.0.0.1", "[::1]"]
+
+    @field_validator("trusted_hosts")
+    @classmethod
+    def valid_hosts(cls, values: list[str]) -> list[str]:
+        if not values:
+            raise ValueError("Configure at least one trusted host")
+        for value in values:
+            if value == "[::1]":
+                continue
+            if not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?", value):
+                raise ValueError("Trusted hosts must be exact hostnames or IP addresses")
+        return values
+
+    @field_validator("cors_origins")
+    @classmethod
+    def valid_origins(cls, values: list[str]) -> list[str]:
+        for value in values:
+            cls.validate_origin(value)
+        return values
+
+    @staticmethod
+    def validate_origin(value: str) -> str:
+        url = urlsplit(value)
+        if (
+            url.scheme not in {"http", "https"}
+            or not url.hostname
+            or url.username is not None
+            or url.password is not None
+            or url.path
+            or url.query
+            or url.fragment
+            or "*" in value
+            or "\\" in value
+            or any(char.isspace() or ord(char) < 32 for char in value)
+            or value != f"{url.scheme}://{url.netloc}"
+            or url.port == 0
+            or url.netloc.endswith(":")
+        ):
+            raise ValueError("Configure an exact HTTP(S) origin without path or wildcard")
+        try:
+            ipaddress.ip_address(url.hostname)
+        except ValueError:
+            labels = url.hostname.rstrip(".").split(".")
+            if len(url.hostname) > 253 or any(
+                not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label) for label in labels
+            ):
+                raise ValueError(
+                    "Origin must contain a valid ASCII hostname or IP address"
+                ) from None
+        return value
+
     cors_origins: list[str] = ["http://localhost:5173"]
     access_token_expire_minutes: int = Field(default=5, ge=1, le=15)
     deadline_worker_interval_seconds: int = 60
@@ -95,19 +148,7 @@ class Settings(BaseSettings):
     @field_validator("public_app_url")
     @classmethod
     def valid_public_url(cls, value: str) -> str:
-        url = urlsplit(value)
-        if (
-            url.scheme not in {"http", "https"}
-            or not url.hostname
-            or url.username
-            or url.password
-            or url.query
-            or url.fragment
-        ):
-            raise ValueError(
-                "Public app URL must be an HTTP(S) URL without credentials/query/fragment"
-            )
-        return value.rstrip("/")
+        return cls.validate_origin(value)
 
     model_config = SettingsConfigDict(
         env_file=".env", env_prefix="TRACKER_", extra="ignore", hide_input_in_errors=True

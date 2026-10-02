@@ -202,7 +202,7 @@ Open the file:
 nano .env
 ```
 
-At minimum, change the database password and application secret, configure SMTP, and set the public application address in `PUBLIC_APP_URL`.
+At minimum, change the passwords and application secret, configure SMTP, and set `PUBLIC_APP_URL` and `PUBLIC_HOST`. The example below is for local use; for a server, use HTTPS and the settings in the custom-domain section.
 
 Example:
 
@@ -223,10 +223,11 @@ DEADLINE_WORKER_INTERVAL_SECONDS=60
 MINIO_ROOT_USER=minioadmin
 MINIO_ROOT_PASSWORD=CHANGE_THIS_MINIO_PASSWORD
 
-FRONTEND_BIND_ADDRESS=0.0.0.0
+FRONTEND_BIND_ADDRESS=127.0.0.1
 FRONTEND_PORT=5173
 
 PUBLIC_APP_URL=http://localhost:5173
+PUBLIC_HOST=localhost
 SMTP_HOST=smtp.example.com
 SMTP_PORT=587
 SMTP_SECURITY=starttls
@@ -234,6 +235,11 @@ SMTP_USERNAME=YOUR_SMTP_USERNAME
 SMTP_PASSWORD=YOUR_SMTP_PASSWORD
 SMTP_SENDER=noreply@example.com
 ```
+
+`PUBLIC_APP_URL` is an exact origin: scheme, hostname and port if nonstandard, without a
+path, trailing `/`, query or fragment. It is used for email links, CORS and CSRF checks.
+`PUBLIC_HOST` is the hostname only, without scheme or port; it permits requests to frontend
+nginx. For local use, open exactly `http://localhost:5173`.
 
 ## Connect an SMTP Server
 
@@ -302,7 +308,7 @@ The main services should be running.
 
 # 6. Open FreeSelfTrack
 
-By default, the web interface is available on port `5173`.
+By default, the web interface binds to `127.0.0.1:5173` on the Docker host and is not directly reachable remotely.
 
 If FreeSelfTrack is running on your local computer:
 
@@ -316,7 +322,7 @@ If it is installed on a server:
 https://tasks.example.com
 ```
 
-Configure an HTTPS reverse proxy for the server and set PUBLIC_APP_URL to that exact public URL.
+Configure an HTTPS reverse proxy and set `PUBLIC_APP_URL=https://tasks.example.com` and `PUBLIC_HOST=tasks.example.com`.
 The bundled frontend listens on HTTP internally; do not use remote plain HTTP for login.
 
 ---
@@ -371,11 +377,14 @@ The standard Docker Compose installation runs several containers.
 ```text
                          Internet
                             │
+                     HTTPS proxy :443
+                     (on Docker host)
+                            │
                             ▼
                    ┌─────────────────┐
                    │    Frontend     │
                    │     nginx       │
-                   │     :5173       │
+                   │ 127.0.0.1:5173  │
                    └────────┬────────┘
                             │
                             │ /api/*
@@ -631,7 +640,7 @@ ok
 
 # Using Your Own Domain
 
-For a permanent Internet-facing installation, it is recommended to put a reverse proxy in front of FreeSelfTrack instead of exposing port `5173` directly.
+For remote server access, put an HTTPS reverse proxy in front of FreeSelfTrack. Keep port `5173` bound to loopback; Secure session cookies require HTTPS for remote access.
 
 For example:
 
@@ -665,47 +674,34 @@ before accessing the application remotely; Secure session cookies require HTTPS.
 
 # Example Nginx Configuration
 
-Suppose your domain is:
+For `tasks.example.com`, set the following in `.env`:
 
-```text
-tasks.example.com
+```env
+PUBLIC_APP_URL=https://tasks.example.com
+PUBLIC_HOST=tasks.example.com
+FRONTEND_BIND_ADDRESS=127.0.0.1
+FRONTEND_PORT=5173
 ```
 
-and FreeSelfTrack is running locally on:
+Use the [provided nginx TLS example](deploy/nginx-tls.conf.example). It is intended for
+nginx running on the same host as Docker Compose:
 
-```text
-127.0.0.1:5173
-```
+1. Configure domain DNS and obtain a trusted TLS certificate with automatic renewal.
+2. Replace `tracker.example.com` with your domain and set the certificate and private-key
+   paths. Include the file in the host nginx `http` context; reconcile its `default_server`
+   declarations with existing virtual hosts.
+3. Run `sudo nginx -t`, then `sudo systemctl reload nginx` for nginx managed by systemd.
+4. Apply application settings with `docker compose up -d --build`.
+5. Open `https://tasks.example.com` and verify sign-in, session refresh and attachment downloads.
 
-Nginx can accept external requests:
+The example redirects HTTP to a fixed HTTPS hostname with status 308, rejects unknown hosts,
+and adds HSTS only to HTTPS responses. TLS terminates at host nginx, which forwards requests
+to `http://127.0.0.1:5173`. Expose only the reverse proxy's ports 80/443 externally; keep the
+internal frontend and backend ports private.
 
-```text
-https://tasks.example.com
-```
-
-and forward them to FreeSelfTrack.
-
-Example configuration:
-
-```nginx
-server {
-    listen 80;
-    server_name tasks.example.com;
-
-    location / {
-        proxy_pass http://127.0.0.1:5173;
-
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-```
-
-You can then use Let's Encrypt and Certbot to enable HTTPS.
-
-When switching to your domain, update `PUBLIC_APP_URL` in `.env`, for example to `https://tasks.example.com`, and run `docker compose up -d` so new emails use the correct links.
+If the reverse proxy runs in another container or on another machine, configure upstream
+connectivity separately: `127.0.0.1` inside a container refers to that container itself.
+For initial local testing, use `http://localhost:5173`.
 
 ---
 
@@ -731,6 +727,21 @@ In the standard configuration, PostgreSQL is bound to:
 so it should not be directly accessible from the Internet.
 
 Redis is also not exposed externally.
+
+Browser protection is enabled in the backend and production nginx:
+
+* CORS permits explicit origins, methods and headers only; wildcard or malformed origins
+  prevent startup. Compose derives allowed origins from `PUBLIC_APP_URL`.
+* CSP blocks inline scripts and framing. Responses also include `nosniff`, `Referrer-Policy`,
+  `Permissions-Policy` and `X-Frame-Options`; attachment protections are preserved.
+  Inline styles remain allowed for dynamic interface dimensions.
+* Login, refresh and logout require an exact Origin and `X-CSRF-Protection: 1`.
+  Other protected API operations use bearer tokens; cookies alone do not grant access.
+* Uvicorn runs with `--no-proxy-headers`. Trusted proxies for authentication IP limits are
+  configured explicitly through `TRUSTED_PROXY_NETWORKS`, a JSON list of IPs/CIDRs.
+  The default empty list means users behind a proxy share its IP limit. The TLS example
+  preserves this behavior; forwarding original client IPs through multiple proxies requires
+  separate trusted-peer configuration. Never trust arbitrary forwarded headers.
 
 ---
 
@@ -833,7 +844,7 @@ uv sync
 Start the backend:
 
 ```bash
-uv run uvicorn app.main:app --reload
+uv run uvicorn app.main:app --reload --no-proxy-headers
 ```
 
 The backend will be available at:
@@ -842,11 +853,13 @@ The backend will be available at:
 http://localhost:8000
 ```
 
-FastAPI documentation:
+OpenAPI schema:
 
 ```text
-http://localhost:8000/docs
+http://localhost:8000/openapi.json
 ```
+
+Interactive `/docs` and `/redoc` are disabled under the restrictive CSP.
 
 ### Sending Email in Local Development
 
@@ -877,7 +890,7 @@ Start the development server:
 npm run dev
 ```
 
-Vite will display the local frontend address in the terminal.
+Vite will display the local frontend address in the terminal. Vite is for local development; nginx applies the production browser security policies. Do not expose Vite publicly.
 
 ---
 
@@ -933,6 +946,9 @@ FreeSelfTrack/
 │   ├── package.json
 │   └── package-lock.json
 │
+├── deploy/
+│   └── nginx-tls.conf.example
+│
 ├── docker-compose.yml
 ├── .env.example
 ├── whitepaper.md
@@ -946,13 +962,7 @@ FreeSelfTrack/
 
 The backend provides a REST API.
 
-When running the backend directly in development mode, FastAPI documentation is available at:
-
-```text
-http://localhost:8000/docs
-```
-
-OpenAPI schema:
+Interactive Swagger (`/docs`) and ReDoc (`/redoc`) are disabled. When running the backend directly for local development, its OpenAPI schema is available at:
 
 ```text
 http://localhost:8000/openapi.json
@@ -1049,7 +1059,19 @@ Check whether the port is listening:
 ss -lntp | grep 5173
 ```
 
-If the server has a firewall enabled, make sure the required port is allowed.
+On a server, check DNS, the TLS reverse proxy and access to its ports 80/443.
+Port `5173` is local-only by default; it does not need to be exposed externally.
+If nginx closes the connection or the backend returns `400 Invalid host header`, check
+`PUBLIC_HOST`, `PUBLIC_APP_URL` and the Host header sent by the proxy.
+
+## Login or Session Restoration Returns 403
+
+Open the exact address in `PUBLIC_APP_URL`: `localhost` and `127.0.0.1` are different
+origins, as are different schemes or ports. After changing `.env`, run `docker compose up -d`.
+Custom clients must supply Origin and `X-CSRF-Protection: 1` for login, refresh and logout;
+keep CSRF checks enabled. If backend startup rejects a CORS/URL setting, remove wildcards,
+paths and trailing `/` from the origin. Remote access requires HTTPS; local Secure-cookie
+support on localhost depends on the browser.
 
 ---
 

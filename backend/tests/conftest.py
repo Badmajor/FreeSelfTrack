@@ -9,6 +9,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+os.environ.setdefault("TRACKER_TRUSTED_HOSTS", '["test", "testserver", "localhost", "127.0.0.1"]')
 os.environ.setdefault("TRACKER_DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 os.environ.setdefault("TRACKER_AUTH_SECRET_KEY", secrets.token_urlsafe(48))
 

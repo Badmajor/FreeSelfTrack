@@ -200,7 +200,7 @@ cp .env.example .env
 nano .env
 ```
 
-Минимально необходимо изменить пароли и секретный ключ, настроить SMTP и указать публичный адрес приложения в `PUBLIC_APP_URL`.
+Минимально необходимо изменить пароли и секретный ключ, настроить SMTP и задать `PUBLIC_APP_URL` и `PUBLIC_HOST`. Пример ниже предназначен для локального запуска; для сервера используйте HTTPS и настройки из раздела о собственном домене.
 
 Пример:
 
@@ -221,10 +221,11 @@ DEADLINE_WORKER_INTERVAL_SECONDS=60
 MINIO_ROOT_USER=minioadmin
 MINIO_ROOT_PASSWORD=CHANGE_THIS_MINIO_PASSWORD
 
-FRONTEND_BIND_ADDRESS=0.0.0.0
+FRONTEND_BIND_ADDRESS=127.0.0.1
 FRONTEND_PORT=5173
 
 PUBLIC_APP_URL=http://localhost:5173
+PUBLIC_HOST=localhost
 SMTP_HOST=smtp.example.com
 SMTP_PORT=587
 SMTP_SECURITY=starttls
@@ -232,6 +233,11 @@ SMTP_USERNAME=YOUR_SMTP_USERNAME
 SMTP_PASSWORD=YOUR_SMTP_PASSWORD
 SMTP_SENDER=noreply@example.com
 ```
+
+`PUBLIC_APP_URL` — точный origin: схема, имя хоста и порт, если он нестандартный,
+без пути, завершающего `/`, query-параметров и фрагмента. Он используется для писем, CORS
+и CSRF-проверок. `PUBLIC_HOST` — только имя хоста, без схемы и порта; оно разрешает
+обращения к frontend nginx. Для локального запуска используйте именно `http://localhost:5173`.
 
 ## Подключение SMTP
 
@@ -300,7 +306,7 @@ docker compose ps
 
 # 6. Открыть приложение
 
-По умолчанию веб-интерфейс доступен на порту `5173`.
+По умолчанию веб-интерфейс привязан к `127.0.0.1:5173` на машине с Docker и напрямую извне недоступен.
 
 Если приложение запущено непосредственно на вашем компьютере:
 
@@ -314,7 +320,7 @@ http://localhost:5173
 https://tasks.example.com
 ```
 
-Настройте reverse proxy с HTTPS и укажите этот публичный адрес в PUBLIC_APP_URL.
+Настройте reverse proxy с HTTPS, укажите `PUBLIC_APP_URL=https://tasks.example.com` и `PUBLIC_HOST=tasks.example.com`.
 Встроенный frontend слушает HTTP внутри сети; удалённый вход по обычному HTTP не поддерживается.
 
 ---
@@ -369,11 +375,14 @@ https://tasks.example.com
 ```text
                          Интернет
                              │
+                      HTTPS proxy :443
+                      (на хосте Docker)
+                             │
                              ▼
                     ┌─────────────────┐
                     │    Frontend     │
                     │     nginx       │
-                    │     :5173       │
+                    │ 127.0.0.1:5173  │
                     └────────┬────────┘
                              │
                              │ /api/*
@@ -631,7 +640,7 @@ ok
 
 # Использование собственного домена
 
-Для постоянного использования рекомендуется не публиковать приложение напрямую через порт `5173`, а поставить перед ним reverse proxy.
+Для доступа с сервера используйте reverse proxy с HTTPS перед FreeSelfTrack. Оставьте порт `5173` привязанным к loopback; Secure-cookie сессий требуют HTTPS при удалённом доступе.
 
 Например:
 
@@ -662,49 +671,34 @@ https://tasks.example.com
 
 # Пример с Nginx
 
-Предположим, домен:
+Для домена `tasks.example.com` задайте в `.env`:
 
-```text
-tasks.example.com
+```env
+PUBLIC_APP_URL=https://tasks.example.com
+PUBLIC_HOST=tasks.example.com
+FRONTEND_BIND_ADDRESS=127.0.0.1
+FRONTEND_PORT=5173
 ```
 
-FreeSelfTrack продолжает работать на:
+Используйте [готовый TLS-пример nginx](deploy/nginx-tls.conf.example). Он предназначен
+для nginx на том же хосте, где работает Docker Compose:
 
-```text
-127.0.0.1:5173
-```
+1. Настройте DNS домена и получите доверенный TLS-сертификат с автоматическим продлением.
+2. Замените в примере `tracker.example.com` на свой домен и укажите пути к сертификату
+   и закрытому ключу. Подключите файл в контексте `http` хостового nginx; согласуйте его
+   `default_server` с существующими виртуальными хостами.
+3. Выполните `sudo nginx -t`, затем `sudo systemctl reload nginx` для nginx под systemd.
+4. Примените настройки приложения командой `docker compose up -d --build`.
+5. Откройте `https://tasks.example.com` и проверьте вход, обновление сессии и скачивание вложений.
 
-Nginx принимает внешние подключения:
+Пример перенаправляет HTTP на фиксированный HTTPS-домен с кодом 308, отклоняет неизвестные
+хосты и добавляет HSTS только к HTTPS-ответам. TLS завершается на хостовом nginx, который
+передаёт запросы на `http://127.0.0.1:5173`. Снаружи откройте только порты 80/443 reverse proxy;
+не публикуйте внутренние порты frontend и backend.
 
-```text
-https://tasks.example.com
-```
-
-и передаёт их FreeSelfTrack.
-
-Пример конфигурации:
-
-```nginx
-server {
-    listen 80;
-    server_name tasks.example.com;
-
-    location / {
-        proxy_pass http://127.0.0.1:5173;
-
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-```
-
-После этого для HTTPS можно использовать Let's Encrypt и Certbot.
-
-При переходе на домен обновите `PUBLIC_APP_URL` в `.env`, например на `https://tasks.example.com`, и выполните `docker compose up -d`, чтобы новые письма содержали правильные ссылки.
-
-> Если вы не работали с Nginx, HTTPS или DNS раньше, сначала рекомендуется запустить FreeSelfTrack через `https://tasks.example.com` и только после успешного запуска подключать домен.
+Если reverse proxy находится в другом контейнере или на другой машине, настройте доступ
+к upstream отдельно: `127.0.0.1` внутри контейнера указывает на сам контейнер.
+Для первой локальной проверки используйте `http://localhost:5173`.
 
 ---
 
@@ -730,6 +724,21 @@ PostgreSQL в стандартной конфигурации привязан �
 поэтому он не должен быть доступен непосредственно из интернета.
 
 Redis также не публикуется наружу.
+
+Браузерная защита включена в backend и production nginx:
+
+* CORS разрешает только явно заданные origin, методы и заголовки; wildcard и некорректные
+  origin блокируют запуск. Compose формирует список origin из `PUBLIC_APP_URL`.
+* CSP блокирует inline-скрипты и встраивание во фреймы. Также выставляются `nosniff`,
+  `Referrer-Policy`, `Permissions-Policy` и `X-Frame-Options`; защита вложений сохраняется.
+  Inline-стили разрешены для динамических размеров элементов интерфейса.
+* Вход, обновление сессии и выход требуют точного Origin и `X-CSRF-Protection: 1`.
+  Остальные защищённые API используют bearer-токен, cookie сама по себе доступа не даёт.
+* Uvicorn запускается с `--no-proxy-headers`. Для определения IP в лимитах авторизации
+  доверенные прокси задаются явно через `TRUSTED_PROXY_NETWORKS` — JSON-список IP/CIDR.
+  По умолчанию список пуст, поэтому пользователи за прокси разделяют его IP-лимит.
+  TLS-пример сохраняет это поведение; передача исходного IP через несколько прокси требует
+  отдельной настройки доверенных адресов. Не разрешайте произвольные forwarded-заголовки.
 
 ---
 
@@ -832,7 +841,7 @@ uv sync
 Запуск:
 
 ```bash
-uv run uvicorn app.main:app --reload
+uv run uvicorn app.main:app --reload --no-proxy-headers
 ```
 
 Backend будет доступен на:
@@ -841,11 +850,13 @@ Backend будет доступен на:
 http://localhost:8000
 ```
 
-Документация FastAPI:
+OpenAPI-схема:
 
 ```text
-http://localhost:8000/docs
+http://localhost:8000/openapi.json
 ```
+
+Интерактивные `/docs` и `/redoc` отключены из-за строгой CSP.
 
 ### Отправка писем при локальной разработке
 
@@ -876,7 +887,7 @@ npm ci
 npm run dev
 ```
 
-После этого Vite сообщит адрес локального frontend.
+После этого Vite сообщит адрес локального frontend. Vite предназначен для локальной разработки; production-политики браузерной защиты задаёт nginx. Не публикуйте Vite в интернете.
 
 ---
 
@@ -932,6 +943,9 @@ FreeSelfTrack/
 │   ├── package.json
 │   └── package-lock.json
 │
+├── deploy/
+│   └── nginx-tls.conf.example
+│
 ├── docker-compose.yml
 ├── .env.example
 ├── whitepaper.md
@@ -945,13 +959,7 @@ FreeSelfTrack/
 
 Backend предоставляет REST API.
 
-После запуска в режиме разработки документация FastAPI доступна по адресу:
-
-```text
-http://localhost:8000/docs
-```
-
-OpenAPI-схема:
+Интерактивные Swagger (`/docs`) и ReDoc (`/redoc`) отключены. OpenAPI-схема при прямом локальном запуске backend доступна по адресу:
 
 ```text
 http://localhost:8000/openapi.json
@@ -1048,7 +1056,20 @@ docker compose logs --tail=200 frontend
 ss -lntp | grep 5173
 ```
 
-Если сервер использует firewall, убедитесь, что необходимый порт разрешён.
+На сервере проверьте DNS, TLS reverse proxy и доступность его портов 80/443.
+Порт `5173` по умолчанию доступен только локально — открывать его наружу не нужно.
+При обрыве соединения nginx или ответе backend `400 Invalid host header` проверьте
+`PUBLIC_HOST`, `PUBLIC_APP_URL` и передаваемый прокси Host.
+
+## Вход или восстановление сессии возвращает 403
+
+Откройте приложение по точному адресу из `PUBLIC_APP_URL`: `localhost` и `127.0.0.1` —
+разные origin, как и разные схемы или порты. После изменения `.env` выполните
+`docker compose up -d`. Для собственных клиентов обязательны Origin и
+`X-CSRF-Protection: 1` на входе, обновлении сессии и выходе; не отключайте CSRF-проверку.
+Если backend не запускается с ошибкой CORS/URL, уберите wildcard, путь и завершающий `/`
+из origin. Для удалённого доступа нужен HTTPS; локальная поддержка Secure-cookie на
+localhost зависит от браузера.
 
 ---
 
