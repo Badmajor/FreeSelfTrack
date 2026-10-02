@@ -1,18 +1,22 @@
+import io
 import os
 import secrets
 from collections.abc import AsyncIterator
 from uuid import UUID, uuid4
 
+import pytest
 import pytest_asyncio
 from fakeredis.aioredis import FakeRedis
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from urllib3.response import HTTPResponse
 
 os.environ.setdefault("TRACKER_TRUSTED_HOSTS", '["test", "testserver", "localhost", "127.0.0.1"]')
 os.environ.setdefault("TRACKER_DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 os.environ.setdefault("TRACKER_AUTH_SECRET_KEY", secrets.token_urlsafe(48))
 
+from app.core.object_storage import ObjectStorage, StorageUnavailable  # noqa: E402
 from app.db.base import Base  # noqa: E402
 from app.db.session import get_session  # noqa: E402
 from app.dependencies.auth_protection import auth_limiter  # noqa: E402
@@ -65,3 +69,38 @@ async def db_session(client: AsyncClient) -> AsyncIterator[AsyncSession]:
 @pytest_asyncio.fixture
 async def user_ids() -> tuple[UUID, UUID]:
     return uuid4(), uuid4()
+
+
+class MemoryStorage(ObjectStorage):
+    """Test double only; production always uses the configured private S3 service."""
+
+    def __init__(self):
+        self.objects = {}
+        self.opens = 0
+
+    def put(self, key, stream, size):
+        stream.seek(0)
+        self.objects[key] = stream.read(size)
+
+    def open(self, key):
+        self.opens += 1
+        if key not in self.objects:
+            raise StorageUnavailable()
+        return HTTPResponse(body=io.BytesIO(self.objects[key]), preload_content=False)
+
+    def abort_abandoned_parts(self):
+        return 0
+
+    def keys(self):
+        return iter(list(self.objects))
+
+    def delete(self, key):
+        self.objects.pop(key, None)
+
+
+@pytest.fixture(autouse=True)
+def attachment_storage(monkeypatch):
+    storage = MemoryStorage()
+    monkeypatch.setattr("app.services.chat.get_storage", lambda: storage)
+    monkeypatch.setattr("app.api.chat.get_storage", lambda: storage)
+    return storage

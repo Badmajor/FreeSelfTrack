@@ -28,23 +28,16 @@ services:
       retries: 10
     networks: [app]
 
-  minio-init:
-    image: alpine:3.21
-    command: ["sh", "-c", "chown -R 1001:1001 /data"]
-    volumes:
-      - minio_data:/data
-    networks: [app]
-
   minio:
     image: openvidu/minio@sha256:211ea94d3487bc42f9b4140f86c7d0123edba3c24160d0ef1057911504405c8e
-    command: ["server", "/data", "--console-address", ":9001"]
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD}
+      MINIO_DEFAULT_BUCKETS: ${S3_BUCKET:-tracker-attachments}
     volumes:
-      - minio_data:/data
+      - minio_data:/bitnami/minio/data
     healthcheck:
-      test: ["CMD-SHELL", "mc alias set local http://localhost:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD} >/dev/null 2>&1 && mc admin info local >/dev/null"]
+      test: ["CMD-SHELL", "test \"$$(cat /proc/1/comm)\" = minio && mc alias set local http://localhost:9000 \"$${MINIO_ROOT_USER}\" \"$${MINIO_ROOT_PASSWORD}\" >/dev/null 2>&1 && mc ls \"local/$${MINIO_DEFAULT_BUCKETS}\" >/dev/null"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -58,18 +51,25 @@ services:
       TRACKER_DATABASE_URL: ${TRACKER_DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-tracker}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-tracker}}
       TRACKER_AUTH_SECRET_KEY: ${AUTH_SECRET_KEY:?Set a random AUTH_SECRET_KEY of at least 32 bytes}
       TRACKER_REDIS_URL: redis://redis:6379/0
+      TRACKER_S3_ENDPOINT: minio:9000
+      TRACKER_S3_BUCKET: ${S3_BUCKET:-tracker-attachments}
+      TRACKER_S3_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      TRACKER_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD}
+      TRACKER_S3_SECURE: "false"
+      TRACKER_ATTACHMENT_UPLOAD_SLOTS: ${ATTACHMENT_UPLOAD_SLOTS:-2}
+      TRACKER_ATTACHMENT_DOWNLOAD_SLOTS: ${ATTACHMENT_DOWNLOAD_SLOTS:-4}
       TRACKER_TRUSTED_PROXY_NETWORKS: ${TRUSTED_PROXY_NETWORKS:-[]}
       TRACKER_CORS_ORIGINS: '["${PUBLIC_APP_URL:-http://localhost:5173}"]'
       TRACKER_PUBLIC_APP_URL: ${PUBLIC_APP_URL:-http://localhost:5173}
     depends_on:
-      minio-init:
-        condition: service_completed_successfully
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
       minio:
         condition: service_healthy
+    tmpfs:
+      - /tmp:size=384m,mode=1777
     expose:
       - "8000"
     healthcheck:
@@ -77,6 +77,25 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+    networks: [app]
+
+  attachment-cleanup-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: ["python", "-m", "app.workers.attachment_cleanup"]
+    environment:
+      TRACKER_DATABASE_URL: ${TRACKER_DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-tracker}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-tracker}}
+      TRACKER_AUTH_SECRET_KEY: ${AUTH_SECRET_KEY:?Set AUTH_SECRET_KEY}
+      TRACKER_S3_ENDPOINT: minio:9000
+      TRACKER_S3_BUCKET: ${S3_BUCKET:-tracker-attachments}
+      TRACKER_S3_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      TRACKER_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD}
+      TRACKER_S3_SECURE: "false"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
     networks: [app]
 
   deadline-worker:

@@ -671,6 +671,7 @@ export type ChatAttachment = {
   id: string;
   filename: string;
   media_type: string;
+  state: "pending" | "ready" | "failed" | "infected";
   size: number;
 };
 export type ChatMessage = {

@@ -74,7 +74,7 @@ it("sends with Enter and keeps Shift+Enter as a new line", async () => {
 
 it("opens an inline image in a full-screen dialog and closes it with Escape", async () => {
   const imageMessage = row();
-  imageMessage.attachments = [{ id: "image", filename: "screen.png", media_type: "image/png", size: 42 }];
+  imageMessage.attachments = [{ id: "image", filename: "screen.png", media_type: "image/png", size: 42, state: "ready" }];
   vi.spyOn(api, "getComments").mockResolvedValue({ comments: [imageMessage], has_more: false });
   vi.spyOn(api, "getAttachment").mockResolvedValue(new Blob(["image"]));
   vi.stubGlobal("URL", { ...URL, createObjectURL: vi.fn(() => "blob:preview"), revokeObjectURL: vi.fn() });
@@ -110,4 +110,20 @@ it("removes cached messages and composer when polling detects revoked access", a
   expect(await screen.findByText("Task access is no longer available.")).toBeInTheDocument();
   expect(screen.queryByText("Message 1")).not.toBeInTheDocument();
   expect(screen.queryByLabelText("Message")).not.toBeInTheDocument();
+});
+
+it("keeps quarantined images unavailable and refreshes their review status", async () => {
+  const pending = row();
+  pending.attachments = [{ id: "image", filename: "pending.png", media_type: "image/png", size: 42, state: "pending" }];
+  vi.spyOn(api, "getComments").mockImplementation(async (_task, cursor) => ({ comments: cursor?.after !== undefined ? [] : [pending], has_more: false }));
+  const download = vi.spyOn(api, "getAttachment").mockResolvedValue(new Blob(["image"]));
+  vi.spyOn(api, "getComment").mockResolvedValue({ ...pending, attachments: [{ ...pending.attachments[0], state: "ready" }] });
+  vi.stubGlobal("URL", { ...URL, createObjectURL: vi.fn(() => "blob:released"), revokeObjectURL: vi.fn() });
+  mount();
+  expect(await screen.findByText("Awaiting file review")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /pending.png/ })).toBeDisabled();
+  expect(download).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole("button", { name: "Check file status" }));
+  expect(await screen.findByRole("button", { name: "Open image pending.png" })).toBeInTheDocument();
+  expect(download).toHaveBeenCalledWith("image", true);
 });

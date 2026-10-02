@@ -13,6 +13,18 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     database_url: str
+    s3_endpoint: str = "minio:9000"
+    s3_bucket: str = Field(
+        default="tracker-attachments", pattern=r"^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+    )
+    s3_access_key: str = ""
+    s3_secret_key: SecretStr = SecretStr("")
+    s3_secure: bool = False
+    s3_timeout_seconds: int = Field(default=10, ge=1, le=60)
+    attachment_upload_slots: int = Field(default=2, ge=1, le=8)
+    attachment_download_slots: int = Field(default=4, ge=1, le=32)
+    attachment_idle_seconds: int = Field(default=30, ge=1, le=120)
+    attachment_request_seconds: int = Field(default=300, ge=10, le=1800)
     redis_url: str = "redis://localhost:6379/0"
     auth_window_seconds: int = Field(default=900, ge=1)
     login_account_limit: int = Field(default=10, ge=1)
