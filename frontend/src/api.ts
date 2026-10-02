@@ -44,23 +44,30 @@ type LoginResponse = {
   user: AuthUser;
 };
 
-function authHeaders(): HeadersInit {
-  const token = localStorage.getItem("freeselftrack.access_token");
-  return token ? { Authorization: `Bearer ${token}` } : {};
+let accessToken: string | null = null;
+let generation = 0;
+let refreshing: Promise<LoginResponse> | null = null;
+
+export function clearSession(): void {
+  generation += 1;
+  accessToken = null;
+  localStorage.removeItem("freeselftrack.access_token");
+  localStorage.removeItem("freeselftrack.user");
 }
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${API_URL}${path}`, {
-    ...options,
-    headers: {
-      ...authHeaders(),
-      ...(options.body instanceof FormData
-        ? {}
-        : { "Content-Type": "application/json" }),
-      ...options.headers,
-    },
-  });
+function endSession(): void {
+  clearSession();
+  window.dispatchEvent(new Event("freeselftrack:session-ended"));
+}
 
+async function authLock<T>(action: () => Promise<T>): Promise<T> {
+  // Cookies are shared by tabs: serialize rotations across tabs where Web Locks is available.
+  if (navigator.locks)
+    return navigator.locks.request("freeselftrack-session", action);
+  return action();
+}
+
+async function readResponse<T>(response: Response): Promise<T> {
   const body = (await response.json().catch(() => null)) as
     { detail?: string } | T | null;
   if (!response.ok) {
@@ -74,6 +81,144 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     throw new ApiError(detail, response.status);
   }
   return body as T;
+}
+
+async function rawRequest(
+  path: string,
+  options: RequestInit = {},
+): Promise<Response> {
+  return fetch(`${API_URL}${path}`, {
+    ...options,
+    credentials: "include",
+    cache: "no-store",
+    headers: {
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      ...(options.body instanceof FormData
+        ? {}
+        : { "Content-Type": "application/json" }),
+      "X-CSRF-Protection": "1",
+      ...options.headers,
+    },
+  });
+}
+
+export function restoreSession(): Promise<LoginResponse> {
+  if (!refreshing) {
+    const started = generation;
+    refreshing = authLock(async () => {
+      const result = await readResponse<LoginResponse>(
+        await rawRequest("/auth/refresh", { method: "POST" }),
+      );
+      if (started !== generation) throw new ApiError("Session changed", 401);
+      accessToken = result.access_token;
+      return result;
+    })
+      .catch((error: unknown) => {
+        if (
+          started === generation &&
+          error instanceof ApiError &&
+          error.status === 401
+        )
+          endSession();
+        throw error;
+      })
+      .finally(() => {
+        refreshing = null;
+      });
+  }
+  return refreshing;
+}
+
+async function authenticatedRequest(
+  path: string,
+  options: RequestInit = {},
+): Promise<Response> {
+  const usedToken = accessToken;
+  const started = generation;
+  let response = await rawRequest(path, options);
+  const protectedPath =
+    !path.startsWith("/auth/") ||
+    [
+      "/auth/password/change",
+      "/auth/deactivate",
+      "/auth/sessions/current",
+    ].includes(path);
+  const authFailure =
+    response.status === 401 &&
+    protectedPath &&
+    (!path.startsWith("/auth/") ||
+      (await response.clone().json()).detail === "Authentication required");
+  if (authFailure && started === generation) {
+    if (usedToken === accessToken) await restoreSession();
+    if (started !== generation) throw new ApiError("Session ended", 401);
+    response = await rawRequest(path, options);
+    if (
+      response.status === 401 &&
+      (!path.startsWith("/auth/") ||
+        (await response.clone().json()).detail === "Authentication required")
+    )
+      endSession();
+  }
+  return response;
+}
+
+async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  return readResponse<T>(await authenticatedRequest(path, options));
+}
+
+export async function logout(): Promise<void> {
+  // Wait for any pending rotation before revoking the cookie it sets.
+  generation += 1;
+  if (refreshing) await refreshing.catch(() => undefined);
+  await authLock(async () => {
+    const response = await rawRequest("/auth/logout", { method: "POST" });
+    if (response.status !== 401) await readResponse<void>(response);
+  });
+  endSession();
+}
+
+export async function changePassword(
+  currentPassword: string,
+  newPassword: string,
+): Promise<void> {
+  await request<void>("/auth/password/change", {
+    method: "POST",
+    body: JSON.stringify({
+      current_password: currentPassword,
+      new_password: newPassword,
+    }),
+  });
+  endSession();
+}
+
+export async function deactivateAccount(
+  currentPassword: string,
+): Promise<void> {
+  await request<void>("/auth/deactivate", {
+    method: "POST",
+    body: JSON.stringify({ current_password: currentPassword }),
+  });
+  endSession();
+}
+
+export function requestPasswordReset(
+  email: string,
+): Promise<{ message: string }> {
+  return request("/auth/password/reset-request", {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
+}
+
+export async function resetPassword(
+  token: string,
+  newPassword: string,
+): Promise<void> {
+  await request<void>("/auth/password/reset", {
+    method: "POST",
+    body: JSON.stringify({ token, new_password: newPassword }),
+  });
+  endSession();
 }
 
 export async function register(
@@ -111,9 +256,17 @@ export async function login(
   email: string,
   password: string,
 ): Promise<LoginResponse> {
-  return request<LoginResponse>("/auth/login", {
-    method: "POST",
-    body: JSON.stringify({ email, password }),
+  generation += 1;
+  const started = generation;
+  if (refreshing) await refreshing.catch(() => undefined);
+  return authLock(async () => {
+    const result = await request<LoginResponse>("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+    });
+    if (started !== generation) throw new ApiError("Session changed", 401);
+    accessToken = result.access_token;
+    return result;
   });
 }
 
@@ -568,9 +721,8 @@ export async function getAttachment(
   id: string,
   preview = false,
 ): Promise<Blob> {
-  const response = await fetch(
-    `${API_URL}/attachments/${id}/content?preview=${preview}`,
-    { headers: authHeaders(), cache: "no-store" },
+  const response = await authenticatedRequest(
+    `/attachments/${id}/content?preview=${preview}`,
   );
   if (!response.ok)
     throw new ApiError("Attachment unavailable", response.status);

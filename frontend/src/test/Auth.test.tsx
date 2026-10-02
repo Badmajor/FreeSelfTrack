@@ -22,6 +22,7 @@ describe("authentication form", () => {
     const fetchMock = vi.fn(
       (input: string | URL | Request, options?: RequestInit) => {
         const url = String(input);
+        if (url.endsWith("/auth/refresh")) return jsonResponse({ detail: "Authentication required" }, 401);
         if (url.endsWith("/auth/register")) return jsonResponse({ message: "Check your email" }, 202);
         if (url.endsWith("/auth/login"))
           return jsonResponse({
@@ -39,6 +40,7 @@ describe("authentication form", () => {
     const user = userEvent.setup();
 
     renderWithQueryClient(<App />);
+    await user.click(await screen.findByRole("tab", { name: "Register" }));
     await user.type(screen.getByLabelText("First name"), "Ada");
     await user.type(screen.getByLabelText("Last name"), "Lovelace");
     await user.type(screen.getByLabelText("Email"), "new@example.com");

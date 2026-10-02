@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_session
 from app.dependencies.auth import current_user_id
 from app.dependencies.auth_protection import auth_client_address, auth_limiter
+from app.dependencies.session_cookie import csrf_protection, set_refresh_cookie
 from app.schemas.domain import (
     BoardResponse,
     ConfirmRequest,
@@ -97,15 +98,17 @@ async def verify_email(
     return VerificationResponse()
 
 
-@router.post("/auth/login", response_model=LoginResponse)
+@router.post("/auth/login", response_model=LoginResponse, dependencies=[Depends(csrf_protection)])
 async def login(
     data: LoginRequest,
+    response: Response,
     session: AsyncSession = Depends(get_session),
     limiter: AuthLimiter = Depends(auth_limiter),
     address: str = Depends(auth_client_address),
 ) -> Any:
     await translate_errors(limiter.check)("login", normalize_email(str(data.email)), address)
-    access_token, user = await translate_errors(AuthService(session).login)(data)
+    access_token, refresh_token, user = await translate_errors(AuthService(session).login)(data)
+    set_refresh_cookie(response, refresh_token)
     return LoginResponse(access_token=access_token, user=user)
 
 

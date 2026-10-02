@@ -20,6 +20,7 @@ from app.models import (
     User,
 )
 from app.repositories.domain import DomainRepository
+from app.repositories.sessions import SessionRepository
 from app.schemas.domain import (
     BoardColumnResponse,
     BoardResponse,
@@ -79,6 +80,7 @@ class DomainService:
         self.repository = DomainRepository(session)
 
     async def create_organization(self, user_id: UUID, data: OrganizationCreate) -> Organization:
+        await self._lock_active_owner(user_id)
         organization = Organization(owner_id=user_id, name=data.name)
         self.session.add(organization)
         await self.session.flush()
@@ -102,6 +104,7 @@ class DomainService:
         return await self.repository.list_projects_for_organization(organization_id)
 
     async def create_project(self, user_id: UUID, data: ProjectCreate) -> Project:
+        await self._lock_active_owner(user_id)
         await self.get_organization(user_id, data.organization_id)
         project = Project(
             organization_id=data.organization_id,
@@ -188,6 +191,7 @@ class DomainService:
         organization = await self.get_organization(user_id, organization_id)
         self._require_owner(user_id, organization.owner_id)
         target = await self._find_user(data.email)
+        await self._lock_active_owner(target.id)
         if await self.repository.get_organization_member(organization_id, target.id) is None:
             raise ConflictError("New owner must be an organization member")
         organization.owner_id = target.id
@@ -253,6 +257,7 @@ class DomainService:
         project = await self.get_project(user_id, project_id)
         self._require_owner(user_id, project.owner_id)
         target = await self._find_user(data.email)
+        await self._lock_active_owner(target.id)
         if await self.repository.get_project_member(project_id, target.id) is None:
             raise ConflictError("New owner must be a project member")
         project.owner_id = target.id
@@ -1147,6 +1152,11 @@ class DomainService:
     def _require_watcher_manager(user_id: UUID, task: Task, project_owner_id: UUID) -> None:
         if user_id not in {project_owner_id, task.assignee_id}:
             raise PermissionDeniedError("Only the project owner or assignee can manage watchers")
+
+    async def _lock_active_owner(self, user_id: UUID) -> None:
+        user = await SessionRepository(self.session).lock_user(user_id)
+        if user is None or not user.is_active:
+            raise NotFoundError("User not found")
 
     async def _find_user(self, email: str) -> User:
         user = await self.repository.get_user_by_email(normalized_email(str(email)))

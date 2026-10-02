@@ -19,7 +19,7 @@ from app.dependencies.auth_protection import auth_limiter
 from app.main import app
 from app.models import User, UserProfile
 from app.models.registration import PendingRegistration
-from app.services.auth import AuthService, password_hash
+from app.services.auth import password_hash
 from app.services.auth_protection import (
     AuthLimiter,
     AuthUnavailableError,
@@ -30,6 +30,7 @@ from app.services.auth_protection import (
     validate_password,
 )
 from app.services.registration_mail import RegistrationMailService, send_confirmation
+from app.services.sessions import create_access_token
 from app.services.verification import create_verification_token, verification_key
 
 PASSWORD = "correct horse battery staple"
@@ -260,7 +261,7 @@ async def test_confirmation_invalid_expired_and_wrong_token_purpose(client, db_s
         verification_key(),
         algorithm="HS256",
     )
-    for token in ["broken", expired, AuthService.create_access_token(uuid4())]:
+    for token in ["broken", expired, create_access_token(uuid4(), uuid4())]:
         response = await client.post(
             "/api/auth/verify-email", json={"token": token, "password": PASSWORD}
         )

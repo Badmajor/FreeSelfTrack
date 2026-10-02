@@ -34,6 +34,11 @@ def send_confirmation(registration: PendingRegistration) -> None:
         + " UTC. "
         "If it expires, submit the registration form again."
     )
+    send_message(message)
+
+
+def send_message(message: EmailMessage) -> None:
+    settings = get_settings()
     smtp: smtplib.SMTP
     if settings.smtp_security == "tls":
         smtp = smtplib.SMTP_SSL(

@@ -216,7 +216,7 @@ POSTGRES_PORT=5431
 
 TRACKER_DATABASE_URL=postgresql+asyncpg://tracker:CHANGE_THIS_DATABASE_PASSWORD@db:5432/tracker
 
-AUTH_SECRET_KEY=CHANGE_THIS_TO_A_LONG_RANDOM_SECRET
+AUTH_SECRET_KEY=
 
 DEADLINE_WORKER_INTERVAL_SECONDS=60
 
@@ -241,7 +241,7 @@ New accounts are created only after email confirmation. Registration cannot be c
 
 | Variable | Value |
 | --- | --- |
-| `PUBLIC_APP_URL` | Frontend address reachable by users, such as `https://tasks.example.com` or `http://SERVER_IP:5173`. Confirmation links use this address. Use `localhost` only for local development. |
+| `PUBLIC_APP_URL` | Frontend address reachable by users, such as `https://tasks.example.com`. Confirmation links use this address. Use `localhost` only for local development. |
 | `SMTP_HOST` | SMTP hostname or address reachable from the container. `localhost` inside the worker refers to that container itself. |
 | `SMTP_PORT` | SMTP port: usually `587` for STARTTLS or `465` for TLS. |
 | `SMTP_SECURITY` | `starttls` for STARTTLS or `tls` for TLS from the start of the connection. Use `plain` only with an isolated local test mail server. |
@@ -264,7 +264,7 @@ AUTH_SECRET_KEY
 MINIO_ROOT_PASSWORD
 ```
 
-`AUTH_SECRET_KEY` should be a long, random value.
+`AUTH_SECRET_KEY` is required. Startup rejects weak and placeholder values; there is no fallback.
 
 You can generate one with:
 
@@ -313,22 +313,11 @@ http://localhost:5173
 If it is installed on a server:
 
 ```text
-http://SERVER_IP:5173
+https://tasks.example.com
 ```
 
-For example:
-
-```text
-http://192.168.1.100:5173
-```
-
-or:
-
-```text
-http://203.0.113.10:5173
-```
-
-where `203.0.113.10` is the IP address of your server.
+Configure an HTTPS reverse proxy for the server and set PUBLIC_APP_URL to that exact public URL.
+The bundled frontend listens on HTTP internally; do not use remote plain HTTP for login.
 
 ---
 
@@ -669,13 +658,8 @@ A reverse proxy allows you to use:
 * automatic TLS certificates;
 * the standard HTTPS port `443`.
 
-If you are not familiar with Nginx, HTTPS, or DNS, it is recommended to first verify that FreeSelfTrack works using:
-
-```text
-http://SERVER_IP:5173
-```
-
-and configure the domain afterwards.
+For initial local testing, use http://localhost:5173. Configure DNS and an HTTPS reverse proxy
+before accessing the application remotely; Secure session cookies require HTTPS.
 
 ---
 
@@ -805,10 +789,10 @@ If port `5173` is already in use, change:
 
 ```env
 FRONTEND_PORT=8080
-PUBLIC_APP_URL=http://SERVER_IP:8080
+PUBLIC_APP_URL=https://tasks.example.com
 ```
 
-If users access the application through an HTTPS domain, keep that public address in `PUBLIC_APP_URL`.
+Keep the HTTPS address in `PUBLIC_APP_URL` and update the reverse proxy upstream to the new frontend port. For local testing use `http://localhost:8080`.
 
 Then restart the application:
 
@@ -819,7 +803,7 @@ docker compose up -d
 FreeSelfTrack will then be available at:
 
 ```text
-http://SERVER_IP:8080
+https://tasks.example.com
 ```
 
 ---
@@ -1181,3 +1165,18 @@ https://github.com/Badmajor/FreeSelfTrack
 If you find a bug or have an idea for an improvement, please create an Issue in the repository:
 
 https://github.com/Badmajor/FreeSelfTrack/issues
+
+
+## Sessions and account security
+
+TASK-022 requires migration `0014_auth_sessions` and a coordinated backend/frontend/mail-worker
+upgrade. Existing JWTs are rejected; sign in again. Access tokens live only in memory and refresh
+credentials use Secure HttpOnly SameSite cookies. Logout immediately revokes the current session.
+AUTH_SECRET_KEY has no fallback and must be generated randomly (`openssl rand -hex 32`).
+Shared deployments require HTTPS and the exact PUBLIC_APP_URL for cookie, CORS and CSRF behavior.
+Plain HTTP access by server IP cannot retain Secure refresh cookies.
+
+Profile offers password change and self-deactivation, both requiring the current password. Transfer
+all organization/project ownership first, including restorable deleted resources. Password change,
+email reset and deactivation end all sessions. “Forgot password?” uses a single-use 30-minute SMTP
+link; keep registration-mail-worker running for both registration and recovery.

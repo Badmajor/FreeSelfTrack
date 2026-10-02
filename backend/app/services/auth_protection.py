@@ -89,7 +89,10 @@ class AuthLimiter:
         self.redis = redis
 
     async def check(
-        self, operation: Literal["login", "register", "verify"], identifier: str, address: str
+        self,
+        operation: Literal["login", "register", "verify", "reset"],
+        identifier: str,
+        address: str,
     ) -> None:
         settings = get_settings()
 

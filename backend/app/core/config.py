@@ -1,4 +1,6 @@
 import ipaddress
+import math
+from collections import Counter
 from functools import lru_cache
 from typing import Literal
 from urllib.parse import urlsplit
@@ -35,9 +37,33 @@ class Settings(BaseSettings):
     smtp_timeout_seconds: int = Field(default=10, ge=1, le=60)
     mail_worker_interval_seconds: int = Field(default=5, ge=1)
     api_prefix: str = "/api"
-    auth_secret_key: str = "development-secret-key-change-in-production-0123456789"
+    auth_secret_key: str = Field(repr=False)
+    auth_issuer: str = "freeselftrack"
+    auth_audience: str = "freeselftrack-api"
+    refresh_expire_days: int = Field(default=30, ge=1, le=90)
+    reset_lifetime_seconds: int = Field(default=1800, ge=60, le=3600)
+    reset_account_limit: int = Field(default=3, ge=1)
+    reset_address_limit: int = Field(default=20, ge=1)
+
+    @field_validator("auth_secret_key")
+    @classmethod
+    def strong_signing_key(cls, value: str) -> str:
+        if (
+            len(value.encode()) < 32
+            or len(set(value)) < 12
+            or value in (value + value)[1:-1]
+            or -sum(count * math.log2(count / len(value)) for count in Counter(value).values())
+            < 128
+            or any(
+                marker in value.lower()
+                for marker in ("change", "replace", "development", "secret", "password", "example")
+            )
+        ):
+            raise ValueError("Configure a random signing key of at least 32 bytes")
+        return value
+
     cors_origins: list[str] = ["http://localhost:5173"]
-    access_token_expire_minutes: int = 60
+    access_token_expire_minutes: int = Field(default=5, ge=1, le=15)
     deadline_worker_interval_seconds: int = 60
 
     @field_validator("auth_dummy_hash")
@@ -83,7 +109,9 @@ class Settings(BaseSettings):
             )
         return value.rstrip("/")
 
-    model_config = SettingsConfigDict(env_file=".env", env_prefix="TRACKER_", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env", env_prefix="TRACKER_", extra="ignore", hide_input_in_errors=True
+    )
 
 
 @lru_cache

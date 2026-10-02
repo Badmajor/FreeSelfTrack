@@ -28,6 +28,7 @@ it("creates organizations and projects on separate management pages", async () =
   const fetchMock = vi.fn(
     (input: string | URL | Request, options?: RequestInit) => {
       const url = String(input);
+      if (url.endsWith("/auth/refresh")) return jsonResponse({ access_token: "token", token_type: "bearer", user });
       if (url.endsWith("/organizations") && options?.method === "POST") {
         organizations = [organization];
         return jsonResponse(organization, 201);
@@ -46,8 +47,7 @@ it("creates organizations and projects on separate management pages", async () =
     },
   );
   vi.stubGlobal("fetch", fetchMock);
-  window.localStorage.setItem("freeselftrack.access_token", "token");
-  window.localStorage.setItem("freeselftrack.user", JSON.stringify(user));
+
 
   render(
     <MemoryRouter initialEntries={["/management/organizations"]}>

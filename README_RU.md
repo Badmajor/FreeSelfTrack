@@ -214,7 +214,7 @@ POSTGRES_PORT=5431
 
 TRACKER_DATABASE_URL=postgresql+asyncpg://tracker:CHANGE_THIS_DATABASE_PASSWORD@db:5432/tracker
 
-AUTH_SECRET_KEY=CHANGE_THIS_TO_A_LONG_RANDOM_SECRET
+AUTH_SECRET_KEY=
 
 DEADLINE_WORKER_INTERVAL_SECONDS=60
 
@@ -239,7 +239,7 @@ SMTP_SENDER=noreply@example.com
 
 | Переменная | Что указать |
 | --- | --- |
-| `PUBLIC_APP_URL` | Адрес frontend, доступный пользователям: например, `https://tasks.example.com` или `http://SERVER_IP:5173`. Он используется в ссылках подтверждения. `localhost` подходит только для локального запуска. |
+| `PUBLIC_APP_URL` | Адрес frontend, доступный пользователям: например, `https://tasks.example.com`. Он используется в ссылках подтверждения. `localhost` подходит только для локального запуска. |
 | `SMTP_HOST` | Имя или адрес SMTP-сервера, доступного из контейнера. `localhost` внутри worker указывает на сам контейнер. |
 | `SMTP_PORT` | Порт SMTP: обычно `587` для STARTTLS или `465` для TLS. |
 | `SMTP_SECURITY` | `starttls` для STARTTLS или `tls` для TLS с начала соединения. `plain` предназначен только для изолированного локального тестового сервера. |
@@ -262,7 +262,7 @@ AUTH_SECRET_KEY
 MINIO_ROOT_PASSWORD
 ```
 
-`AUTH_SECRET_KEY` должен быть длинным случайным значением.
+`AUTH_SECRET_KEY` обязателен: резервного ключа нет, слабые и шаблонные значения отклоняются при запуске.
 
 Например, его можно сгенерировать:
 
@@ -311,22 +311,11 @@ http://localhost:5173
 Если приложение установлено на сервере:
 
 ```text
-http://SERVER_IP:5173
+https://tasks.example.com
 ```
 
-Например:
-
-```text
-http://192.168.1.100:5173
-```
-
-или:
-
-```text
-http://203.0.113.10:5173
-```
-
-где `203.0.113.10` — IP-адрес вашего сервера.
+Настройте reverse proxy с HTTPS и укажите этот публичный адрес в PUBLIC_APP_URL.
+Встроенный frontend слушает HTTP внутри сети; удалённый вход по обычному HTTP не поддерживается.
 
 ---
 
@@ -715,7 +704,7 @@ server {
 
 При переходе на домен обновите `PUBLIC_APP_URL` в `.env`, например на `https://tasks.example.com`, и выполните `docker compose up -d`, чтобы новые письма содержали правильные ссылки.
 
-> Если вы не работали с Nginx, HTTPS или DNS раньше, сначала рекомендуется запустить FreeSelfTrack через `http://SERVER_IP:5173` и только после успешного запуска подключать домен.
+> Если вы не работали с Nginx, HTTPS или DNS раньше, сначала рекомендуется запустить FreeSelfTrack через `https://tasks.example.com` и только после успешного запуска подключать домен.
 
 ---
 
@@ -799,10 +788,10 @@ docker compose start backend deadline-worker registration-mail-worker
 
 ```env
 FRONTEND_PORT=8080
-PUBLIC_APP_URL=http://SERVER_IP:8080
+PUBLIC_APP_URL=https://tasks.example.com
 ```
 
-Если пользователи открывают приложение через HTTPS-домен, сохраните в `PUBLIC_APP_URL` этот публичный адрес.
+Сохраните HTTPS-адрес в `PUBLIC_APP_URL` и измените upstream reverse proxy на новый порт frontend. Для локальной проверки используйте `http://localhost:8080`.
 
 После этого:
 
@@ -813,7 +802,7 @@ docker compose up -d
 Приложение будет доступно на:
 
 ```text
-http://SERVER_IP:8080
+https://tasks.example.com
 ```
 
 ---
@@ -1175,3 +1164,17 @@ Original project:
 Если вы нашли ошибку или хотите предложить улучшение, создайте Issue в репозитории проекта.
 
 [Issues — FreeSelfTrack](https://github.com/Badmajor/FreeSelfTrack/issues?utm_source=chatgpt.com)
+
+
+## Сессии и безопасность аккаунта
+
+После обновления TASK-022 примените миграцию `0014_auth_sessions` и обновите backend, frontend
+и `registration-mail-worker` вместе. Потребуется повторный вход: старые JWT больше не принимаются.
+Access-токен хранится только в памяти; refresh — в Secure HttpOnly SameSite-cookie. Выход отзывает
+текущую сессию сразу. Для общего доступа нужен HTTPS и точный `PUBLIC_APP_URL`; доступ по HTTP
+через IP не поддерживает Secure-cookie. Compose использует этот адрес также для CORS и CSRF.
+
+В профиле доступны смена пароля и деактивация с подтверждением текущего пароля. Перед деактивацией
+передайте владение всеми организациями и проектами, включая удалённые (предварительно восстановив
+их). Смена/сброс пароля и деактивация завершают все сессии. «Forgot password?» отправляет через SMTP
+одноразовую ссылку на 30 минут. Почтовый worker должен работать для регистрации и восстановления.

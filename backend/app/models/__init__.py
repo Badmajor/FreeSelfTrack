@@ -1,3 +1,6 @@
+from app.models.auth_session import AuthSession as AuthSession
+from app.models.auth_session import PasswordReset as PasswordReset
+from app.models.auth_session import RefreshCredential as RefreshCredential
 from app.models.domain import (
     DeadlineNotificationDelivery,
     Notification,

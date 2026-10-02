@@ -1,4 +1,5 @@
 import os
+import secrets
 from collections.abc import AsyncIterator
 from uuid import UUID, uuid4
 
@@ -9,6 +10,7 @@ from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 os.environ.setdefault("TRACKER_DATABASE_URL", "sqlite+aiosqlite:///:memory:")
+os.environ.setdefault("TRACKER_AUTH_SECRET_KEY", secrets.token_urlsafe(48))
 
 from app.db.base import Base  # noqa: E402
 from app.db.session import get_session  # noqa: E402
@@ -38,7 +40,11 @@ async def client() -> AsyncIterator[AsyncClient]:
     redis = FakeRedis(decode_responses=True)
     app.dependency_overrides[auth_limiter] = lambda: AuthLimiter(redis)
     app.dependency_overrides[get_session] = test_session
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as test_client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="https://test",
+        headers={"Origin": "http://localhost:5173", "X-CSRF-Protection": "1"},
+    ) as test_client:
         yield test_client
     app.dependency_overrides.clear()
     await redis.aclose()
