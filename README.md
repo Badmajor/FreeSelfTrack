@@ -22,6 +22,7 @@ It allows you to run your own task management system on your own server and keep
 - [6. Open FreeSelfTrack](#6-open-freeselftrack)
 - [7. First Login](#7-first-login)
 - [Architecture](#architecture)
+- [Attachments and Malware Scanning](#attachments-and-malware-scanning)
 - [Data Storage](#data-storage)
 - [Stop FreeSelfTrack](#stop-freeselftrack)
 - [Completely Remove FreeSelfTrack](#completely-remove-freeselftrack)
@@ -222,6 +223,11 @@ DEADLINE_WORKER_INTERVAL_SECONDS=60
 
 MINIO_ROOT_USER=minioadmin
 MINIO_ROOT_PASSWORD=CHANGE_THIS_MINIO_PASSWORD
+S3_BUCKET=tracker-attachments
+ATTACHMENT_UPLOAD_SLOTS=2
+ATTACHMENT_DOWNLOAD_SLOTS=4
+ATTACHMENT_SCAN_INTERVAL_SECONDS=5
+ATTACHMENT_SCAN_TIMEOUT_SECONDS=60
 
 FRONTEND_BIND_ADDRESS=127.0.0.1
 FRONTEND_PORT=5173
@@ -403,7 +409,14 @@ The standard Docker Compose installation runs several containers.
        └──────────────┘          └──────────────┘
 ```
 
-The Compose configuration also contains MinIO for future object-storage use.
+The backend stores attachment metadata in PostgreSQL and file bytes in private MinIO storage.
+A separate worker reads files from MinIO and scans them with ClamAV before release.
+
+```text
+Backend ──► MinIO ◄── attachment-scan-worker ──► ClamAV
+                ▲              │
+attachment-cleanup-worker      └──► PostgreSQL
+```
 
 ## Services
 
@@ -443,6 +456,38 @@ The `registration-mail-worker` container sends confirmation emails through the c
 
 ---
 
+# Attachments and Malware Scanning
+
+MinIO stores all attachment bytes. Its native startup creates `S3_BUCKET` (default
+`tracker-attachments`) through `MINIO_DEFAULT_BUCKETS`. The backend and workers use the
+configured `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD`. No provisioning container is needed;
+MinIO and ClamAV are not exposed externally.
+
+Compose automatically starts:
+
+* `clamav` — the antivirus engine; FreshClam updates signatures in `clamav_data`;
+* `attachment-scan-worker` — verifies size, SHA-256, image validity and the ClamAV verdict;
+* `attachment-cleanup-worker` — removes unreferenced objects and abandoned multipart uploads.
+
+Uploads start as `pending`. Only a clean verdict changes them to `ready`, permitting download
+with task access checks. `infected` and `failed` files remain unavailable; encrypted archives
+and scan-limit alerts are also blocked. Scanner or storage outages leave files `pending`
+for retry. Chat updates availability automatically. Previews use a download queue with retries
+for HTTP 429.
+
+Limits: 25 MiB per file, five files and 130 MiB per request, and 40 million decoded pixels
+across image frames. By default, each backend process permits two concurrent uploads and
+four downloads. Scanning pauses five seconds between passes; ClamAV requests time out after
+60 seconds. These settings are listed in `.env.example`.
+
+The scan worker waits for ClamAV readiness on startup. Allow additional memory for the engine
+and signatures, and outbound access for signature updates. Antivirus scanning cannot guarantee
+detection of every threat.
+
+See [attachment operations](docs/development/attachments.md) for details.
+
+---
+
 # Data Storage
 
 The Docker Compose configuration uses named Docker volumes.
@@ -453,6 +498,7 @@ The main volumes are:
 postgres_data
 redis_data
 minio_data
+clamav_data
 ```
 
 List Docker volumes:
@@ -510,6 +556,11 @@ Do not use this command if you want to preserve your data.
 ---
 
 # Updating FreeSelfTrack
+
+Before updating, take a coordinated PostgreSQL and MinIO backup. If attachments still live
+in PostgreSQL (before TASK-024), first follow the
+[cutover procedure](docs/development/attachments.md#existing-installations-explicit-cutover).
+Normal startup with `alembic upgrade head` does not transfer legacy files automatically.
 
 To update to the latest version:
 
@@ -747,9 +798,11 @@ Browser protection is enabled in the backend and production nginx:
 
 # Backups
 
-The main FreeSelfTrack data is stored in PostgreSQL.
-
-Regular database backups are strongly recommended.
+Metadata lives in PostgreSQL; attachment bytes live in `minio_data`. A SQL dump does not
+contain attachments. Back up and restore both stores from the same checkpoint. Before backup,
+stop the backend and all workers using the command below, then save the database dump and a
+snapshot/copy of `minio_data`. Resume only after both operations finish. See the
+[recovery instructions](docs/development/attachments.md#cleanup-and-recovery).
 
 Find the database container:
 
@@ -772,18 +825,18 @@ cat freeselftrack-backup.sql | \
   psql -U tracker tracker
 ```
 
-> Before restoring a database, it is recommended to stop the backend and both workers so that the application does not modify the database during the restore operation.
+> Before restoring a database, it is recommended to stop the backend and all workers so that the application does not modify the database during the restore operation.
 
 For example:
 
 ```bash
-docker compose stop backend deadline-worker registration-mail-worker
+docker compose stop backend deadline-worker registration-mail-worker attachment-scan-worker attachment-cleanup-worker
 ```
 
-Restore the database and then start the services:
+Restore PostgreSQL and MinIO from the coordinated backup, then start the services:
 
 ```bash
-docker compose start backend deadline-worker registration-mail-worker
+docker compose start backend deadline-worker registration-mail-worker attachment-scan-worker attachment-cleanup-worker
 ```
 
 ---
@@ -830,6 +883,7 @@ The backend requires:
 * Python 3.13+;
 * PostgreSQL;
 * Redis;
+* MinIO and ClamAV with the attachment scan worker for file uploads;
 * an SMTP server or local test mail sink for registration.
 
 The project uses `uv` for Python dependency management.
@@ -990,6 +1044,25 @@ Before using FreeSelfTrack for critical production workloads, we recommend:
 ---
 
 # Troubleshooting
+
+## Attachments unavailable or scanning takes too long
+
+```bash
+docker compose ps minio clamav attachment-scan-worker
+docker compose logs --tail=100 attachment-scan-worker clamav attachment-cleanup-worker
+```
+
+For `pending` files, check ClamAV readiness, signature updates and worker access to MinIO/DB.
+Do not bypass scanning by manually setting `ready`. If an older UI shows
+`Attachment unavailable` for HTTP 429, rebuild the frontend and reload:
+
+```bash
+docker compose up -d --no-deps --build frontend
+```
+
+Press Ctrl+Shift+R. The current client queues downloads and retries temporary limits.
+For other errors, inspect backend logs and the user's access to the task.
+
 
 ## Confirmation Email Does Not Arrive
 

@@ -20,6 +20,7 @@
 - [6. Открыть приложение](#6-открыть-приложение)
 - [7. Первый вход](#7-первый-вход)
 - [Архитектура](#архитектура)
+- [Вложения и антивирусная проверка](#вложения-и-антивирусная-проверка)
 - [Данные](#данные)
 - [Остановка](#остановка)
 - [Полное удаление вместе с данными](#полное-удаление-вместе-с-данными)
@@ -220,6 +221,11 @@ DEADLINE_WORKER_INTERVAL_SECONDS=60
 
 MINIO_ROOT_USER=minioadmin
 MINIO_ROOT_PASSWORD=CHANGE_THIS_MINIO_PASSWORD
+S3_BUCKET=tracker-attachments
+ATTACHMENT_UPLOAD_SLOTS=2
+ATTACHMENT_DOWNLOAD_SLOTS=4
+ATTACHMENT_SCAN_INTERVAL_SECONDS=5
+ATTACHMENT_SCAN_TIMEOUT_SECONDS=60
 
 FRONTEND_BIND_ADDRESS=127.0.0.1
 FRONTEND_PORT=5173
@@ -401,7 +407,14 @@ https://tasks.example.com
         └──────────────┘          └──────────────┘
 ```
 
-Также в Compose присутствует MinIO для дальнейшего использования объектного хранилища.
+Backend хранит метаданные вложений в PostgreSQL, а файлы — в приватном MinIO.
+Отдельный worker читает файлы из MinIO и проверяет их через ClamAV перед выдачей.
+
+```text
+Backend ──► MinIO ◄── attachment-scan-worker ──► ClamAV
+                ▲              │
+attachment-cleanup-worker      └──► PostgreSQL
+```
 
 ## Сервисы
 
@@ -443,6 +456,38 @@ Backend отвечает за:
 
 ---
 
+# Вложения и антивирусная проверка
+
+MinIO используется для всех вложений. Bucket `S3_BUCKET` (по умолчанию
+`tracker-attachments`) создаётся штатным запуском MinIO через `MINIO_DEFAULT_BUCKETS`.
+Backend и worker используют текущие `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD`.
+Отдельный provisioning-контейнер не нужен; MinIO и ClamAV не публикуются наружу.
+
+Compose автоматически запускает:
+
+* `clamav` — антивирус; FreshClam обновляет базы в volume `clamav_data`;
+* `attachment-scan-worker` — проверяет размер, SHA-256, корректность изображения и вердикт ClamAV;
+* `attachment-cleanup-worker` — удаляет объекты без ссылок в БД и прерванные multipart-загрузки.
+
+После загрузки файл получает `pending`. Только чистый вердикт переводит его в `ready`
+и разрешает скачивание с проверкой доступа к задаче. `infected` и `failed` недоступны;
+зашифрованные архивы и превышение лимитов сканирования также блокируются.
+При недоступности сканера или хранилища файл остаётся `pending`, проверка повторяется.
+Статус в чате обновляется автоматически. Превью загружаются через очередь с повтором при `429`.
+
+Лимиты: 25 МиБ на файл, до пяти файлов и 130 МиБ на запрос, до 40 млн декодированных
+пикселей суммарно по кадрам изображения. По умолчанию backend допускает две параллельные
+загрузки и четыре скачивания. Интервал между проходами проверки — 5 секунд, таймаут
+запроса к ClamAV — 60 секунд; параметры приведены в `.env.example`.
+
+Первый запуск worker ждёт готовности ClamAV. Учитывайте дополнительную память для движка
+и сигнатур; разрешите исходящие подключения для обновления антивирусных баз.
+Антивирусная проверка не гарантирует обнаружения всех угроз.
+
+Подробности: [эксплуатация вложений](docs/development/attachments.md).
+
+---
+
 # Данные
 
 Docker Compose использует именованные Docker volumes.
@@ -453,6 +498,7 @@ Docker Compose использует именованные Docker volumes.
 postgres_data
 redis_data
 minio_data
+clamav_data
 ```
 
 Проверить volumes:
@@ -510,6 +556,11 @@ docker compose down -v
 ---
 
 # Обновление
+
+Перед обновлением сохраните согласованную копию PostgreSQL и MinIO. Если вложения ещё
+хранятся в PostgreSQL (версия до TASK-024), сначала выполните перенос по
+[инструкции](docs/development/attachments.md#existing-installations-explicit-cutover).
+Обычный запуск с `alembic upgrade head` не переносит старые файлы автоматически.
 
 Чтобы обновить FreeSelfTrack до последней версии:
 
@@ -744,9 +795,11 @@ Redis также не публикуется наружу.
 
 # Резервное копирование
 
-Основные данные FreeSelfTrack находятся в PostgreSQL.
-
-Рекомендуется регулярно создавать резервную копию базы данных.
+Метаданные FreeSelfTrack находятся в PostgreSQL, файлы вложений — в `minio_data`.
+SQL-дамп не содержит вложений: сохраняйте и восстанавливайте PostgreSQL и MinIO из одной
+согласованной точки. Перед копированием остановите backend и все worker командой ниже,
+затем сохраните дамп и снимок/копию `minio_data`. Возобновляйте работу после завершения обоих
+действий. Подробности — в [инструкции](docs/development/attachments.md#cleanup-and-recovery).
 
 Узнать имя контейнера:
 
@@ -769,18 +822,18 @@ cat freeselftrack-backup.sql | \
   psql -U tracker tracker
 ```
 
-> Перед восстановлением базы данных рекомендуется остановить backend и оба worker, чтобы приложение не изменяло данные во время восстановления.
+> Перед восстановлением базы данных рекомендуется остановить backend и все worker, чтобы приложение не изменяло данные во время восстановления.
 
 Например:
 
 ```bash
-docker compose stop backend deadline-worker registration-mail-worker
+docker compose stop backend deadline-worker registration-mail-worker attachment-scan-worker attachment-cleanup-worker
 ```
 
-После восстановления:
+После восстановления PostgreSQL и MinIO из согласованной копии:
 
 ```bash
-docker compose start backend deadline-worker registration-mail-worker
+docker compose start backend deadline-worker registration-mail-worker attachment-scan-worker attachment-cleanup-worker
 ```
 
 ---
@@ -827,6 +880,7 @@ https://tasks.example.com
 * Python 3.13+;
 * PostgreSQL;
 * Redis;
+* MinIO и ClamAV с worker проверки для работы с вложениями;
 * SMTP-сервер или локальный тестовый приёмник писем для регистрации.
 
 В каталоге backend используется `uv`.
@@ -987,6 +1041,25 @@ FreeSelfTrack находится в активной разработке.
 ---
 
 # Устранение проблем
+
+## Вложения недоступны или долго проверяются
+
+```bash
+docker compose ps minio clamav attachment-scan-worker
+docker compose logs --tail=100 attachment-scan-worker clamav attachment-cleanup-worker
+```
+
+При `pending` проверьте готовность ClamAV, обновление сигнатур и доступ worker к MinIO/БД.
+Не переводите файлы в `ready`, обходя проверку. Если старый интерфейс показывает
+`Attachment unavailable` при HTTP 429, пересоберите frontend и обновите страницу:
+
+```bash
+docker compose up -d --no-deps --build frontend
+```
+
+Нажмите Ctrl+Shift+R. Актуальный клиент ставит скачивания в очередь и повторяет временные
+отказы. При других ошибках проверьте логи backend и доступ пользователя к задаче.
+
 
 ## Не приходит письмо подтверждения
 
