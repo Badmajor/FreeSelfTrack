@@ -1,59 +1,26 @@
 import hashlib
-import io
 import json
-import warnings
-from dataclasses import dataclass
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from PIL import Image, UnidentifiedImageError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
+from starlette.datastructures import UploadFile
 
+from app.core.object_storage import PREFIX, ObjectStorage, get_storage
 from app.models import Attachment, Comment, CommentMention, Task
 from app.repositories.chat import ChatRepository
 from app.repositories.domain import DomainRepository
 from app.schemas.chat import AttachmentResponse, CommentCreate, CommentPage, CommentResponse
 from app.schemas.domain import ProfileResponse
+from app.services.attachment_files import MAX_FILE_SIZE, MAX_FILES, Uploaded, inspect_file
+from app.services.audit import record_event
 from app.services.domain import DomainService
 from app.services.errors import ConflictError, InvalidWorkflowError, NotFoundError
 
-MAX_FILE_SIZE = 25 * 1024 * 1024
-MAX_FILES = 5
-
-
-@dataclass
-class Uploaded:
-    filename: str
-    content: bytes
-
-
-def media_type(content: bytes) -> str:
-    try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("error", Image.DecompressionBombWarning)
-            with Image.open(io.BytesIO(content)) as image:
-                if image.width * image.height > 40_000_000:
-                    return "application/octet-stream"
-                image.verify()
-                return {
-                    "PNG": "image/png",
-                    "JPEG": "image/jpeg",
-                    "GIF": "image/gif",
-                    "WEBP": "image/webp",
-                }.get(image.format or "", "application/octet-stream")
-    except (
-        UnidentifiedImageError,
-        OSError,
-        ValueError,
-        SyntaxError,
-        Image.DecompressionBombError,
-        Image.DecompressionBombWarning,
-    ):
-        return "application/octet-stream"
-
 
 class ChatService:
-    def __init__(self, session: AsyncSession):
+    def __init__(self, session: AsyncSession, storage: ObjectStorage | None = None):
+        self.storage = storage
         self.session = session
         self.repository = ChatRepository(session)
         self.domain = DomainService(session)
@@ -100,13 +67,21 @@ class ChatService:
             raise NotFoundError("Message not found")
         return self.response(row)
 
+    async def prepare(self, files: list[UploadFile]) -> list[Uploaded]:
+        if len(files) > MAX_FILES:
+            raise InvalidWorkflowError("At most 5 files per message")
+        return [
+            await run_in_threadpool(inspect_file, file.filename or "file", file.file)
+            for file in files
+        ]
+
     async def create(
         self, user_id: UUID, task_id: UUID, data: CommentCreate, files: list[Uploaded]
     ) -> CommentResponse:
         task = await self.authorize(user_id, task_id)
         if (not data.text.strip() and not files) or len(files) > MAX_FILES:
             raise InvalidWorkflowError("Write a message or attach up to 5 files")
-        if any(len(item.content) > MAX_FILE_SIZE for item in files):
+        if any(item.size > MAX_FILE_SIZE for item in files):
             raise InvalidWorkflowError("File exceeds 25 MB")
         mention_ids = set(data.mention_ids)
         fingerprint = hashlib.sha256(
@@ -114,9 +89,7 @@ class ChatService:
                 {
                     "text": data.text,
                     "mentions": sorted(map(str, mention_ids)),
-                    "files": [
-                        (item.filename, hashlib.sha256(item.content).hexdigest()) for item in files
-                    ],
+                    "files": [(item.original_filename, item.sha256) for item in files],
                 },
                 sort_keys=True,
             ).encode()
@@ -145,17 +118,35 @@ class ChatService:
         await self.session.flush()
         for mentioned in mention_ids:
             self.session.add(CommentMention(comment_id=row.id, user_id=mentioned))
-        for item in files:
-            filename = item.filename.replace("\\", "/").split("/")[-1]
-            filename = "".join(char for char in filename if ord(char) >= 32)[:255] or "file"
+        if files:
+            await self.repository.storage_lock()
+        for position, item in enumerate(files):
+            key = PREFIX + str(uuid4())
+            await run_in_threadpool(
+                (self.storage or get_storage()).put, key, item.stream, item.size
+            )
+            attachment_id = uuid4()
             self.session.add(
                 Attachment(
+                    id=attachment_id,
                     comment_id=row.id,
-                    filename=filename,
-                    size=len(item.content),
-                    content=item.content,
-                    media_type=await run_in_threadpool(media_type, item.content),
+                    position=position,
+                    filename=item.filename,
+                    size=item.size,
+                    object_key=key,
+                    sha256=item.sha256,
+                    state="pending",
+                    media_type=item.media_type,
                 )
+            )
+            record_event(
+                self.session,
+                "attachment_state_changed",
+                actor_id=user_id,
+                target_type="attachment",
+                target_id=attachment_id,
+                organization_id=project.organization_id,
+                state="pending",
             )
         recipients = (
             mention_ids
@@ -183,6 +174,6 @@ class ChatService:
             raise NotFoundError("Attachment not found")
         await self.authorize(user_id, task_id)
         file = await self.repository.attachment(attachment_id)
-        if file is None:
+        if file is None or file.state != "ready":
             raise NotFoundError("Attachment not found")
         return file

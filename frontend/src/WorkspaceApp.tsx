@@ -58,6 +58,7 @@ import {
 } from "./api";
 import { KanbanView, NotificationTaskPanel } from "./KanbanView";
 import { MembersRoutePage } from "./MembersPage";
+import { AccountSecurity } from "./AccountSecurity";
 import type { LinkSelection } from "./TaskLinks";
 
 type Props = {
@@ -1293,6 +1294,7 @@ function ProfilePage({
         {save.isError && <InlineError error={save.error} />}
         {save.isSuccess && <p className="notice">Profile saved.</p>}
       </form>
+      <AccountSecurity />
     </Page>
   );
 }

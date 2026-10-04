@@ -7,6 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
 from app.dependencies.auth import current_user_id
+from app.dependencies.auth_protection import auth_client_address, auth_limiter
+from app.dependencies.session_cookie import csrf_protection, set_refresh_cookie
 from app.schemas.domain import (
     BoardResponse,
     ConfirmRequest,
@@ -23,6 +25,7 @@ from app.schemas.domain import (
     ProjectResponse,
     ProjectUpdate,
     RegisterRequest,
+    RegistrationResponse,
     StatusCreate,
     StatusReorder,
     StatusResponse,
@@ -37,11 +40,15 @@ from app.schemas.domain import (
     TaskUpdate,
     UnreadCountResponse,
     UserResponse,
+    VerificationResponse,
+    VerifyEmailRequest,
     WatcherRequest,
 )
 from app.services.auth import AuthService
+from app.services.auth_protection import AuthLimiter, normalize_email
 from app.services.domain import DomainService
 from app.services.errors import DomainError
+from app.services.verification import InvalidVerificationError, read_verification_token
 
 router = APIRouter()
 
@@ -55,19 +62,53 @@ def translate_errors(operation: Callable[..., Awaitable[Any]]) -> Callable[..., 
         try:
             return await operation(*args, **kwargs)
         except DomainError as exc:
-            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=exc.status_code, detail=str(exc), headers=getattr(exc, "headers", None)
+            ) from exc
 
     return wrapped
 
 
-@router.post("/auth/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-async def register(data: RegisterRequest, session: AsyncSession = Depends(get_session)) -> Any:
-    return await translate_errors(AuthService(session).register)(data)
+@router.post("/auth/register", response_model=RegistrationResponse, status_code=202)
+async def register(
+    data: RegisterRequest,
+    session: AsyncSession = Depends(get_session),
+    limiter: AuthLimiter = Depends(auth_limiter),
+    address: str = Depends(auth_client_address),
+) -> RegistrationResponse:
+    await translate_errors(limiter.check)("register", normalize_email(str(data.email)), address)
+    await translate_errors(AuthService(session).register)(data)
+    return RegistrationResponse()
 
 
-@router.post("/auth/login", response_model=LoginResponse)
-async def login(data: LoginRequest, session: AsyncSession = Depends(get_session)) -> Any:
-    access_token, user = await translate_errors(AuthService(session).login)(data)
+@router.post("/auth/verify-email", response_model=VerificationResponse)
+async def verify_email(
+    data: VerifyEmailRequest,
+    session: AsyncSession = Depends(get_session),
+    limiter: AuthLimiter = Depends(auth_limiter),
+    address: str = Depends(auth_client_address),
+) -> VerificationResponse:
+    # Invalid tokens still consume the address budget; no token is persisted in Redis keys.
+    try:
+        identifier = str(read_verification_token(data.token))
+    except InvalidVerificationError:
+        identifier = "invalid"
+    await translate_errors(limiter.check)("verify", identifier, address)
+    await translate_errors(AuthService(session).verify_email)(data)
+    return VerificationResponse()
+
+
+@router.post("/auth/login", response_model=LoginResponse, dependencies=[Depends(csrf_protection)])
+async def login(
+    data: LoginRequest,
+    response: Response,
+    session: AsyncSession = Depends(get_session),
+    limiter: AuthLimiter = Depends(auth_limiter),
+    address: str = Depends(auth_client_address),
+) -> Any:
+    await translate_errors(limiter.check)("login", normalize_email(str(data.email)), address)
+    access_token, refresh_token, user = await translate_errors(AuthService(session).login)(data)
+    set_refresh_cookie(response, refresh_token)
     return LoginResponse(access_token=access_token, user=user)
 
 

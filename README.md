@@ -8,13 +8,51 @@ It allows you to run your own task management system on your own server and keep
 
 > **Project status:** Early development / MVP
 
+## Table of Contents
+
+- [Features](#features)
+- [Why Self-Hosted?](#why-self-hosted)
+- [Quick Start](#quick-start)
+- [1. Requirements](#1-requirements)
+- [2. Install Docker](#2-install-docker)
+- [3. Download FreeSelfTrack](#3-download-freeselftrack)
+- [4. Configure the Application](#4-configure-the-application)
+- [Connect an SMTP Server](#connect-an-smtp-server)
+- [5. Start FreeSelfTrack](#5-start-freeselftrack)
+- [6. Open FreeSelfTrack](#6-open-freeselftrack)
+- [7. First Login](#7-first-login)
+- [Architecture](#architecture)
+- [Attachments and Malware Scanning](#attachments-and-malware-scanning)
+- [Data Storage](#data-storage)
+- [Stop FreeSelfTrack](#stop-freeselftrack)
+- [Completely Remove FreeSelfTrack](#completely-remove-freeselftrack)
+- [Updating FreeSelfTrack](#updating-freeselftrack)
+- [Viewing Logs](#viewing-logs)
+- [Health Checks](#health-checks)
+- [Using Your Own Domain](#using-your-own-domain)
+- [Example Nginx Configuration](#example-nginx-configuration)
+- [Security](#security)
+- [Backups](#backups)
+- [Changing the Port](#changing-the-port)
+- [Local Development](#local-development)
+- [Technology Stack](#technology-stack)
+- [Project Structure](#project-structure)
+- [API](#api)
+- [Current Limitations](#current-limitations)
+- [Troubleshooting](#troubleshooting)
+- [Removing FreeSelfTrack](#removing-freeselftrack)
+- [Development](#development)
+- [License](#license)
+- [Author](#author)
+- [Feedback](#feedback)
+
 ## Features
 
 FreeSelfTrack is designed for managing projects, tasks, and team workflows.
 
 Current features include:
 
-* user registration and authentication;
+* user registration with SMTP email confirmation and authentication;
 * organizations;
 * organization members;
 * projects;
@@ -31,7 +69,7 @@ Current features include:
 * task watchers;
 * notifications;
 * task history;
-* file attachments;
+* file attachments in private MinIO storage with automatic ClamAV scanning;
 * task management;
 * organization and project restoration;
 * background processing of deadline notifications.
@@ -73,7 +111,7 @@ The easiest way to run FreeSelfTrack is with Docker Compose.
 
 For a standard installation, you do **not** need to install Python, Node.js, PostgreSQL, or Redis separately.
 
-You only need Docker with Docker Compose support.
+To run the containers, you need Docker with Docker Compose support. New user registration also requires an accessible SMTP server, either your own or your email provider's.
 
 ## 1. Requirements
 
@@ -83,7 +121,8 @@ At minimum, you need:
 * Docker;
 * Docker Compose;
 * SSH access to the server;
-* an available TCP port for the web interface.
+* an available TCP port for the web interface;
+* an SMTP server and connection settings for confirmation emails.
 
 For a small team, you can start with approximately:
 
@@ -164,7 +203,7 @@ Open the file:
 nano .env
 ```
 
-At minimum, change the database password and application secret.
+At minimum, change the passwords and application secret, configure SMTP, and set `PUBLIC_APP_URL` and `PUBLIC_HOST`. The example below is for local use; for a server, use HTTPS and the settings in the custom-domain section.
 
 Example:
 
@@ -178,16 +217,52 @@ POSTGRES_PORT=5431
 
 TRACKER_DATABASE_URL=postgresql+asyncpg://tracker:CHANGE_THIS_DATABASE_PASSWORD@db:5432/tracker
 
-AUTH_SECRET_KEY=CHANGE_THIS_TO_A_LONG_RANDOM_SECRET
+AUTH_SECRET_KEY=
 
 DEADLINE_WORKER_INTERVAL_SECONDS=60
 
 MINIO_ROOT_USER=minioadmin
 MINIO_ROOT_PASSWORD=CHANGE_THIS_MINIO_PASSWORD
+S3_BUCKET=tracker-attachments
+ATTACHMENT_UPLOAD_SLOTS=2
+ATTACHMENT_DOWNLOAD_SLOTS=4
+ATTACHMENT_SCAN_INTERVAL_SECONDS=5
+ATTACHMENT_SCAN_TIMEOUT_SECONDS=60
 
-FRONTEND_BIND_ADDRESS=0.0.0.0
+FRONTEND_BIND_ADDRESS=127.0.0.1
 FRONTEND_PORT=5173
+
+PUBLIC_APP_URL=http://localhost:5173
+PUBLIC_HOST=localhost
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_SECURITY=starttls
+SMTP_USERNAME=YOUR_SMTP_USERNAME
+SMTP_PASSWORD=YOUR_SMTP_PASSWORD
+SMTP_SENDER=noreply@example.com
 ```
+
+`PUBLIC_APP_URL` is an exact origin: scheme, hostname and port if nonstandard, without a
+path, trailing `/`, query or fragment. It is used for email links, CORS and CSRF checks.
+`PUBLIC_HOST` is the hostname only, without scheme or port; it permits requests to frontend
+nginx. For local use, open exactly `http://localhost:5173`.
+
+## Connect an SMTP Server
+
+New accounts are created only after email confirmation. Registration cannot be completed without working SMTP; existing users can still sign in. Compose does not include a mail server: configure your own server or your email provider's settings.
+
+| Variable | Value |
+| --- | --- |
+| `PUBLIC_APP_URL` | Frontend address reachable by users, such as `https://tasks.example.com`. Confirmation links use this address. Use `localhost` only for local development. |
+| `SMTP_HOST` | SMTP hostname or address reachable from the container. `localhost` inside the worker refers to that container itself. |
+| `SMTP_PORT` | SMTP port: usually `587` for STARTTLS or `465` for TLS. |
+| `SMTP_SECURITY` | `starttls` for STARTTLS or `tls` for TLS from the start of the connection. Use `plain` only with an isolated local test mail server. |
+| `SMTP_USERNAME`, `SMTP_PASSWORD` | Credentials supplied by your email provider; use an app password if required. Leave both empty for a server that requires no authentication. |
+| `SMTP_SENDER` | Sender email address authorized by your SMTP server. |
+
+Replace the example values in `.env` with your settings. Both `starttls` and `tls` verify the server certificate. Do not publish `.env` containing mail credentials.
+
+Compose automatically starts `registration-mail-worker`, which sends queued messages from PostgreSQL and retries failed deliveries. After changing `.env`, apply the settings with `docker compose up -d`. If a link does not open your application, check `PUBLIC_APP_URL` and request a new email by submitting registration again.
 
 ## Important
 
@@ -201,7 +276,7 @@ AUTH_SECRET_KEY
 MINIO_ROOT_PASSWORD
 ```
 
-`AUTH_SECRET_KEY` should be a long, random value.
+`AUTH_SECRET_KEY` is required. Startup rejects weak and placeholder values; there is no fallback.
 
 You can generate one with:
 
@@ -239,7 +314,7 @@ The main services should be running.
 
 # 6. Open FreeSelfTrack
 
-By default, the web interface is available on port `5173`.
+By default, the web interface binds to `127.0.0.1:5173` on the Docker host and is not directly reachable remotely.
 
 If FreeSelfTrack is running on your local computer:
 
@@ -250,22 +325,11 @@ http://localhost:5173
 If it is installed on a server:
 
 ```text
-http://SERVER_IP:5173
+https://tasks.example.com
 ```
 
-For example:
-
-```text
-http://192.168.1.100:5173
-```
-
-or:
-
-```text
-http://203.0.113.10:5173
-```
-
-where `203.0.113.10` is the IP address of your server.
+Configure an HTTPS reverse proxy and set `PUBLIC_APP_URL=https://tasks.example.com` and `PUBLIC_HOST=tasks.example.com`.
+The bundled frontend listens on HTTP internally; do not use remote plain HTTP for login.
 
 ---
 
@@ -273,9 +337,14 @@ where `203.0.113.10` is the IP address of your server.
 
 Open FreeSelfTrack in your browser.
 
-Create a user through the registration form.
+1. Submit the registration form with an email address you can access and a password of at least 12 characters.
+2. Open the confirmation email and follow its link.
+3. Enter the password you chose during registration and confirm your email. Opening the link alone does not create an account.
+4. Sign in with your email and password.
 
-After registration, you can create an organization:
+Links expire after one hour by default and can be used once. If a link expires, submit registration again. The application displays the same message for new and already registered addresses; existing accounts remain unchanged.
+
+After confirming your email and signing in, you can create an organization:
 
 ```text
 Organization
@@ -314,11 +383,14 @@ The standard Docker Compose installation runs several containers.
 ```text
                          Internet
                             │
+                     HTTPS proxy :443
+                     (on Docker host)
+                            │
                             ▼
                    ┌─────────────────┐
                    │    Frontend     │
                    │     nginx       │
-                   │     :5173       │
+                   │ 127.0.0.1:5173  │
                    └────────┬────────┘
                             │
                             │ /api/*
@@ -337,7 +409,14 @@ The standard Docker Compose installation runs several containers.
        └──────────────┘          └──────────────┘
 ```
 
-The Compose configuration also contains MinIO for future object-storage use.
+The backend stores attachment metadata in PostgreSQL and file bytes in private MinIO storage.
+A separate worker reads files from MinIO and scans them with ClamAV before release.
+
+```text
+Backend ──► MinIO ◄── attachment-scan-worker ──► ClamAV
+                ▲              │
+attachment-cleanup-worker      └──► PostgreSQL
+```
 
 ## Services
 
@@ -371,6 +450,42 @@ Used by the application for auxiliary operations and background processing.
 
 A background worker that periodically checks task deadlines and creates corresponding notifications.
 
+### Registration Mail Worker
+
+The `registration-mail-worker` container sends confirmation emails through the configured SMTP server. PostgreSQL stores the queue, request expiration and delivery state. Temporary failures are retried until the registration request expires.
+
+---
+
+# Attachments and Malware Scanning
+
+MinIO stores all attachment bytes. Its native startup creates `S3_BUCKET` (default
+`tracker-attachments`) through `MINIO_DEFAULT_BUCKETS`. The backend and workers use the
+configured `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD`. No provisioning container is needed;
+MinIO and ClamAV are not exposed externally.
+
+Compose automatically starts:
+
+* `clamav` — the antivirus engine; FreshClam updates signatures in `clamav_data`;
+* `attachment-scan-worker` — verifies size, SHA-256, image validity and the ClamAV verdict;
+* `attachment-cleanup-worker` — removes unreferenced objects and abandoned multipart uploads.
+
+Uploads start as `pending`. Only a clean verdict changes them to `ready`, permitting download
+with task access checks. `infected` and `failed` files remain unavailable; encrypted archives
+and scan-limit alerts are also blocked. Scanner or storage outages leave files `pending`
+for retry. Chat updates availability automatically. Previews use a download queue with retries
+for HTTP 429.
+
+Limits: 25 MiB per file, five files and 130 MiB per request, and 40 million decoded pixels
+across image frames. By default, each backend process permits two concurrent uploads and
+four downloads. Scanning pauses five seconds between passes; ClamAV requests time out after
+60 seconds. These settings are listed in `.env.example`.
+
+The scan worker waits for ClamAV readiness on startup. Allow additional memory for the engine
+and signatures, and outbound access for signature updates. Antivirus scanning cannot guarantee
+detection of every threat.
+
+See [attachment operations](docs/development/attachments.md) for details.
+
 ---
 
 # Data Storage
@@ -383,6 +498,7 @@ The main volumes are:
 postgres_data
 redis_data
 minio_data
+clamav_data
 ```
 
 List Docker volumes:
@@ -440,6 +556,11 @@ Do not use this command if you want to preserve your data.
 ---
 
 # Updating FreeSelfTrack
+
+Before updating, take a coordinated PostgreSQL and MinIO backup. If attachments still live
+in PostgreSQL (before TASK-024), first follow the
+[cutover procedure](docs/development/attachments.md#existing-installations-explicit-cutover).
+Normal startup with `alembic upgrade head` does not transfer legacy files automatically.
 
 To update to the latest version:
 
@@ -507,6 +628,18 @@ Deadline worker logs:
 docker compose logs -f deadline-worker
 ```
 
+Registration mail worker logs:
+
+```bash
+docker compose logs -f registration-mail-worker
+```
+
+Attachment scanning and cleanup:
+
+```bash
+docker compose logs -f clamav attachment-scan-worker attachment-cleanup-worker
+```
+
 View the last 100 lines from the backend:
 
 ```bash
@@ -564,7 +697,7 @@ ok
 
 # Using Your Own Domain
 
-For a permanent Internet-facing installation, it is recommended to put a reverse proxy in front of FreeSelfTrack instead of exposing port `5173` directly.
+For remote server access, put an HTTPS reverse proxy in front of FreeSelfTrack. Keep port `5173` bound to loopback; Secure session cookies require HTTPS for remote access.
 
 For example:
 
@@ -591,57 +724,41 @@ A reverse proxy allows you to use:
 * automatic TLS certificates;
 * the standard HTTPS port `443`.
 
-If you are not familiar with Nginx, HTTPS, or DNS, it is recommended to first verify that FreeSelfTrack works using:
-
-```text
-http://SERVER_IP:5173
-```
-
-and configure the domain afterwards.
+For initial local testing, use http://localhost:5173. Configure DNS and an HTTPS reverse proxy
+before accessing the application remotely; Secure session cookies require HTTPS.
 
 ---
 
 # Example Nginx Configuration
 
-Suppose your domain is:
+For `tasks.example.com`, set the following in `.env`:
 
-```text
-tasks.example.com
+```env
+PUBLIC_APP_URL=https://tasks.example.com
+PUBLIC_HOST=tasks.example.com
+FRONTEND_BIND_ADDRESS=127.0.0.1
+FRONTEND_PORT=5173
 ```
 
-and FreeSelfTrack is running locally on:
+Use the [provided nginx TLS example](deploy/nginx-tls.conf.example). It is intended for
+nginx running on the same host as Docker Compose:
 
-```text
-127.0.0.1:5173
-```
+1. Configure domain DNS and obtain a trusted TLS certificate with automatic renewal.
+2. Replace `tracker.example.com` with your domain and set the certificate and private-key
+   paths. Include the file in the host nginx `http` context; reconcile its `default_server`
+   declarations with existing virtual hosts.
+3. Run `sudo nginx -t`, then `sudo systemctl reload nginx` for nginx managed by systemd.
+4. Apply application settings with `docker compose up -d --build`.
+5. Open `https://tasks.example.com` and verify sign-in, session refresh and attachment downloads.
 
-Nginx can accept external requests:
+The example redirects HTTP to a fixed HTTPS hostname with status 308, rejects unknown hosts,
+and adds HSTS only to HTTPS responses. TLS terminates at host nginx, which forwards requests
+to `http://127.0.0.1:5173`. Expose only the reverse proxy's ports 80/443 externally; keep the
+internal frontend and backend ports private.
 
-```text
-https://tasks.example.com
-```
-
-and forward them to FreeSelfTrack.
-
-Example configuration:
-
-```nginx
-server {
-    listen 80;
-    server_name tasks.example.com;
-
-    location / {
-        proxy_pass http://127.0.0.1:5173;
-
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-```
-
-You can then use Let's Encrypt and Certbot to enable HTTPS.
+If the reverse proxy runs in another container or on another machine, configure upstream
+connectivity separately: `127.0.0.1` inside a container refers to that container itself.
+For initial local testing, use `http://localhost:5173`.
 
 ---
 
@@ -668,18 +785,41 @@ so it should not be directly accessible from the Internet.
 
 Redis is also not exposed externally.
 
+Browser protection is enabled in the backend and production nginx:
+
+* CORS permits explicit origins, methods and headers only; wildcard or malformed origins
+  prevent startup. Compose derives allowed origins from `PUBLIC_APP_URL`.
+* CSP blocks inline scripts and framing. Responses also include `nosniff`, `Referrer-Policy`,
+  `Permissions-Policy` and `X-Frame-Options`; attachment protections are preserved.
+  Inline styles remain allowed for dynamic interface dimensions.
+* Login, refresh and logout require an exact Origin and `X-CSRF-Protection: 1`.
+  Other protected API operations use bearer tokens; cookies alone do not grant access.
+* Uvicorn runs with `--no-proxy-headers`. Trusted proxies for authentication IP limits are
+  configured explicitly through `TRUSTED_PROXY_NETWORKS`, a JSON list of IPs/CIDRs.
+  The default empty list means users behind a proxy share its IP limit. The TLS example
+  preserves this behavior; forwarding original client IPs through multiple proxies requires
+  separate trusted-peer configuration. Never trust arbitrary forwarded headers.
+
 ---
 
 # Backups
 
-The main FreeSelfTrack data is stored in PostgreSQL.
-
-Regular database backups are strongly recommended.
+Metadata lives in PostgreSQL; attachment bytes live in `minio_data`. A SQL dump does not
+contain attachments. Back up and restore both stores from the same checkpoint. Before backup,
+stop the backend and all workers using the command below, then save the database dump and a
+snapshot/copy of `minio_data`. Resume only after both operations finish. See the
+[recovery instructions](docs/development/attachments.md#cleanup-and-recovery).
 
 Find the database container:
 
 ```bash
 docker compose ps
+```
+
+Before backup or restore, stop application writes:
+
+```bash
+docker compose stop backend deadline-worker registration-mail-worker attachment-scan-worker attachment-cleanup-worker
 ```
 
 Create a SQL backup:
@@ -697,18 +837,10 @@ cat freeselftrack-backup.sql | \
   psql -U tracker tracker
 ```
 
-> Before restoring a database, it is recommended to stop the backend and worker so that the application does not modify the database during the restore operation.
-
-For example:
+Restore PostgreSQL and MinIO from the coordinated backup, then start the services:
 
 ```bash
-docker compose stop backend deadline-worker
-```
-
-Restore the database and then start the services:
-
-```bash
-docker compose start backend deadline-worker
+docker compose start backend deadline-worker registration-mail-worker attachment-scan-worker attachment-cleanup-worker
 ```
 
 ---
@@ -725,7 +857,10 @@ If port `5173` is already in use, change:
 
 ```env
 FRONTEND_PORT=8080
+PUBLIC_APP_URL=https://tasks.example.com
 ```
+
+Keep the HTTPS address in `PUBLIC_APP_URL` and update the reverse proxy upstream to the new frontend port. For local testing use `http://localhost:8080`.
 
 Then restart the application:
 
@@ -736,7 +871,7 @@ docker compose up -d
 FreeSelfTrack will then be available at:
 
 ```text
-http://SERVER_IP:8080
+https://tasks.example.com
 ```
 
 ---
@@ -751,7 +886,9 @@ The backend requires:
 
 * Python 3.13+;
 * PostgreSQL;
-* Redis.
+* Redis;
+* MinIO and ClamAV with the attachment scan worker for file uploads;
+* an SMTP server or local test mail sink for registration.
 
 The project uses `uv` for Python dependency management.
 
@@ -765,7 +902,7 @@ uv sync
 Start the backend:
 
 ```bash
-uv run uvicorn app.main:app --reload
+uv run uvicorn app.main:app --reload --no-proxy-headers
 ```
 
 The backend will be available at:
@@ -774,10 +911,37 @@ The backend will be available at:
 http://localhost:8000
 ```
 
-FastAPI documentation:
+OpenAPI schema:
 
 ```text
-http://localhost:8000/docs
+http://localhost:8000/openapi.json
+```
+
+Interactive `/docs` and `/redoc` are disabled under the restrictive CSP.
+
+### Sending Email in Local Development
+
+For direct Python processes, use environment variables prefixed with `TRACKER_`: `TRACKER_SMTP_HOST`, `TRACKER_SMTP_PORT`, `TRACKER_SMTP_SECURITY`, `TRACKER_SMTP_USERNAME`, `TRACKER_SMTP_PASSWORD`, `TRACKER_SMTP_SENDER`, and `TRACKER_PUBLIC_APP_URL`. You can also set them in `backend/.env`; the root `.env` is used by Docker Compose.
+
+In a separate terminal, from `backend/`, run:
+
+```bash
+uv run python -m app.workers.registration_mail
+```
+
+The API and worker must share `TRACKER_DATABASE_URL` and `TRACKER_AUTH_SECRET_KEY`. For the default Vite setup, use `TRACKER_PUBLIC_APP_URL=http://localhost:5173`.
+
+### Attachments in Local Development
+
+Configure MinIO, ClamAV and `TRACKER_S3_*` / `TRACKER_CLAMD_*` settings using the
+[operations guide](docs/development/attachments.md). In separate terminals from `backend/`, run:
+
+```bash
+uv run python -m app.workers.attachment_scan
+```
+
+```bash
+uv run python -m app.workers.attachment_cleanup
 ```
 
 ## Frontend
@@ -797,7 +961,7 @@ Start the development server:
 npm run dev
 ```
 
-Vite will display the local frontend address in the terminal.
+Vite will display the local frontend address in the terminal. Vite is for local development; nginx applies the production browser security policies. Do not expose Vite publicly.
 
 ---
 
@@ -853,6 +1017,9 @@ FreeSelfTrack/
 │   ├── package.json
 │   └── package-lock.json
 │
+├── deploy/
+│   └── nginx-tls.conf.example
+│
 ├── docker-compose.yml
 ├── .env.example
 ├── whitepaper.md
@@ -866,13 +1033,7 @@ FreeSelfTrack/
 
 The backend provides a REST API.
 
-When running the backend directly in development mode, FastAPI documentation is available at:
-
-```text
-http://localhost:8000/docs
-```
-
-OpenAPI schema:
+Interactive Swagger (`/docs`) and ReDoc (`/redoc`) are disabled. When running the backend directly for local development, its OpenAPI schema is available at:
 
 ```text
 http://localhost:8000/openapi.json
@@ -900,6 +1061,40 @@ Before using FreeSelfTrack for critical production workloads, we recommend:
 ---
 
 # Troubleshooting
+
+## Attachments unavailable or scanning takes too long
+
+```bash
+docker compose ps minio clamav attachment-scan-worker
+docker compose logs --tail=100 attachment-scan-worker clamav attachment-cleanup-worker
+```
+
+For `pending` files, check ClamAV readiness, signature updates and worker access to MinIO/DB.
+Do not bypass scanning by manually setting `ready`. If an older UI shows
+`Attachment unavailable` for HTTP 429, rebuild the frontend and reload:
+
+```bash
+docker compose up -d --no-deps --build frontend
+```
+
+Press Ctrl+Shift+R. The current client queues downloads and retries temporary limits.
+For other errors, inspect backend logs and the user's access to the task.
+
+
+## Confirmation Email Does Not Arrive
+
+Check the mail worker and its logs:
+
+```bash
+docker compose ps registration-mail-worker
+docker compose logs --tail=100 registration-mail-worker
+```
+
+Check the spam folder, SMTP connectivity from the container, port and encryption mode, credentials, and authorized sender address. The `confirmation_delivery_retry` event means delivery will be retried; `mail_database_unavailable` indicates that the worker cannot access PostgreSQL.
+
+The form's “Check your email” response means the request was accepted, not that the message has already arrived. After correcting `.env`, run `docker compose up -d`. If the request's one-hour lifetime has expired, register again; frequent attempts may be temporarily rate-limited. If the email arrives but its link points to the wrong address, correct `PUBLIC_APP_URL`.
+
+---
 
 ## Containers are not starting
 
@@ -954,7 +1149,19 @@ Check whether the port is listening:
 ss -lntp | grep 5173
 ```
 
-If the server has a firewall enabled, make sure the required port is allowed.
+On a server, check DNS, the TLS reverse proxy and access to its ports 80/443.
+Port `5173` is local-only by default; it does not need to be exposed externally.
+If nginx closes the connection or the backend returns `400 Invalid host header`, check
+`PUBLIC_HOST`, `PUBLIC_APP_URL` and the Host header sent by the proxy.
+
+## Login or Session Restoration Returns 403
+
+Open the exact address in `PUBLIC_APP_URL`: `localhost` and `127.0.0.1` are different
+origins, as are different schemes or ports. After changing `.env`, run `docker compose up -d`.
+Custom clients must supply Origin and `X-CSRF-Protection: 1` for login, refresh and logout;
+keep CSRF checks enabled. If backend startup rejects a CORS/URL setting, remove wildcards,
+paths and trailing `/` from the origin. Remote access requires HTTPS; local Secure-cookie
+support on localhost depends on the browser.
 
 ---
 
@@ -1070,3 +1277,18 @@ https://github.com/Badmajor/FreeSelfTrack
 If you find a bug or have an idea for an improvement, please create an Issue in the repository:
 
 https://github.com/Badmajor/FreeSelfTrack/issues
+
+
+## Sessions and account security
+
+TASK-022 requires migration `0014_auth_sessions` and a coordinated backend/frontend/mail-worker
+upgrade. Existing JWTs are rejected; sign in again. Access tokens live only in memory and refresh
+credentials use Secure HttpOnly SameSite cookies. Logout immediately revokes the current session.
+AUTH_SECRET_KEY has no fallback and must be generated randomly (`openssl rand -hex 32`).
+Shared deployments require HTTPS and the exact PUBLIC_APP_URL for cookie, CORS and CSRF behavior.
+Plain HTTP access by server IP cannot retain Secure refresh cookies.
+
+Profile offers password change and self-deactivation, both requiring the current password. Transfer
+all organization/project ownership first, including restorable deleted resources. Password change,
+email reset and deactivation end all sessions. “Forgot password?” uses a single-use 30-minute SMTP
+link; keep registration-mail-worker running for both registration and recovery.

@@ -16,6 +16,7 @@ export function TaskChat({ taskId, organizationId, focusCommentId }: { taskId: s
   const [more, setMore] = useState(false);
   const [error, setError] = useState("");
   const [denied, setDenied] = useState(false);
+  const [checkingFile, setCheckingFile] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
   const [newMessages, setNewMessages] = useState(false);
   const [text, setText] = useState("");
@@ -28,6 +29,11 @@ export function TaskChat({ taskId, organizationId, focusCommentId }: { taskId: s
   const generation = useRef(0);
   const scroll = useRef<HTMLDivElement>(null);
   const bottom = useRef(true);
+  const pendingComments = useRef<string[]>([]);
+  useEffect(() => {
+    const displayed = focusedMessage ? [...messages, focusedMessage] : messages;
+    pendingComments.current = [...new Set(displayed.filter((item) => item.attachments.some((file) => file.state === "pending")).map((item) => item.id))];
+  }, [messages, focusedMessage]);
   const members = useQuery({ queryKey: ["organization-members", organizationId], queryFn: () => listOrganizationMembers(organizationId), enabled: !denied });
   const mentionSearch = text.match(/@([^@\n]*)$/)?.[1];
   const candidates = mentionSearch === undefined ? [] : (members.data ?? []).filter((member) => member.profile && !mentionIds.includes(member.id) && (member.profile.first_name + " " + member.profile.last_name).toLowerCase().includes(mentionSearch.toLowerCase()));
@@ -39,7 +45,8 @@ export function TaskChat({ taskId, organizationId, focusCommentId }: { taskId: s
     let alive = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let newest = 0;
-    setLoading(true); setLoadingOlder(false); setError(""); setDenied(false); setMessages([]);
+    let pendingCursor = 0;
+    setLoading(true); setLoadingOlder(false); setCheckingFile(null); setError(""); setDenied(false); setMessages([]);
     const current = () => alive && generation.current === token;
     async function poll() {
       try {
@@ -49,6 +56,14 @@ export function TaskChat({ taskId, organizationId, focusCommentId }: { taskId: s
           newest = page.comments[page.comments.length - 1].sequence;
           setMessages((items) => merge(items, page.comments));
           if (bottom.current) requestAnimationFrame(toBottom); else setNewMessages(true);
+        }
+        // One pending comment per poll bounds extra requests even in a long chat.
+        const pending = pendingComments.current;
+        if (!page.has_more && pending.length) {
+          const updated = await getComment(taskId, pending[pendingCursor++ % pending.length]);
+          if (!current()) return;
+          setMessages((items) => items.map((item) => item.id === updated.id ? updated : item));
+          setFocusedMessage((item) => item?.id === updated.id ? updated : item);
         }
         setError("");
         timer = setTimeout(() => void poll(), page.has_more ? 0 : 3000);
@@ -109,11 +124,24 @@ export function TaskChat({ taskId, organizationId, focusCommentId }: { taskId: s
     event.preventDefault();
     event.currentTarget.form?.requestSubmit();
   }
+  async function checkFiles(commentId: string) {
+    const token = generation.current;
+    setCheckingFile(commentId);
+    try {
+      const updated = await getComment(taskId, commentId);
+      if (token !== generation.current) return;
+      setMessages((items) => items.map((item) => item.id === updated.id ? updated : item));
+      setFocusedMessage((item) => item?.id === updated.id ? updated : item);
+    } catch (err) {
+      if (token === generation.current) { setError(message(err)); if (forbidden(err)) rejectAccess(); }
+    } finally { if (token === generation.current) setCheckingFile(null); }
+  }
   function renderMessage(item: ChatMessage) { return <article id={"comment-" + item.id} key={item.id} className={item.id === focusCommentId ? "chat-message highlighted" : "chat-message"}>
           <header><strong>{item.author.first_name} {item.author.last_name}</strong><time dateTime={item.created_at}>{new Date(item.created_at).toLocaleString()}</time></header>
           <p className="chat-text">{item.text}</p>
           {item.mentions.length > 0 && <p className="chat-mentions">{item.mentions.map((person) => "@" + person.first_name + " " + person.last_name).join(", ")}</p>}
           {item.attachments.map((attachment) => <FileView key={attachment.id} file={attachment} />)}
+          {item.attachments.some((attachment) => attachment.state === "pending") && <button className="link-button" type="button" disabled={checkingFile !== null} onClick={() => void checkFiles(item.id)}>Check file status</button>}
         </article>; }
   return <section aria-label="Task chat" className="task-chat">
     {loading && <p role="status">Loading messages...</p>}
@@ -145,7 +173,8 @@ export function TaskChat({ taskId, organizationId, focusCommentId }: { taskId: s
 
 function FileView({ file }: { file: ChatAttachment }) {
   const [url, setUrl] = useState(""); const [error, setError] = useState(""); const [busy, setBusy] = useState(false); const [open, setOpen] = useState(false); const imageButton = useRef<HTMLButtonElement>(null);
-  const image = ["image/png", "image/jpeg", "image/gif", "image/webp"].includes(file.media_type);
+  const available = file.state === "ready";
+  const image = available && ["image/png", "image/jpeg", "image/gif", "image/webp"].includes(file.media_type);
   useEffect(() => {
     let alive = true; let objectUrl = "";
     if (image) void getAttachment(file.id, true).then((blob) => { if (alive) { objectUrl = URL.createObjectURL(blob); setUrl(objectUrl); } }).catch((err) => { if (alive) setError(message(err)); });
@@ -153,7 +182,7 @@ function FileView({ file }: { file: ChatAttachment }) {
   }, [file.id, image]);
   async function download() { setBusy(true); setError(""); try { const blob = await getAttachment(file.id); const objectUrl = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = objectUrl; link.download = file.filename; link.click(); setTimeout(() => URL.revokeObjectURL(objectUrl), 1000); } catch (err) { setError(message(err)); } finally { setBusy(false); } }
   function closePreview() { setOpen(false); imageButton.current?.focus(); }
-  return <div className="chat-file">{image && url && <button ref={imageButton} className="chat-image-button" type="button" onClick={() => setOpen(true)} aria-label={`Open image ${file.filename}`}><img src={url} alt={file.filename} loading="lazy" /></button>}<button className="link-button" type="button" disabled={busy} onClick={() => void download()}>{file.filename} ({Math.ceil(file.size / 1024)} KB)</button>{error && <p className="error" role="alert">{error}</p>}{open && url && <ImageModal url={url} filename={file.filename} onClose={closePreview} />}</div>;
+  return <div className="chat-file">{image && url && <button ref={imageButton} className="chat-image-button" type="button" onClick={() => setOpen(true)} aria-label={`Open image ${file.filename}`}><img src={url} alt={file.filename} loading="lazy" /></button>}<button className="link-button" type="button" disabled={busy || !available} onClick={() => void download()}>{file.filename} ({Math.ceil(file.size / 1024)} KB)</button>{!available && <span role="status">{file.state === "pending" ? "Scanning file" : "File unavailable"}</span>}{error && <p className="error" role="alert">{error}</p>}{open && url && <ImageModal url={url} filename={file.filename} onClose={closePreview} />}</div>;
 }
 
 function ImageModal({ url, filename, onClose }: { url: string; filename: string; onClose: () => void }) {

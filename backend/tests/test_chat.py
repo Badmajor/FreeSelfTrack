@@ -95,7 +95,9 @@ async def test_chat_messages_mentions_notifications_and_idempotency(client: Asyn
     assert (await client.delete(url, headers=owner)).status_code == 405
 
 
-async def test_chat_cursor_and_private_attachments(client: AsyncClient):
+async def test_chat_cursor_and_private_attachments(
+    client: AsyncClient, db_session, attachment_storage
+):
     owner, member, project, task, member_id = await setup_chat(client)
     image = io.BytesIO()
     Image.new("RGB", (2, 2)).save(image, format="PNG")
@@ -111,6 +113,15 @@ async def test_chat_cursor_and_private_attachments(client: AsyncClient):
     )
     assert created.status_code == 201, created.text
     attachments = created.json()["attachments"]
+    from uuid import UUID
+
+    from app.models import Attachment
+    from app.services.attachment_maintenance import AttachmentMaintenance
+
+    maintenance = AttachmentMaintenance(db_session, attachment_storage)
+    for item in attachments:
+        row = await db_session.get(Attachment, UUID(item["id"]))
+        await maintenance.review(row.id, row.sha256, "ready")
     assert attachments[0]["media_type"] == "image/png"
     assert attachments[1]["media_type"] == "application/octet-stream"
     for i in range(52):
@@ -178,7 +189,7 @@ async def test_chat_file_limits(client: AsyncClient):
 
 async def test_streamed_upload_limit_and_transaction_rollback(client: AsyncClient, monkeypatch):
     import app.api.upload_limit as limits
-    import app.services.chat as chat
+    import app.services.attachment_files as chat
 
     owner, _, _, task, _ = await setup_chat(client)
     monkeypatch.setattr(limits, "MAX_REQUEST", 128)

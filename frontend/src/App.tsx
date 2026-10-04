@@ -1,39 +1,41 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   getUnreadNotificationCount,
   listNotifications,
   login,
+  logout,
+  restoreSession,
+  ApiError,
   openNotification,
   register,
   type AuthUser,
   type Profile,
 } from "./api";
+import { PasswordRecovery } from "./PasswordRecovery";
+import { VerifyEmail } from "./VerifyEmail";
 import { AuthenticatedApp } from "./WorkspaceApp";
 
 type Mode = "login" | "register";
 
-function savedUser(): AuthUser | null {
-  if (!localStorage.getItem("freeselftrack.access_token")) return null;
-  try {
-    return JSON.parse(
-      localStorage.getItem("freeselftrack.user") ?? "null",
-    ) as AuthUser | null;
-  } catch {
-    return null;
-  }
-}
-
 export function App() {
+  const [verificationToken, setVerificationToken] = useState(() =>
+    new URLSearchParams(window.location.hash.slice(1)).get("verify"),
+  );
   const queryClient = useQueryClient();
-  const initialUser = savedUser();
-  const [mode, setMode] = useState<Mode>(initialUser ? "login" : "register");
-  const [email, setEmail] = useState(initialUser?.email ?? "");
+  const [resetToken, setResetToken] = useState(() =>
+    new URLSearchParams(window.location.hash.slice(1)).get("reset"),
+  );
+  const [recovering, setRecovering] = useState(false);
+  const [restoring, setRestoring] = useState(!verificationToken && !resetToken);
+  const [restoreError, setRestoreError] = useState("");
+  const [mode, setMode] = useState<Mode>("register");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
-  const [user, setUser] = useState<AuthUser | null>(initialUser);
+  const [user, setUser] = useState<AuthUser | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -48,17 +50,11 @@ export function App() {
         await register(email, password, firstName, lastName);
         setPassword("");
         setMode("login");
-        setNotice("Account created. Sign in to continue.");
+        setNotice(
+          "Check your email to confirm your registration, then sign in.",
+        );
       } else {
         const response = await login(email, password);
-        localStorage.setItem(
-          "freeselftrack.access_token",
-          response.access_token,
-        );
-        localStorage.setItem(
-          "freeselftrack.user",
-          JSON.stringify(response.user),
-        );
         setUser(response.user);
         setPassword("");
       }
@@ -71,35 +67,112 @@ export function App() {
     }
   }
 
-  function signOut() {
-    queryClient.clear();
+  useEffect(() => {
+    let active = true;
     localStorage.removeItem("freeselftrack.access_token");
     localStorage.removeItem("freeselftrack.user");
-    setUser(null);
-    setMode("login");
-    setNotice("");
+    const expired = () => {
+      queryClient.clear();
+      setUser(null);
+      setMode("login");
+      setNotice("");
+    };
+    window.addEventListener("freeselftrack:session-ended", expired);
+    if (!verificationToken && !resetToken) {
+      restoreSession()
+        .then((result) => {
+          if (active) setUser(result.user);
+        })
+        .catch((err: unknown) => {
+          if (active && !(err instanceof ApiError && err.status === 401)) {
+            setMode("login");
+            setRestoreError(
+              err instanceof ApiError && err.status === 403
+                ? "Session restoration was rejected. Open the configured application address or contact your administrator."
+                : "Unable to restore your session. Try again or sign in.",
+            );
+          }
+        })
+        .finally(() => {
+          if (active) setRestoring(false);
+        });
+    }
+    return () => {
+      active = false;
+      window.removeEventListener("freeselftrack:session-ended", expired);
+    };
+    // Startup restoration only; completing an email flow leads to explicit sign-in.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queryClient]);
+
+  async function signOut() {
+    setError("");
+    try {
+      await logout();
+    } catch {
+      setError("Sign out failed. Try again.");
+    }
   }
 
   function saveProfile(profile: Profile) {
     if (!user) return;
     const next = { ...user, profile };
     setUser(next);
-    localStorage.setItem("freeselftrack.user", JSON.stringify(next));
   }
 
+  if (resetToken || recovering)
+    return (
+      <PasswordRecovery
+        token={resetToken}
+        onDone={() => {
+          setResetToken(null);
+          setRecovering(false);
+          setRestoring(false);
+          setMode("login");
+        }}
+      />
+    );
+
+  if (verificationToken)
+    return (
+      <VerifyEmail
+        token={verificationToken}
+        onDone={() => {
+          setVerificationToken(null);
+          setMode("login");
+        }}
+      />
+    );
+
+  if (restoring) return <p role="status">Restoring session...</p>;
   if (user)
     return (
-      <AuthenticatedApp
-        user={user}
-        onSignOut={signOut}
-        onUserSaved={saveProfile}
-      />
+      <>
+        {error && <p role="alert">{error}</p>}
+        <AuthenticatedApp
+          user={user}
+          onSignOut={() => void signOut()}
+          onUserSaved={saveProfile}
+        />
+      </>
     );
 
   return (
     <main className="shell">
       <section className="auth-panel" aria-labelledby="auth-title">
         <div className="eyebrow">FreeSelfTrack</div>
+        {restoreError && (
+          <div>
+            <p role="alert">{restoreError}</p>
+            <button
+              className="button secondary"
+              type="button"
+              onClick={() => window.location.reload()}
+            >
+              Retry
+            </button>
+          </div>
+        )}
         <h1 id="auth-title">
           {mode === "register" ? "Create your account" : "Welcome back"}
         </h1>
@@ -140,6 +213,13 @@ export function App() {
             Sign in
           </button>
         </div>
+        <button
+          className="text-link"
+          type="button"
+          onClick={() => setRecovering(true)}
+        >
+          Forgot password?
+        </button>
         <form onSubmit={handleSubmit} noValidate>
           {mode === "register" && (
             <>
@@ -177,7 +257,7 @@ export function App() {
             autoComplete={
               mode === "register" ? "new-password" : "current-password"
             }
-            minLength={mode === "register" ? 8 : 1}
+            minLength={mode === "register" ? 12 : 1}
             maxLength={128}
             required
             value={password}

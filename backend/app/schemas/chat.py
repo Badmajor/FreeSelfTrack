@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -19,6 +20,7 @@ class AttachmentResponse(BaseModel):
     filename: str
     media_type: str
     size: int
+    state: Literal["pending", "ready", "failed", "infected"]
 
 
 class CommentResponse(BaseModel):

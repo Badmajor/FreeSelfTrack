@@ -22,7 +22,8 @@ describe("authentication form", () => {
     const fetchMock = vi.fn(
       (input: string | URL | Request, options?: RequestInit) => {
         const url = String(input);
-        if (url.endsWith("/auth/register")) return jsonResponse(registeredUser);
+        if (url.endsWith("/auth/refresh")) return jsonResponse({ detail: "Authentication required" }, 401);
+        if (url.endsWith("/auth/register")) return jsonResponse({ message: "Check your email" }, 202);
         if (url.endsWith("/auth/login"))
           return jsonResponse({
             access_token: "token",
@@ -39,16 +40,17 @@ describe("authentication form", () => {
     const user = userEvent.setup();
 
     renderWithQueryClient(<App />);
+    await user.click(await screen.findByRole("tab", { name: "Register" }));
     await user.type(screen.getByLabelText("First name"), "Ada");
     await user.type(screen.getByLabelText("Last name"), "Lovelace");
     await user.type(screen.getByLabelText("Email"), "new@example.com");
-    await user.type(screen.getByLabelText("Password"), "password123");
+    await user.type(screen.getByLabelText("Password"), "a long test passphrase");
     await user.click(screen.getByRole("button", { name: "Create account" }));
 
     expect(await screen.findByRole("status")).toHaveTextContent(
-      "Account created",
+      "Check your email",
     );
-    await user.type(screen.getByLabelText("Password"), "password123");
+    await user.type(screen.getByLabelText("Password"), "a long test passphrase");
     await user.click(screen.getByRole("button", { name: "Sign in" }));
 
     expect(
@@ -60,9 +62,42 @@ describe("authentication form", () => {
         method: "POST",
         body: JSON.stringify({
           email: "new@example.com",
-          password: "password123",
+          password: "a long test passphrase",
         }),
       }),
     );
   });
+});
+
+it("confirms email only after an explicit password submission and clears the fragment", async () => {
+  window.history.replaceState(null, "", "/#verify=test-confirmation-token");
+  const fetchMock = vi.fn(() => jsonResponse({ message: "Confirmation processed" }));
+  vi.stubGlobal("fetch", fetchMock);
+  const user = userEvent.setup();
+  renderWithQueryClient(<App />);
+  expect(screen.getByRole("heading", { name: "Confirm your email" })).toBeInTheDocument();
+  expect(window.location.hash).toBe("");
+  expect(fetchMock).not.toHaveBeenCalled();
+  await user.type(screen.getByLabelText("Registration password"), "a long test passphrase");
+  await user.click(screen.getByRole("button", { name: "Confirm email" }));
+  expect(await screen.findByRole("status")).toHaveTextContent("Confirmation processed");
+  expect(fetchMock).toHaveBeenCalledWith("/api/auth/verify-email", expect.objectContaining({
+    method: "POST", body: JSON.stringify({token: "test-confirmation-token", password: "a long test passphrase"}),
+  }));
+  expect(localStorage.getItem("freeselftrack.access_token")).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Continue to sign in" }));
+  expect(screen.getByRole("heading", { name: "Welcome back" })).toBeInTheDocument();
+});
+
+it("shows expired confirmation errors and allows requesting a new registration", async () => {
+  window.history.replaceState(null, "", "/#verify=expired-token");
+  vi.stubGlobal("fetch", vi.fn(() => jsonResponse({ detail: "Invalid or expired confirmation" }, 400)));
+  const user = userEvent.setup();
+  renderWithQueryClient(<App />);
+  await user.type(screen.getByLabelText("Registration password"), "a long test passphrase");
+  await user.click(screen.getByRole("button", { name: "Confirm email" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("register again");
+  await user.click(screen.getByRole("button", { name: "Back to sign in" }));
+  await user.click(screen.getByRole("tab", { name: "Register" }));
+  expect(screen.getByRole("heading", { name: "Create your account" })).toBeInTheDocument();
 });

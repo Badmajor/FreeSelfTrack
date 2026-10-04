@@ -2,7 +2,7 @@ from uuid import UUID
 
 from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload, undefer
+from sqlalchemy.orm import selectinload
 
 from app.models import Attachment, Comment, CommentMention, Task, User
 
@@ -56,15 +56,26 @@ class ChatRepository:
         return list(await self.session.scalars(query.limit(limit + 1)))
 
     async def attachment(self, attachment_id: UUID) -> Attachment | None:
-        return await self.session.scalar(
-            select(Attachment)
-            .options(undefer(Attachment.content))
-            .where(Attachment.id == attachment_id)
-        )
+        return await self.session.scalar(select(Attachment).where(Attachment.id == attachment_id))
 
     async def attachment_task(self, attachment_id: UUID) -> UUID | None:
         return await self.session.scalar(
             select(Comment.task_id)
             .join(Attachment, Attachment.comment_id == Comment.id)
             .where(Attachment.id == attachment_id)
+        )
+
+    async def storage_lock(self, *, exclusive: bool = False) -> None:
+        # Upload + metadata commit hold a shared lock. Cleanup takes the exclusive
+        # counterpart before checking references, including uncommitted publishers.
+        if self.session.bind is not None and self.session.bind.dialect.name == "postgresql":
+            from sqlalchemy import text
+
+            name = "pg_advisory_xact_lock" if exclusive else "pg_advisory_xact_lock_shared"
+            await self.session.execute(text(f"SELECT {name}(240024)"))
+
+    async def object_referenced(self, key: str) -> bool:
+        return (
+            await self.session.scalar(select(Attachment.id).where(Attachment.object_key == key))
+            is not None
         )

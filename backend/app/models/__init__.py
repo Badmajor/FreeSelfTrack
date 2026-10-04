@@ -1,3 +1,7 @@
+from app.models.audit import SecurityEvent as SecurityEvent
+from app.models.auth_session import AuthSession as AuthSession
+from app.models.auth_session import PasswordReset as PasswordReset
+from app.models.auth_session import RefreshCredential as RefreshCredential
 from app.models.domain import (
     DeadlineNotificationDelivery,
     Notification,
@@ -14,6 +18,7 @@ from app.models.domain import (
     User,
     UserProfile,
 )
+from app.models.registration import PendingRegistration as PendingRegistration
 
 __all__ = [
     "DeadlineNotificationDelivery",
