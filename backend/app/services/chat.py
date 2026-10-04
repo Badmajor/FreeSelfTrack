@@ -13,6 +13,7 @@ from app.repositories.domain import DomainRepository
 from app.schemas.chat import AttachmentResponse, CommentCreate, CommentPage, CommentResponse
 from app.schemas.domain import ProfileResponse
 from app.services.attachment_files import MAX_FILE_SIZE, MAX_FILES, Uploaded, inspect_file
+from app.services.audit import record_event
 from app.services.domain import DomainService
 from app.services.errors import ConflictError, InvalidWorkflowError, NotFoundError
 
@@ -124,8 +125,10 @@ class ChatService:
             await run_in_threadpool(
                 (self.storage or get_storage()).put, key, item.stream, item.size
             )
+            attachment_id = uuid4()
             self.session.add(
                 Attachment(
+                    id=attachment_id,
                     comment_id=row.id,
                     position=position,
                     filename=item.filename,
@@ -135,6 +138,15 @@ class ChatService:
                     state="pending",
                     media_type=item.media_type,
                 )
+            )
+            record_event(
+                self.session,
+                "attachment_state_changed",
+                actor_id=user_id,
+                target_type="attachment",
+                target_id=attachment_id,
+                organization_id=project.organization_id,
+                state="pending",
             )
         recipients = (
             mention_ids

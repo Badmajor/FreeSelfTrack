@@ -10,6 +10,7 @@ from app.core.object_storage import CHUNK_SIZE, PREFIX, ObjectStorage
 from app.repositories.attachment_storage import AttachmentStorageRepository
 from app.repositories.chat import ChatRepository
 from app.services.attachment_files import MAX_FILE_SIZE, inspect_file, normalized_filename
+from app.services.audit import record_event
 from app.services.errors import ConflictError, InvalidWorkflowError, NotFoundError
 
 logger = logging.getLogger(__name__)
@@ -80,6 +81,18 @@ class AttachmentMaintenance:
                     raise ConflictError("Object verification failed")
                 inspected = await run_in_threadpool(inspect_file, row.filename, verified)
                 row.media_type = inspected.media_type
+        if row.state != state:
+            record_event(
+                self.session,
+                "attachment_state_changed",
+                actor_id=None,
+                actor_kind="attachment_operator",
+                target_type="attachment",
+                target_id=row.id,
+                organization_id=await self.repository.organization_id(row.id),
+                previous_state=row.state,
+                state=state,
+            )
         row.state = state
         await self.session.commit()
         logger.warning("attachment_review id=%s state=%s sha256=%s", attachment_id, state, sha256)

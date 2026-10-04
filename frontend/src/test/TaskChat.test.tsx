@@ -117,13 +117,27 @@ it("keeps quarantined images unavailable and refreshes their review status", asy
   pending.attachments = [{ id: "image", filename: "pending.png", media_type: "image/png", size: 42, state: "pending" }];
   vi.spyOn(api, "getComments").mockImplementation(async (_task, cursor) => ({ comments: cursor?.after !== undefined ? [] : [pending], has_more: false }));
   const download = vi.spyOn(api, "getAttachment").mockResolvedValue(new Blob(["image"]));
-  vi.spyOn(api, "getComment").mockResolvedValue({ ...pending, attachments: [{ ...pending.attachments[0], state: "ready" }] });
+  let released = false;
+  vi.spyOn(api, "getComment").mockImplementation(async () => released ? { ...pending, attachments: [{ ...pending.attachments[0], state: "ready" }] } : pending);
   vi.stubGlobal("URL", { ...URL, createObjectURL: vi.fn(() => "blob:released"), revokeObjectURL: vi.fn() });
   mount();
-  expect(await screen.findByText("Awaiting file review")).toBeInTheDocument();
+  expect(await screen.findByText("Scanning file")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /pending.png/ })).toBeDisabled();
   expect(download).not.toHaveBeenCalled();
+  released = true;
   await userEvent.click(screen.getByRole("button", { name: "Check file status" }));
   expect(await screen.findByRole("button", { name: "Open image pending.png" })).toBeInTheDocument();
   expect(download).toHaveBeenCalledWith("image", true);
+});
+
+it("automatically releases the UI after background scanning without user action", async () => {
+  const pending = row();
+  pending.attachments = [{ id: "image", filename: "auto.png", media_type: "image/png", size: 42, state: "pending" }];
+  vi.spyOn(api, "getComments").mockImplementation(async (_task, cursor) => ({ comments: cursor?.after !== undefined ? [] : [pending], has_more: false }));
+  vi.spyOn(api, "getComment").mockResolvedValue({ ...pending, attachments: [{ ...pending.attachments[0], state: "ready" }] });
+  vi.spyOn(api, "getAttachment").mockResolvedValue(new Blob(["image"]));
+  vi.stubGlobal("URL", { ...URL, createObjectURL: vi.fn(() => "blob:auto"), revokeObjectURL: vi.fn() });
+  mount();
+  expect(await screen.findByRole("button", { name: "Open image auto.png" }, { timeout: 5000 })).toBeInTheDocument();
+  expect(api.getComment).toHaveBeenCalledWith("task", "message-1");
 });

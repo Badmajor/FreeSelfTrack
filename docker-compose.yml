@@ -79,6 +79,59 @@ services:
       retries: 20
     networks: [app]
 
+  clamav:
+    image: clamav/clamav@sha256:ebec5bc138401b36ae987caa1a3fa3c3b2a21ed3d51f0bfa5852825e663e67b0
+    environment:
+      FRESHCLAM_CHECKS: "24"
+      CLAMD_CONF_StreamMaxLength: 25M
+      CLAMD_CONF_MaxFileSize: 25M
+      CLAMD_CONF_MaxScanSize: 100M
+      CLAMD_CONF_MaxRecursion: "16"
+      CLAMD_CONF_MaxFiles: "1000"
+      CLAMD_CONF_MaxScanTime: "30000"
+      CLAMD_CONF_AlertExceedsMax: "yes"
+      CLAMD_CONF_AlertEncrypted: "yes"
+      CLAMD_CONF_MaxThreads: "2"
+      CLAMD_CONF_MaxQueue: "4"
+      CLAMD_CONF_ConcurrentDatabaseReload: "no"
+    volumes:
+      - clamav_data:/var/lib/clamav
+    healthcheck:
+      test: ["CMD", "clamdcheck.sh"]
+      interval: 15s
+      timeout: 5s
+      start_period: 120s
+      retries: 20
+    restart: unless-stopped
+    networks: [app]
+
+  attachment-scan-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: ["python", "-m", "app.workers.attachment_scan"]
+    environment:
+      TRACKER_DATABASE_URL: ${TRACKER_DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-tracker}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-tracker}}
+      TRACKER_AUTH_SECRET_KEY: ${AUTH_SECRET_KEY:?Set AUTH_SECRET_KEY}
+      TRACKER_S3_ENDPOINT: minio:9000
+      TRACKER_S3_BUCKET: ${S3_BUCKET:-tracker-attachments}
+      TRACKER_S3_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      TRACKER_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD}
+      TRACKER_S3_SECURE: "false"
+      TRACKER_CLAMD_HOST: clamav
+      TRACKER_CLAMD_PORT: "3310"
+      TRACKER_ATTACHMENT_SCAN_INTERVAL_SECONDS: ${ATTACHMENT_SCAN_INTERVAL_SECONDS:-5}
+      TRACKER_ATTACHMENT_SCAN_TIMEOUT_SECONDS: ${ATTACHMENT_SCAN_TIMEOUT_SECONDS:-60}
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    depends_on:
+      backend:
+        condition: service_healthy
+      clamav:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [app]
+
   attachment-cleanup-worker:
     build:
       context: ./backend
@@ -156,6 +209,7 @@ volumes:
   postgres_data:
   redis_data:
   minio_data:
+  clamav_data:
 
 networks:
   app:

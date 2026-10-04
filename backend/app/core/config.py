@@ -13,6 +13,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     database_url: str
+    clamd_host: str = "clamav"
+    clamd_port: int = Field(default=3310, ge=1, le=65535)
+    attachment_scan_timeout_seconds: int = Field(default=60, ge=1, le=300)
+    attachment_scan_interval_seconds: int = Field(default=5, ge=1, le=300)
     s3_endpoint: str = "minio:9000"
     s3_bucket: str = Field(
         default="tracker-attachments", pattern=r"^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"

@@ -12,6 +12,7 @@ from app.models import User
 from app.models.auth_session import AuthSession, RefreshCredential
 from app.repositories.domain import DomainRepository
 from app.repositories.sessions import SessionRepository
+from app.services.audit import record_event
 from app.services.errors import InvalidCredentialsError
 from app.services.verification import is_expired
 
@@ -98,6 +99,13 @@ class SessionService:
         self.session.add(family)
         await self.session.flush()
         refresh = self._issue_refresh(family.id)
+        record_event(
+            self.session,
+            "login_succeeded",
+            actor_id=user.id,
+            target_type="session",
+            target_id=family.id,
+        )
         await self.session.commit()
         return create_access_token(user.id, family.id), refresh
 
@@ -142,6 +150,14 @@ class SessionService:
             raise invalid_session()
         if credential.used_at is not None:
             family.revoked_at = datetime.now(UTC)
+            record_event(
+                self.session,
+                "session_revoked_replay",
+                actor_id=None,
+                actor_kind="anonymous",
+                target_type="session",
+                target_id=family.id,
+            )
             await self.session.commit()  # Revocation must survive the following 401.
             raise invalid_session()
         credential.used_at = datetime.now(UTC)
@@ -154,7 +170,15 @@ class SessionService:
         family = await self.repository.get_session(session_id)
         if family is None or family.user_id != user_id:
             raise invalid_session()
-        family.revoked_at = datetime.now(UTC)
+        if family.revoked_at is None:
+            family.revoked_at = datetime.now(UTC)
+            record_event(
+                self.session,
+                "session_revoked",
+                actor_id=user_id,
+                target_type="session",
+                target_id=family.id,
+            )
         await self.session.commit()
 
     async def logout(self, token: str) -> None:

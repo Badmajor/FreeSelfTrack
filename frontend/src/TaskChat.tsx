@@ -29,6 +29,11 @@ export function TaskChat({ taskId, organizationId, focusCommentId }: { taskId: s
   const generation = useRef(0);
   const scroll = useRef<HTMLDivElement>(null);
   const bottom = useRef(true);
+  const pendingComments = useRef<string[]>([]);
+  useEffect(() => {
+    const displayed = focusedMessage ? [...messages, focusedMessage] : messages;
+    pendingComments.current = [...new Set(displayed.filter((item) => item.attachments.some((file) => file.state === "pending")).map((item) => item.id))];
+  }, [messages, focusedMessage]);
   const members = useQuery({ queryKey: ["organization-members", organizationId], queryFn: () => listOrganizationMembers(organizationId), enabled: !denied });
   const mentionSearch = text.match(/@([^@\n]*)$/)?.[1];
   const candidates = mentionSearch === undefined ? [] : (members.data ?? []).filter((member) => member.profile && !mentionIds.includes(member.id) && (member.profile.first_name + " " + member.profile.last_name).toLowerCase().includes(mentionSearch.toLowerCase()));
@@ -40,6 +45,7 @@ export function TaskChat({ taskId, organizationId, focusCommentId }: { taskId: s
     let alive = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let newest = 0;
+    let pendingCursor = 0;
     setLoading(true); setLoadingOlder(false); setCheckingFile(null); setError(""); setDenied(false); setMessages([]);
     const current = () => alive && generation.current === token;
     async function poll() {
@@ -50,6 +56,14 @@ export function TaskChat({ taskId, organizationId, focusCommentId }: { taskId: s
           newest = page.comments[page.comments.length - 1].sequence;
           setMessages((items) => merge(items, page.comments));
           if (bottom.current) requestAnimationFrame(toBottom); else setNewMessages(true);
+        }
+        // One pending comment per poll bounds extra requests even in a long chat.
+        const pending = pendingComments.current;
+        if (!page.has_more && pending.length) {
+          const updated = await getComment(taskId, pending[pendingCursor++ % pending.length]);
+          if (!current()) return;
+          setMessages((items) => items.map((item) => item.id === updated.id ? updated : item));
+          setFocusedMessage((item) => item?.id === updated.id ? updated : item);
         }
         setError("");
         timer = setTimeout(() => void poll(), page.has_more ? 0 : 3000);
@@ -168,7 +182,7 @@ function FileView({ file }: { file: ChatAttachment }) {
   }, [file.id, image]);
   async function download() { setBusy(true); setError(""); try { const blob = await getAttachment(file.id); const objectUrl = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = objectUrl; link.download = file.filename; link.click(); setTimeout(() => URL.revokeObjectURL(objectUrl), 1000); } catch (err) { setError(message(err)); } finally { setBusy(false); } }
   function closePreview() { setOpen(false); imageButton.current?.focus(); }
-  return <div className="chat-file">{image && url && <button ref={imageButton} className="chat-image-button" type="button" onClick={() => setOpen(true)} aria-label={`Open image ${file.filename}`}><img src={url} alt={file.filename} loading="lazy" /></button>}<button className="link-button" type="button" disabled={busy || !available} onClick={() => void download()}>{file.filename} ({Math.ceil(file.size / 1024)} KB)</button>{!available && <span role="status">{file.state === "pending" ? "Awaiting file review" : "File unavailable"}</span>}{error && <p className="error" role="alert">{error}</p>}{open && url && <ImageModal url={url} filename={file.filename} onClose={closePreview} />}</div>;
+  return <div className="chat-file">{image && url && <button ref={imageButton} className="chat-image-button" type="button" onClick={() => setOpen(true)} aria-label={`Open image ${file.filename}`}><img src={url} alt={file.filename} loading="lazy" /></button>}<button className="link-button" type="button" disabled={busy || !available} onClick={() => void download()}>{file.filename} ({Math.ceil(file.size / 1024)} KB)</button>{!available && <span role="status">{file.state === "pending" ? "Scanning file" : "File unavailable"}</span>}{error && <p className="error" role="alert">{error}</p>}{open && url && <ImageModal url={url} filename={file.filename} onClose={closePreview} />}</div>;
 }
 
 function ImageModal({ url, filename, onClose }: { url: string; filename: string; onClose: () => void }) {

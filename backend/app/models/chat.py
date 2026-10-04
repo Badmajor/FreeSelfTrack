@@ -5,6 +5,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -62,6 +63,7 @@ class Attachment(Base):
     sha256: Mapped[str | None] = mapped_column(String(64))
     state: Mapped[str] = mapped_column(String(16), default="pending", server_default="pending")
     __table_args__ = (
+        Index("ix_attachments_state_id", "state", "id"),
         UniqueConstraint("object_key", name="uq_attachment_object_key"),
         UniqueConstraint("comment_id", "position", name="uq_attachment_position"),
         CheckConstraint("position >= 0 AND position < 5", name="ck_attachment_position"),

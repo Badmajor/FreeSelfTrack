@@ -28,13 +28,15 @@ class SessionRepository:
     async def get_refresh(self, digest: str) -> RefreshCredential | None:
         return await self.session.get(RefreshCredential, digest, populate_existing=True)
 
-    async def revoke_all(self, user_id: UUID, now: datetime) -> None:
-        await self.session.execute(
+    async def revoke_all(self, user_id: UUID, now: datetime) -> list[UUID]:
+        revoked = await self.session.scalars(
             update(AuthSession)
             .where(AuthSession.user_id == user_id, AuthSession.revoked_at.is_(None))
             .values(revoked_at=now)
+            .returning(AuthSession.id)
         )
         await self.session.execute(delete(PasswordReset).where(PasswordReset.user_id == user_id))
+        return list(revoked)
 
     async def owns_resources(self, user_id: UUID) -> bool:
         # Deleted resources are restorable and still have an owner.

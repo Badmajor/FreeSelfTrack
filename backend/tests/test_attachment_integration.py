@@ -139,7 +139,7 @@ def test_native_bucket_restart_private_access_and_streaming(deployment):
 
 async def test_legacy_migration_review_and_cleanup_lock(deployment, client, monkeypatch):
     _, storage, url, _ = deployment
-    migrate(url, "0014_auth_sessions")
+    migrate(url, "head")
     engine = create_async_engine(url)
     factory = async_sessionmaker(engine, expire_on_commit=False)
 
@@ -152,6 +152,8 @@ async def test_legacy_migration_review_and_cleanup_lock(deployment, client, monk
     monkeypatch.setattr("app.api.chat.get_storage", lambda: storage)
     try:
         owner, member, _, task, _ = await setup_chat(client)
+        # Seed through the current API, then simulate the pre-object-storage schema.
+        migrate(url, "0014_auth_sessions", "downgrade")
         attachment_id, comment_id = uuid4(), uuid4()
         payload = b"legacy attachment bytes"
         async with factory() as session:
@@ -209,9 +211,6 @@ async def test_legacy_migration_review_and_cleanup_lock(deployment, client, monk
             assert (
                 await client.get(f"/api/attachments/{attachment_id}/content", headers=owner)
             ).status_code == 404
-            await maintenance.review(attachment_id, digest, "ready")
-            response = await client.get(f"/api/attachments/{attachment_id}/content", headers=member)
-            assert response.content == payload
             assert await maintenance.cleanup() >= 1  # Failed verification's abandoned object.
             assert storage.client.stat_object(storage.bucket, key).size == len(payload)
         # Before contract, the retained legacy bytes allow a schema rollback.
@@ -227,6 +226,20 @@ async def test_legacy_migration_review_and_cleanup_lock(deployment, client, monk
         migrate(url, "head")
         uploaded = await post(client, task, owner, files=[("files", ("new.txt", b"new"))])
         assert uploaded.status_code == 201
+        # Concurrent scanners claim distinct rows; rollback makes a claim retryable.
+        from app.repositories.attachment_storage import AttachmentStorageRepository
+
+        async with factory() as first, factory() as second:
+            claimed = await AttachmentStorageRepository(first).next_pending()
+            other = await asyncio.wait_for(AttachmentStorageRepository(second).next_pending(), 2)
+            assert claimed is not None and other is not None
+            assert claimed.id != other.id
+            claimed_id = claimed.id
+            await first.rollback()
+            await second.rollback()
+            retried = await AttachmentStorageRepository(second).next_pending()
+            assert retried.id == claimed_id
+            await second.rollback()
         # An in-flight publisher holds a shared transaction lock. Cleanup cannot
         # delete its object until publication commits or rolls back.
         incomplete_key = "attachments/" + str(uuid4())
@@ -248,6 +261,12 @@ async def test_legacy_migration_review_and_cleanup_lock(deployment, client, monk
                 ).uploads
                 == []
             )
+        # Runtime review requires the current audit schema; legacy transfer remains usable at 0015.
+        async with factory() as session:
+            maintenance = AttachmentMaintenance(session, storage)
+            await maintenance.review(attachment_id, digest, "ready")
+            response = await client.get(f"/api/attachments/{attachment_id}/content", headers=member)
+            assert response.content == payload
     finally:
         await engine.dispose()
 
@@ -334,5 +353,43 @@ async def test_compose_http_upload_review_and_download(deployment):
             assert "sandbox" in response.headers["content-security-policy"]
             assert response.headers["content-disposition"].startswith("attachment;")
             assert (await http.get(content_url)).status_code == 401
+            if os.getenv("RUN_ATTACHMENT_SCAN_STACK") == "1":
+                from test_attachment_scan_integration import EICAR
+
+                compose(
+                    "up",
+                    "-d",
+                    "--build",
+                    "--wait",
+                    "--wait-timeout",
+                    "240",
+                    "clamav",
+                    "attachment-scan-worker",
+                )
+                scanned = await post(
+                    http,
+                    task,
+                    headers,
+                    files=[("files", ("clean.txt", b"clean")), ("files", ("eicar.txt", EICAR))],
+                )
+                assert scanned.status_code == 201, scanned.text
+                for _ in range(60):
+                    message = (
+                        await http.get(
+                            f"/api/tasks/{task['id']}/comments/{scanned.json()['id']}",
+                            headers=headers,
+                        )
+                    ).json()
+                    states = {item["filename"]: item["state"] for item in message["attachments"]}
+                    if "pending" not in states.values():
+                        break
+                    await asyncio.sleep(0.5)
+                assert states == {"clean.txt": "ready", "eicar.txt": "infected"}
+                for item in message["attachments"]:
+                    result = await http.get(
+                        f"/api/attachments/{item['id']}/content", headers=headers
+                    )
+                    assert result.status_code == (200 if item["state"] == "ready" else 404)
+
     finally:
         await engine.dispose()

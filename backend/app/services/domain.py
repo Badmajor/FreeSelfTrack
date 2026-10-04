@@ -49,6 +49,7 @@ from app.schemas.domain import (
     UnreadCountResponse,
     WatcherRequest,
 )
+from app.services.audit import record_event
 from app.services.errors import (
     ConflictError,
     InvalidWorkflowError,
@@ -79,12 +80,42 @@ class DomainService:
         self.session = session
         self.repository = DomainRepository(session)
 
+    async def _add_organization_member(
+        self, actor_id: UUID, organization_id: UUID, member_id: UUID
+    ) -> None:
+        if await self.repository.get_organization_member(organization_id, member_id) is None:
+            await self.repository.add_organization_member(organization_id, member_id)
+            record_event(
+                self.session,
+                "membership_added",
+                actor_id=actor_id,
+                target_type="organization",
+                target_id=organization_id,
+                organization_id=organization_id,
+                member_id=member_id,
+            )
+
+    async def _add_project_member(self, actor_id: UUID, project_id: UUID, member_id: UUID) -> None:
+        if await self.repository.get_project_member(project_id, member_id) is None:
+            project = await self.repository.get_project(project_id)
+            assert project is not None
+            await self.repository.add_project_member(project_id, member_id)
+            record_event(
+                self.session,
+                "membership_added",
+                actor_id=actor_id,
+                target_type="project",
+                target_id=project_id,
+                organization_id=project.organization_id,
+                member_id=member_id,
+            )
+
     async def create_organization(self, user_id: UUID, data: OrganizationCreate) -> Organization:
         await self._lock_active_owner(user_id)
         organization = Organization(owner_id=user_id, name=data.name)
         self.session.add(organization)
         await self.session.flush()
-        await self.repository.add_organization_member(organization.id, user_id)
+        await self._add_organization_member(user_id, organization.id, user_id)
         await self.session.commit()
         return organization
 
@@ -114,7 +145,7 @@ class DomainService:
         self.session.add(project)
         await self.session.flush()
         self.session.add(ProjectTaskSequence(project_id=project.id, next_number=1))
-        await self.repository.add_project_member(project.id, user_id)
+        await self._add_project_member(user_id, project.id, user_id)
         for position, name in enumerate(DEFAULT_STATUSES):
             self.session.add(
                 ProjectStatus(
@@ -164,7 +195,7 @@ class DomainService:
         organization = await self.get_organization(user_id, organization_id)
         self._require_owner(user_id, organization.owner_id)
         member_user = await self._find_user(data.email)
-        await self.repository.add_organization_member(organization_id, member_user.id)
+        await self._add_organization_member(user_id, organization_id, member_user.id)
         await self.session.commit()
         return member_user
 
@@ -182,6 +213,15 @@ class DomainService:
         if member_user is None:
             raise NotFoundError("Organization member not found")
         await self.repository.remove_organization_member(organization_id, member_id)
+        record_event(
+            self.session,
+            "membership_removed",
+            actor_id=user_id,
+            target_type="organization",
+            target_id=organization_id,
+            organization_id=organization_id,
+            member_id=member_id,
+        )
         await self.session.commit()
         return member_user
 
@@ -194,6 +234,17 @@ class DomainService:
         await self._lock_active_owner(target.id)
         if await self.repository.get_organization_member(organization_id, target.id) is None:
             raise ConflictError("New owner must be an organization member")
+        if organization.owner_id != target.id:
+            record_event(
+                self.session,
+                "ownership_transferred",
+                actor_id=user_id,
+                target_type="organization",
+                target_id=organization_id,
+                organization_id=organization_id,
+                previous_owner_id=organization.owner_id,
+                owner_id=target.id,
+            )
         organization.owner_id = target.id
         await self.session.commit()
         return organization
@@ -206,15 +257,39 @@ class DomainService:
         self._require_confirmation(data)
         deleted_at = datetime.now(UTC)
         organization.deleted_at = deleted_at
+        record_event(
+            self.session,
+            "resource_deleted",
+            actor_id=user_id,
+            target_type="organization",
+            target_id=organization_id,
+            organization_id=organization_id,
+        )
         projects = await self.repository.list_projects_for_organization(organization_id)
         for project in projects:
             project.deleted_at = deleted_at
+            record_event(
+                self.session,
+                "resource_deleted",
+                actor_id=user_id,
+                target_type="project",
+                target_id=project.id,
+                organization_id=organization_id,
+            )
         await self.session.commit()
 
     async def restore_organization(self, user_id: UUID, organization_id: UUID) -> Organization:
         organization = await self._get_deleted_organization(organization_id)
         self._require_owner(user_id, organization.owner_id)
         organization.deleted_at = None
+        record_event(
+            self.session,
+            "resource_restored",
+            actor_id=user_id,
+            target_type="organization",
+            target_id=organization_id,
+            organization_id=organization_id,
+        )
         await self.session.commit()
         return organization
 
@@ -232,7 +307,7 @@ class DomainService:
             project.organization_id, member_user.id
         ):
             raise ConflictError("Project member must belong to the project organization")
-        await self.repository.add_project_member(project_id, member_user.id)
+        await self._add_project_member(user_id, project_id, member_user.id)
         await self.session.commit()
         return member_user
 
@@ -248,6 +323,15 @@ class DomainService:
         if member_user is None:
             raise NotFoundError("Project member not found")
         await self.repository.remove_project_member(project_id, member_id)
+        record_event(
+            self.session,
+            "membership_removed",
+            actor_id=user_id,
+            target_type="project",
+            target_id=project_id,
+            organization_id=project.organization_id,
+            member_id=member_id,
+        )
         await self.session.commit()
         return member_user
 
@@ -260,6 +344,17 @@ class DomainService:
         await self._lock_active_owner(target.id)
         if await self.repository.get_project_member(project_id, target.id) is None:
             raise ConflictError("New owner must be a project member")
+        if project.owner_id != target.id:
+            record_event(
+                self.session,
+                "ownership_transferred",
+                actor_id=user_id,
+                target_type="project",
+                target_id=project_id,
+                organization_id=project.organization_id,
+                previous_owner_id=project.owner_id,
+                owner_id=target.id,
+            )
         project.owner_id = target.id
         await self.session.commit()
         return project
@@ -269,6 +364,14 @@ class DomainService:
         self._require_owner(user_id, project.owner_id)
         self._require_confirmation(data)
         project.deleted_at = datetime.now(UTC)
+        record_event(
+            self.session,
+            "resource_deleted",
+            actor_id=user_id,
+            target_type="project",
+            target_id=project_id,
+            organization_id=project.organization_id,
+        )
         await self.session.commit()
 
     async def restore_project(self, user_id: UUID, project_id: UUID) -> Project:
@@ -278,6 +381,14 @@ class DomainService:
         if organization is None or organization.deleted_at is not None:
             raise ConflictError("Restore the project organization first")
         project.deleted_at = None
+        record_event(
+            self.session,
+            "resource_restored",
+            actor_id=user_id,
+            target_type="project",
+            target_id=project_id,
+            organization_id=project.organization_id,
+        )
         await self.session.commit()
         return project
 
@@ -413,10 +524,10 @@ class DomainService:
         sequence.next_number += 1
         slug = f"{project_slug_prefix(project.name)}-{sequence_number}"
         await self._require_organization_user(project.organization_id, reporter_id)
-        await self.repository.add_project_member(project_id, reporter_id)
+        await self._add_project_member(user_id, project_id, reporter_id)
         if data.assignee_id is not None:
             await self._require_organization_user(project.organization_id, data.assignee_id)
-            await self.repository.add_project_member(project_id, data.assignee_id)
+            await self._add_project_member(user_id, project_id, data.assignee_id)
         if (
             data.story_points is not None or data.due_date is not None or data.priority is not None
         ) and user_id not in {
@@ -552,7 +663,7 @@ class DomainService:
             if data.reporter_id is None:
                 raise InvalidWorkflowError("A task must have a reporter")
             await self._require_organization_user(project.organization_id, data.reporter_id)
-            await self.repository.add_project_member(task.project_id, data.reporter_id)
+            await self._add_project_member(user_id, task.project_id, data.reporter_id)
             if data.reporter_id != task.reporter_id:
                 old_reporter = await self._display_name(task.reporter_id)
                 new_reporter = await self._display_name(data.reporter_id)
@@ -571,7 +682,7 @@ class DomainService:
             self._require_assignee_permission(user_id, task, project.owner_id, data.assignee_id)
             if data.assignee_id is not None:
                 await self._require_organization_user(project.organization_id, data.assignee_id)
-                await self.repository.add_project_member(task.project_id, data.assignee_id)
+                await self._add_project_member(user_id, task.project_id, data.assignee_id)
             if data.assignee_id != task.assignee_id:
                 old_assignee = (
                     await self._display_name(task.assignee_id) if task.assignee_id else None
@@ -775,7 +886,7 @@ class DomainService:
             self._require_watcher_manager(user_id, task, project.owner_id)
         await self._require_organization_user(project.organization_id, target_id)
         existing = await self.repository.get_task_watcher(task.id, target_id)
-        await self.repository.add_project_member(task.project_id, target_id)
+        await self._add_project_member(user_id, task.project_id, target_id)
         await self.repository.add_task_watcher(task.id, target_id)
         if existing is None:
             await self._record_history(

@@ -22,6 +22,7 @@ from app.schemas.domain import (
     RegisterRequest,
     VerifyEmailRequest,
 )
+from app.services.audit import record_event
 from app.services.auth_protection import normalize_email, validate_password
 from app.services.errors import ConflictError, InvalidCredentialsError, NotFoundError
 from app.services.sessions import SessionService, invalid_session, reset_token, token_digest
@@ -100,6 +101,15 @@ class AuthService:
             user.password_hash if user else get_settings().auth_dummy_hash,
         )
         if user is None or not user.is_active or not valid:
+            record_event(
+                self.session,
+                "login_failed",
+                actor_id=None,
+                actor_kind="anonymous",
+                target_type="user",
+                target_id=user.id if user else None,
+            )
+            await self.session.commit()
             logger.info("auth outcome=credentials_invalid")
             raise InvalidCredentialsError("Invalid email or password")
         logger.info("auth outcome=login_success")
@@ -132,11 +142,23 @@ class AuthService:
             raise InvalidCredentialsError("Invalid email or password")
         return user
 
+    async def _revoke_all(self, user_id: UUID) -> None:
+        for session_id in await SessionRepository(self.session).revoke_all(
+            user_id, datetime.now(UTC)
+        ):
+            record_event(
+                self.session,
+                "session_revoked",
+                actor_id=user_id,
+                target_type="session",
+                target_id=session_id,
+            )
+
     async def change_password(self, user_id: UUID, current: str, new: str) -> None:
         user = await self.confirm_password(user_id, current)
         await validate_password(new)
         user.password_hash = await run_in_threadpool(password_hash.hash, new)
-        await SessionRepository(self.session).revoke_all(user.id, datetime.now(UTC))
+        await self._revoke_all(user.id)
         await self.session.commit()
         logger.info("auth outcome=password_changed")
 
@@ -146,7 +168,14 @@ class AuthService:
         if await repository.owns_resources(user.id):
             raise ConflictError("Transfer organization and project ownership before deactivation")
         user.is_active = False
-        await repository.revoke_all(user.id, datetime.now(UTC))
+        record_event(
+            self.session,
+            "account_deactivated",
+            actor_id=user_id,
+            target_type="user",
+            target_id=user_id,
+        )
+        await self._revoke_all(user.id)
         await self.session.commit()
         logger.info("auth outcome=account_deactivated")
 
@@ -195,6 +224,6 @@ class AuthService:
         if not await repository.consume_reset(reset_id, datetime.now(UTC)):
             raise invalid_session()
         user.password_hash = hashed
-        await repository.revoke_all(user.id, datetime.now(UTC))
+        await self._revoke_all(user.id)
         await self.session.commit()
         logger.info("auth outcome=password_reset_completed")
