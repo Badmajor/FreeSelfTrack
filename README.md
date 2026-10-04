@@ -69,7 +69,7 @@ Current features include:
 * task watchers;
 * notifications;
 * task history;
-* file attachments;
+* file attachments in private MinIO storage with automatic ClamAV scanning;
 * task management;
 * organization and project restoration;
 * background processing of deadline notifications.
@@ -634,6 +634,12 @@ Registration mail worker logs:
 docker compose logs -f registration-mail-worker
 ```
 
+Attachment scanning and cleanup:
+
+```bash
+docker compose logs -f clamav attachment-scan-worker attachment-cleanup-worker
+```
+
 View the last 100 lines from the backend:
 
 ```bash
@@ -810,6 +816,12 @@ Find the database container:
 docker compose ps
 ```
 
+Before backup or restore, stop application writes:
+
+```bash
+docker compose stop backend deadline-worker registration-mail-worker attachment-scan-worker attachment-cleanup-worker
+```
+
 Create a SQL backup:
 
 ```bash
@@ -823,14 +835,6 @@ To restore the database:
 cat freeselftrack-backup.sql | \
   docker compose exec -T db \
   psql -U tracker tracker
-```
-
-> Before restoring a database, it is recommended to stop the backend and all workers so that the application does not modify the database during the restore operation.
-
-For example:
-
-```bash
-docker compose stop backend deadline-worker registration-mail-worker attachment-scan-worker attachment-cleanup-worker
 ```
 
 Restore PostgreSQL and MinIO from the coordinated backup, then start the services:
@@ -926,6 +930,19 @@ uv run python -m app.workers.registration_mail
 ```
 
 The API and worker must share `TRACKER_DATABASE_URL` and `TRACKER_AUTH_SECRET_KEY`. For the default Vite setup, use `TRACKER_PUBLIC_APP_URL=http://localhost:5173`.
+
+### Attachments in Local Development
+
+Configure MinIO, ClamAV and `TRACKER_S3_*` / `TRACKER_CLAMD_*` settings using the
+[operations guide](docs/development/attachments.md). In separate terminals from `backend/`, run:
+
+```bash
+uv run python -m app.workers.attachment_scan
+```
+
+```bash
+uv run python -m app.workers.attachment_cleanup
+```
 
 ## Frontend
 

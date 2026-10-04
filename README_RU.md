@@ -67,7 +67,7 @@ FreeSelfTrack предназначен для управления проект�
 * наблюдатели задач;
 * уведомления;
 * история изменений задач;
-* вложения к комментариям;
+* вложения к комментариям в приватном MinIO с автоматической проверкой ClamAV;
 * поиск и работа с задачами;
 * восстановление удалённых организаций и проектов;
 * фоновая обработка уведомлений о сроках.
@@ -634,6 +634,12 @@ Worker отправки писем:
 docker compose logs -f registration-mail-worker
 ```
 
+Проверка и очистка вложений:
+
+```bash
+docker compose logs -f clamav attachment-scan-worker attachment-cleanup-worker
+```
+
 Последние 100 строк backend:
 
 ```bash
@@ -807,6 +813,12 @@ SQL-дамп не содержит вложений: сохраняйте и в�
 docker compose ps
 ```
 
+Перед резервным копированием или восстановлением остановите запись:
+
+```bash
+docker compose stop backend deadline-worker registration-mail-worker attachment-scan-worker attachment-cleanup-worker
+```
+
 Создать SQL-дамп:
 
 ```bash
@@ -820,14 +832,6 @@ docker compose exec -T db \
 cat freeselftrack-backup.sql | \
   docker compose exec -T db \
   psql -U tracker tracker
-```
-
-> Перед восстановлением базы данных рекомендуется остановить backend и все worker, чтобы приложение не изменяло данные во время восстановления.
-
-Например:
-
-```bash
-docker compose stop backend deadline-worker registration-mail-worker attachment-scan-worker attachment-cleanup-worker
 ```
 
 После восстановления PostgreSQL и MinIO из согласованной копии:
@@ -923,6 +927,19 @@ uv run python -m app.workers.registration_mail
 ```
 
 У API и worker должны совпадать `TRACKER_DATABASE_URL` и `TRACKER_AUTH_SECRET_KEY`. Для Vite по умолчанию укажите `TRACKER_PUBLIC_APP_URL=http://localhost:5173`.
+
+### Вложения при локальной разработке
+
+Настройте MinIO, ClamAV и переменные `TRACKER_S3_*` / `TRACKER_CLAMD_*` по
+[инструкции](docs/development/attachments.md). В отдельных терминалах из `backend/` запустите:
+
+```bash
+uv run python -m app.workers.attachment_scan
+```
+
+```bash
+uv run python -m app.workers.attachment_cleanup
+```
 
 ## Frontend
 
