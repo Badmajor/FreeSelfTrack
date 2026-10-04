@@ -718,16 +718,29 @@ export function sendComment(
     body,
   });
 }
-export async function getAttachment(
-  id: string,
-  preview = false,
-): Promise<Blob> {
-  const response = await authenticatedRequest(
-    `/attachments/${id}/content?preview=${preview}`,
-  );
-  if (!response.ok)
-    throw new ApiError("Attachment unavailable", response.status);
-  return response.blob();
+// Hold the slot until the response body is consumed, not just until headers arrive.
+let attachmentQueue: Promise<unknown> = Promise.resolve();
+export function getAttachment(id: string, preview = false): Promise<Blob> {
+  const started = generation;
+  const download = attachmentQueue.then(async () => {
+    for (let attempt = 0; ; attempt++) {
+      if (started !== generation) throw new ApiError("Session ended", 401);
+      const response = await authenticatedRequest(
+        `/attachments/${id}/content?preview=${preview}`,
+      );
+      if (response.status === 429 && attempt < 3) {
+        const seconds = Number(response.headers.get("Retry-After") ?? "1");
+        await response.body?.cancel();
+        const delay = Number.isFinite(seconds) ? Math.min(30, Math.max(1, seconds)) : 1;
+        await new Promise((resolve) => setTimeout(resolve, delay * 1000));
+        continue;
+      }
+      if (!response.ok) throw new ApiError("Attachment unavailable", response.status);
+      return response.blob();
+    }
+  });
+  attachmentQueue = download.catch(() => undefined);
+  return download;
 }
 export function getProject(id: string): Promise<Project> {
   return request<Project>(`/projects/${id}`);
