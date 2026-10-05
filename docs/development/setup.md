@@ -1,5 +1,10 @@
 # Development Setup
 
+> TASK-029 defines a future administrative release; it has not been implemented.
+> The instructions below describe the current deployment. For the planned removal of
+> registration/reset/deactivation and required ADMIN_* bootstrap, see the
+> [migration plan](../architecture/administration-migration.md).
+
 ## Docker Compose
 
 Docker Compose starts the complete local stack:

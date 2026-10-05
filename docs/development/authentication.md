@@ -1,5 +1,10 @@
 # Authentication operations (TASK-021)
 
+> TASK-029 defines a future administrative release; it has not been implemented.
+> The instructions below describe the current deployment. For the planned removal of
+> registration/reset/deactivation and required ADMIN_* bootstrap, see the
+> [migration plan](../architecture/administration-migration.md).
+
 ## Deployment and compatibility
 
 Apply `uv run alembic upgrade head` and deploy API and frontend together. Migration

@@ -1,3 +1,4 @@
+from app.models.administrative_audit import AdministrativeAuditEvent as AdministrativeAuditEvent
 from app.models.audit import SecurityEvent as SecurityEvent
 from app.models.auth_session import AuthSession as AuthSession
 from app.models.auth_session import PasswordReset as PasswordReset

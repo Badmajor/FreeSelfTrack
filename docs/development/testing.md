@@ -114,3 +114,79 @@ PostgreSQL 16 container with synthetic credentials and removes it after the test
 Docker and `postgres:16-alpine`. It checks upgrade/downgrade/upgrade, application-role history
 inserts, rollback, and UPDATE/DELETE/TRUNCATE/cascade rejection on real PostgreSQL. It never
 migrates or cleans the shared stack. Without the flag this test explicitly skips.
+
+## Administration contract design (TASK-029; documentation only)
+
+The target behavior is specified in [ADR-014](../architecture/decisions/014-administration-membership-and-archive.md),
+[access matrix and paper scenarios](../architecture/administration-access.md),
+[API contracts](../architecture/api.md#administration-target) and
+[migration plan](../architecture/administration-migration.md). It is **not implemented**.
+TASK-029 validation: local Markdown links/anchors introduced by the change, task dependency
+DAG (029–038), requirement-to-stage mapping, role/state scenarios and `git diff --check`.
+Application tests are not required for this documentation-only stage. Architectural/product/task
+folders are currently Git-ignored; compare their before/after files too, because ordinary git
+diff does not include them. Existing unrelated broken links are not a reason to rewrite history.
+
+Future implementation checks must replace conflicting old expectations, while preserving
+unaffected security coverage:
+
+* 030: PostgreSQL administrative-audit INSERT/rollback and forbidden UPDATE/DELETE/TRUNCATE,
+  multi-field aggregation, distinct targets, excluded credentials/email/IP and no-op behavior.
+* 031: empty/nonempty ADMIN_*, non-EmailStr config login, short/config password compatibility,
+  repeat/concurrent bootstrap, admin switch, owner backfill including inactive/archived data;
+  no owner/last-manager constraint. Update existing owner workflow tests to SA/OM/PM.
+* 032: registration/reset/deactivate disabled including old signed actions, create+membership
+  atomicity, temporary password repeated login and restricted API enumeration, reset/revoke,
+  global OM block including equal-level targets, protected admin, unblock without grants.
+* 033: active global maximum role and local scope independently, last-role removal, unique
+  membership, preserved assignments/contextual reasons, re-add without assignment history.
+* 034: all matrix read/search/board/history/chat/link/file paths; changed reporter/assignee
+  candidates already in org/project; watcher/mention read candidates without autojoin;
+  direct forged IDs and membership revocation between selection and commit; workflow FK.
+* 035: archived-only retained read, no mutations/notifications for any role, pending scanner
+  waits for active parents, cascade rollback, restore parent order and whole-org membership
+  invalidation; concurrency against task creation/comment/login/notification/member addition.
+* 036: authenticated user cards/all active membership names without granting resource access,
+  self/SA profile, latest six-hour email token, expiry/replay/races/unique email, local SMTP sink,
+  direct admin email and config-admin protection; token/password absence in UI storage/logs.
+* 037: per-entity authorization on every page, user audit self/SA only, fixed 20 entries,
+  same timestamps with UUID ordering, insertion between pages, empty pages, no global API.
+* 038: disposable PostgreSQL upgrade from legacy + clean install; preserve TaskHistory,
+  SecurityEvent, workflow, task IDs/participants, chat and MinIO references. Rehearse backups
+  and rollback limitations, coordinated API/SPA/SMTP/deadline/scanner/cleanup startup; run
+  full backend/frontend validation and applicable existing real-service integration suites.
+
+Existing test modules to adapt include `test_task_domain.py`, `test_task_planning.py`,
+`test_chat.py`, `test_sessions.py`, `test_auth.py`, `test_audit.py` and their integration tests;
+frontend MembersPage/Workspace/ParticipantMutationErrors/SessionLifecycle/TaskChat suites.
+Do not mark their existing runs as verification of target behavior. Use the commands above
+from backend/frontend and record actual results in the owning implementation task. Migration
+numbers are selected from actual head; TASK-029 has no runnable new migration to validate.
+
+
+## Administrative audit foundation (TASK-030)
+
+Implemented producer contract and rollback/immutability limits:
+[administrative-audit.md](administrative-audit.md). TASK-031–036 producers and TASK-037
+HTTP/UI remain pending; the target-model scenarios above are not all implemented.
+
+```sh
+# backend/
+uv run pytest -q tests/test_administrative_audit.py
+RUN_ADMINISTRATIVE_AUDIT_INTEGRATION=1 RUN_AUDIT_INTEGRATION=1 \
+  uv run pytest -q tests/test_administrative_audit_integration.py tests/test_audit_integration.py
+```
+
+37 focused tests cover allowlisted actions/fields/typed values, rejected sensitive data,
+user/bootstrap identity, aggregation/no-op, entity separation, shared operation correlation,
+rollback/failed audit insertion and fixed 20-row keyset pagination with equal timestamps and
+intervening inserts. The new PostgreSQL test uses its own disposable container. It seeds 0018
+with real old events, validates 0019 upgrade/downgrade/upgrade without altering old journals,
+restricted-role INSERT/atomic rollback/UPDATE/DELETE/TRUNCATE protection and safe refusal of
+nonempty downgrade. It does not touch the shared database. The existing TASK-025 integration
+test must also pass at the new migration head. Without opt-in flags both tests skip explicitly.
+
+Use UV_PROJECT_ENVIRONMENT and UV_CACHE_DIR under /tmp if the workspace .venv/cache is
+unavailable. A dedicated pytest --basetemp under /tmp also isolates local Redis Unix sockets.
+Application migrations were exercised only in disposable PostgreSQL; no new frontend checks
+are required because TASK-030 adds no frontend or HTTP endpoints.
