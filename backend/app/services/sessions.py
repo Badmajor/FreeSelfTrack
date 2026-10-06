@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.models import User
 from app.models.auth_session import AuthSession, RefreshCredential
+from app.repositories.administration import AdministrationRepository
 from app.repositories.domain import DomainRepository
 from app.repositories.sessions import SessionRepository
 from app.services.audit import record_event
@@ -129,7 +130,26 @@ class SessionService:
             raise invalid_session()
         return user, family
 
+    async def recheck_request_session(self, user_id: UUID) -> None:
+        """After a lifecycle lock, reject a request authenticated before revocation.
+
+        Internal service callers have no HTTP session; they still validate the actor.
+        The ID is set by authentication, never taken from domain request input.
+        """
+        session_id = self.session.info.get("authenticated_session_id")
+        if session_id is None:
+            return
+        family = await self.repository.get_session(session_id)
+        if (
+            family is None
+            or family.user_id != user_id
+            or family.revoked_at is not None
+            or is_expired(family.expires_at)
+        ):
+            raise invalid_session()
+
     async def refresh(self, token: str) -> tuple[str, str, User]:
+        await AdministrationRepository(self.session).lock_lifecycle(shared=True)
         credential = await self.repository.get_refresh(token_digest(token))
         if credential is None:
             raise invalid_session()

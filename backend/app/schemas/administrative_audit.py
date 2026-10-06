@@ -45,9 +45,15 @@ class AuditSchema(BaseModel):
 class WorkflowStatusSnapshot(AuditSchema):
     id: UUID
     name: str = Field(max_length=120)
-    position: int = Field(ge=0)
+    position: int
     is_active: bool
     is_completed: bool
+
+    @model_validator(mode="after")
+    def active_position(self) -> Self:
+        if self.is_active and self.position < 0:
+            raise ValueError("Active status position must be nonnegative")
+        return self
 
 
 class AuditChange(AuditSchema):

@@ -2,7 +2,7 @@ from pydantic import BaseModel, EmailStr, Field
 
 
 class PasswordConfirmation(BaseModel):
-    current_password: str = Field(min_length=1, max_length=128)
+    current_password: str = Field(min_length=1)
 
 
 class PasswordChange(PasswordConfirmation):

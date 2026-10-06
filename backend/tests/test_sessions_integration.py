@@ -10,7 +10,7 @@ from app.models.auth_session import PasswordReset
 from app.schemas.domain import LoginRequest, OrganizationCreate
 from app.services.auth import AuthService
 from app.services.domain import DomainService
-from app.services.errors import ConflictError, InvalidCredentialsError, NotFoundError
+from app.services.errors import InvalidCredentialsError, PermissionDeniedError
 from app.services.sessions import SessionService, reset_token
 from tests.test_auth_integration import (
     PASSWORD,
@@ -96,7 +96,7 @@ async def test_postgres_reset_is_single_use_under_concurrency(postgres_sessions)
     assert sum(isinstance(r, InvalidCredentialsError) for r in results) == 5
 
 
-async def test_postgres_deactivation_serializes_with_ownership_creation(postgres_sessions):
+async def test_postgres_employee_cannot_create_organization_or_self_deactivate(postgres_sessions):
     _, user_id, _, _ = await create_account(postgres_sessions)
 
     async def create():
@@ -112,9 +112,6 @@ async def test_postgres_deactivation_serializes_with_ownership_creation(postgres
     created, deactivated = await asyncio.gather(create(), deactivate(), return_exceptions=True)
     async with postgres_sessions() as session:
         user = await session.get(User, user_id)
-        if user.is_active:
-            assert isinstance(deactivated, ConflictError)
-            assert not isinstance(created, Exception)
-        else:
-            assert isinstance(created, NotFoundError)
-            assert deactivated is None
+        assert user.is_active
+        assert isinstance(deactivated, PermissionDeniedError)
+        assert isinstance(created, PermissionDeniedError)

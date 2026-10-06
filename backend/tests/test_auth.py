@@ -64,7 +64,8 @@ async def test_registration_is_uniform_and_requires_confirmation(client, db_sess
     assert success.status_code == 200
     assert success.json()["user"]["email"] == "user@example.com"
     assert success.json()["user"]["profile"]["first_name"] == "Test"
-    assert "password" not in success.text
+    assert "password_hash" not in success.text
+    assert "password" not in success.json()["user"]
     duplicate = await register(client, "USER@example.com", password="another safe passphrase")
     assert duplicate.status_code == first.status_code
     assert duplicate.json() == first.json()
@@ -134,7 +135,7 @@ async def test_equivalent_hash_work_and_uniform_401(client, db_session):
             get_settings().auth_dummy_hash,
             user.password_hash,
         ]
-    responses.append(await login(client, password=""))
+    assert (await login(client, password="")).status_code == 422
     assert all(r.status_code == 401 for r in responses)
     assert all(r.json() == responses[0].json() for r in responses)
 

@@ -1,4 +1,6 @@
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from urllib.parse import urlsplit
 
 from fastapi import Request
@@ -15,6 +17,8 @@ from app.api.upload_limit import ChatUploadLimit
 from app.core.audit import AuditCorrelation
 from app.core.browser_security import SecureFastAPI
 from app.core.config import get_settings
+from app.db.session import SessionFactory
+from app.services.bootstrap import bootstrap_administrator
 
 settings = get_settings()
 # Uvicorn configures its own loggers, not the root logger. Enable sanitized auth
@@ -25,7 +29,18 @@ if not security_logger.handlers:
     security_handler = logging.StreamHandler()
     security_handler.setFormatter(logging.Formatter("%(levelname)s %(name)s %(message)s"))
     security_logger.addHandler(security_handler)
-app = SecureFastAPI(title="FreeSelfTrack API", version="0.1.0", docs_url=None, redoc_url=None)
+
+
+@asynccontextmanager
+async def lifespan(application: SecureFastAPI) -> AsyncIterator[None]:
+    async with SessionFactory() as session:
+        await bootstrap_administrator(session, settings)
+    yield
+
+
+app = SecureFastAPI(
+    lifespan=lifespan, title="FreeSelfTrack API", version="0.1.0", docs_url=None, redoc_url=None
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,

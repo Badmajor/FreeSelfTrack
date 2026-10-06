@@ -42,8 +42,8 @@ class VerificationResponse(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    email: EmailStr
-    password: str = Field(max_length=128)
+    email: str = Field(min_length=1)
+    password: str = Field(min_length=1)
 
 
 class ProfileResponse(BaseModel):
@@ -71,7 +71,9 @@ class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
-    email: EmailStr
+    email: str
+    is_system_admin: bool
+    must_change_password: bool
     is_active: bool
     created_at: datetime
     profile: ProfileResponse
@@ -91,13 +93,14 @@ class OrganizationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
-    owner_id: UUID
     name: str
     deleted_at: datetime | None = None
 
+    capabilities: dict[str, bool] = Field(default_factory=dict)
+
 
 class MembershipRequest(BaseModel):
-    email: EmailStr
+    email: str = Field(min_length=1)
 
 
 class ConfirmRequest(BaseModel):
@@ -118,9 +121,10 @@ class ProjectResponse(BaseModel):
 
     id: UUID
     organization_id: UUID
-    owner_id: UUID
     name: str
     deleted_at: datetime | None = None
+
+    capabilities: dict[str, bool] = Field(default_factory=dict)
 
 
 class StatusCreate(BaseModel):
@@ -174,7 +178,7 @@ class UserSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
-    email: EmailStr
+    email: str
 
 
 class ParticipantSummary(BaseModel):

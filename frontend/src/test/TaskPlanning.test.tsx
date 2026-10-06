@@ -27,7 +27,7 @@ function renderView(
   return render(
     <QueryClientProvider client={createTestQueryClient()}>
       <KanbanView
-        project={testProject}
+        project={{ ...testProject, capabilities: { ...testProject.capabilities, edit: currentUser.id === "owner-1" } }}
         currentUser={currentUser}
         onClose={vi.fn()}
       />

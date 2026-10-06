@@ -8,11 +8,11 @@ import { App } from "../App";
 import { createTestQueryClient, jsonResponse } from "./test-utils";
 
 const user = { id: "owner-1", email: "owner@example.com", is_active: true };
-const organization = { id: "organization-1", owner_id: user.id, name: "Acme" };
+const organization = { id: "organization-1", capabilities: { edit: true, manage_members: true, manage_workflow: true, archive: true }, name: "Acme" };
 const project = {
   id: "project-1",
   organization_id: organization.id,
-  owner_id: user.id,
+  capabilities: { edit: true, manage_members: true, manage_workflow: true, archive: true },
   name: "Tracker",
 };
 

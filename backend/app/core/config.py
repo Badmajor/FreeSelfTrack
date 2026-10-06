@@ -12,6 +12,24 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    admin_email: str = Field(validation_alias="ADMIN_EMAIL", repr=False)
+    admin_password: SecretStr = Field(validation_alias="ADMIN_PASSWORD")
+
+    @field_validator("admin_email")
+    @classmethod
+    def nonempty_admin_email(cls, value: str) -> str:
+        value = value.strip().casefold()
+        if not value:
+            raise ValueError("ADMIN_EMAIL must be nonempty")
+        return value
+
+    @field_validator("admin_password")
+    @classmethod
+    def nonempty_admin_password(cls, value: SecretStr) -> SecretStr:
+        if not value.get_secret_value():
+            raise ValueError("ADMIN_PASSWORD must be nonempty")
+        return value
+
     database_url: str
     clamd_host: str = "clamav"
     clamd_port: int = Field(default=3310, ge=1, le=65535)

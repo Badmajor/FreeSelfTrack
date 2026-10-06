@@ -12,6 +12,7 @@ from app.core.config import get_settings
 from app.models import User, UserProfile
 from app.models.auth_session import PasswordReset
 from app.models.registration import PendingRegistration
+from app.repositories.administration import AdministrationRepository
 from app.repositories.domain import DomainRepository
 from app.repositories.registration import RegistrationRepository
 from app.repositories.sessions import SessionRepository
@@ -24,7 +25,7 @@ from app.schemas.domain import (
 )
 from app.services.audit import record_event
 from app.services.auth_protection import normalize_email, validate_password
-from app.services.errors import ConflictError, InvalidCredentialsError, NotFoundError
+from app.services.errors import InvalidCredentialsError, NotFoundError, PermissionDeniedError
 from app.services.sessions import SessionService, invalid_session, reset_token, token_digest
 from app.services.verification import InvalidVerificationError, is_expired, read_verification_token
 
@@ -55,6 +56,7 @@ class AuthService:
         logger.info("auth outcome=registration_accepted")
 
     async def verify_email(self, data: VerifyEmailRequest) -> None:
+        await AdministrationRepository(self.session).lock_lifecycle()
         registration_id = read_verification_token(data.token)
         repository = RegistrationRepository(self.session)
         registration = await repository.get(registration_id)
@@ -91,6 +93,7 @@ class AuthService:
         logger.info("auth outcome=verification_accepted")
 
     async def login(self, data: LoginRequest) -> tuple[str, str, User]:
+        await AdministrationRepository(self.session).lock_lifecycle(shared=True)
         email = normalize_email(str(data.email))
         user = await self.repository.get_user_by_email(email)
         if user is not None:
@@ -133,6 +136,7 @@ class AuthService:
 
     async def confirm_password(self, user_id: UUID, password: str) -> User:
         user = await SessionRepository(self.session).lock_user(user_id)
+        await SessionService(self.session).recheck_request_session(user_id)
         valid = await run_in_threadpool(
             password_hash.verify,
             password,
@@ -155,7 +159,12 @@ class AuthService:
             )
 
     async def change_password(self, user_id: UUID, current: str, new: str) -> None:
+        await AdministrationRepository(self.session).lock_lifecycle()
         user = await self.confirm_password(user_id, current)
+        if user.is_system_admin:
+            raise PermissionDeniedError(
+                "Configuration administrator credentials are managed by bootstrap"
+            )
         await validate_password(new)
         user.password_hash = await run_in_threadpool(password_hash.hash, new)
         await self._revoke_all(user.id)
@@ -163,27 +172,14 @@ class AuthService:
         logger.info("auth outcome=password_changed")
 
     async def deactivate(self, user_id: UUID, password: str) -> None:
-        user = await self.confirm_password(user_id, password)
-        repository = SessionRepository(self.session)
-        if await repository.owns_resources(user.id):
-            raise ConflictError("Transfer organization and project ownership before deactivation")
-        user.is_active = False
-        record_event(
-            self.session,
-            "account_deactivated",
-            actor_id=user_id,
-            target_type="user",
-            target_id=user_id,
-        )
-        await self._revoke_all(user.id)
-        await self.session.commit()
-        logger.info("auth outcome=account_deactivated")
+        raise PermissionDeniedError("Self-deactivation is disabled")
 
     async def request_password_reset(self, email: str) -> None:
+        await AdministrationRepository(self.session).lock_lifecycle()
         user = await self.repository.get_user_by_email(normalize_email(email))
         if user is not None:
             user = await SessionRepository(self.session).lock_user(user.id)
-        if user is not None and user.is_active:
+        if user is not None and user.is_active and not user.is_system_admin:
             now = datetime.now(UTC)
             reset_id = uuid4()
             self.session.add(
@@ -200,6 +196,7 @@ class AuthService:
         logger.info("auth outcome=password_reset_requested")
 
     async def reset_password(self, token: str, new: str) -> None:
+        await AdministrationRepository(self.session).lock_lifecycle()
         repository = SessionRepository(self.session)
         try:
             reset_id = UUID(token.split(".")[0])
@@ -214,6 +211,7 @@ class AuthService:
             pending is None
             or user is None
             or not user.is_active
+            or user.is_system_admin
             or not hmac.compare_digest(pending.token_hash, token_digest(token))
             or not hmac.compare_digest(token, reset_token(reset_id))
             or is_expired(pending.expires_at)

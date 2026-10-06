@@ -3,6 +3,7 @@
 from uuid import UUID, uuid4
 
 import pytest
+from auth_helpers import authenticated_id, set_system_admin
 from sqlalchemy import func, select
 from test_chat import post, setup_chat
 from test_task_domain import authenticate, create_organization, create_project
@@ -65,7 +66,7 @@ async def test_membership_ownership_lifecycle_and_idempotency(client, db_session
             )
             assert response.status_code == 200
     added = await events(db_session, "membership_added")
-    assert len(added) == 4  # Two initial owners and two actual additions.
+    assert len(added) == 2  # Resource creation no longer adds the creator.
     assert all(e.organization_id == UUID(org["id"]) for e in added)
     for _ in range(2):
         response = await client.post(
@@ -73,8 +74,9 @@ async def test_membership_ownership_lifecycle_and_idempotency(client, db_session
             headers=owner if _ == 0 else member,
             json={"email": f"{member_email_id}@example.com"},
         )
-        assert response.status_code == 200, response.text
-    assert len(await events(db_session, "ownership_transferred")) == 1
+        assert response.status_code == 404
+    assert len(await events(db_session, "ownership_transferred")) == 0
+    await set_system_admin(owner)
     response = await client.request(
         "DELETE", f"/api/organizations/{org['id']}", headers=owner, json={"confirm": True}
     )
@@ -86,7 +88,7 @@ async def test_membership_ownership_lifecycle_and_idempotency(client, db_session
         await client.post(f"/api/organizations/{org['id']}/restore", headers=owner)
     ).status_code == 200
     assert (
-        await client.post(f"/api/projects/{project['id']}/restore", headers=member)
+        await client.post(f"/api/projects/{project['id']}/restore", headers=owner)
     ).status_code == 200
     assert len(await events(db_session, "resource_restored")) == 2
     member_id = next(
@@ -94,7 +96,7 @@ async def test_membership_ownership_lifecycle_and_idempotency(client, db_session
     )
     # The new project owner removes the previous owner's project membership.
     response = await client.delete(
-        f"/api/projects/{project['id']}/members/{org['owner_id']}", headers=member
+        f"/api/projects/{project['id']}/members/{authenticated_id(owner)}", headers=owner
     )
     assert response.status_code == 200
     response = await client.delete(
@@ -108,15 +110,18 @@ async def test_membership_ownership_lifecycle_and_idempotency(client, db_session
 
 async def test_audit_failure_rolls_back_originating_mutation(client, db_session, monkeypatch):
     owner = await authenticate(client, uuid4())
-    org = await create_organization(client, owner, "Existing")
-    actor_id = UUID(org["owner_id"])
+    await create_organization(client, owner, "Existing")
+    actor_id = authenticated_id(owner)
+    await set_system_admin(owner)
     before = await db_session.scalar(select(func.count()).select_from(SecurityEvent))
 
     # An audit insert rejected at flush must not leave a committed organization.
-    def fail_record(session, *args, **kwargs):
-        session.add(SecurityEvent(event_type=None))
+    def fail_record(self, *args, **kwargs):
+        self.repository.session.add(SecurityEvent(event_type=None))
 
-    monkeypatch.setattr("app.services.domain.record_event", fail_record)
+    monkeypatch.setattr(
+        "app.services.administrative_audit.AdministrativeAuditService.record", fail_record
+    )
     from sqlalchemy.exc import IntegrityError
 
     with pytest.raises(IntegrityError):
@@ -212,6 +217,7 @@ async def test_organization_deletion_and_revoked_membership_hide_history(client)
     )
     assert response.status_code == 200
     assert (await client.get(url, headers=member)).status_code == 404
+    await set_system_admin(owner)
     response = await client.request(
         "DELETE", f"/api/organizations/{org_id}", headers=owner, json={"confirm": True}
     )

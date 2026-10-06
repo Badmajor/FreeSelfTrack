@@ -13,6 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from urllib3.response import HTTPResponse
 
 os.environ.setdefault("TRACKER_TRUSTED_HOSTS", '["test", "testserver", "localhost", "127.0.0.1"]')
+os.environ.setdefault("ADMIN_EMAIL", "test-bootstrap")
+os.environ.setdefault("ADMIN_PASSWORD", "test-bootstrap-only")
 os.environ.setdefault("TRACKER_DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 os.environ.setdefault("TRACKER_AUTH_SECRET_KEY", secrets.token_urlsafe(48))
 

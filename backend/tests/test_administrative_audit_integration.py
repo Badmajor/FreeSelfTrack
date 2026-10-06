@@ -7,15 +7,14 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
+from legacy_audit_helpers import seed_legacy_audit
 from sqlalchemy import select, text, update
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
-from app.models import AdministrativeAuditEvent, User, UserProfile
+from app.models import AdministrativeAuditEvent, User
 from app.schemas.administrative_audit import AdministrativeAuditWrite, AuditChange
-from app.schemas.domain import OrganizationCreate, ProjectCreate, TaskCreate, TaskUpdate
 from app.services.administrative_audit import AdministrativeAuditService
-from app.services.domain import DomainService
 
 pytestmark = pytest.mark.skipif(
     os.getenv("RUN_ADMINISTRATIVE_AUDIT_INTEGRATION") != "1",
@@ -46,7 +45,9 @@ def administrative_audit_database():
             "postgres:16-alpine",
         )
         started = True
-        docker("exec", name, "sh", "-c", "until pg_isready -U postgres; do sleep 1; done")
+        docker(
+            "exec", name, "sh", "-c", "until pg_isready -h 127.0.0.1 -U postgres; do sleep 1; done"
+        )
         port = docker("port", name, "5432").strip().rsplit(":", 1)[1]
         url = f"postgresql+asyncpg://postgres:disposable-test@127.0.0.1:{port}/postgres"
 
@@ -97,29 +98,12 @@ async def test_migration_preserves_logs_and_runtime_atomicity(administrative_aud
 
     try:
         # Seed genuine existing task history/security records BEFORE migration 0019.
-        async with AsyncSession(engine, expire_on_commit=False) as session:
-            user = User(
-                email="legacy-audit@example.com",
-                password_hash="not-a-credential",
-                profile=UserProfile(first_name="Legacy", last_name="Audit"),
-            )
-            session.add(user)
-            await session.commit()
-            actor = user.id
-            service = DomainService(session)
-            org = await service.create_organization(actor, OrganizationCreate(name="Legacy"))
-            project = await service.create_project(
-                actor, ProjectCreate(organization_id=org.id, name="Legacy")
-            )
-            statuses = await service.repository.list_statuses(project.id)
-            task = await service.create_task(
-                actor, project.id, TaskCreate(title="Before", status_id=statuses[0].id)
-            )
-            await service.update_task(actor, task.id, TaskUpdate(title="After"))
+        async with engine.begin() as connection:
+            actor = (await seed_legacy_audit(connection))["user"]
         before = await legacy_snapshot()
         assert all(before.values())
         await engine.dispose()
-        migrate("upgrade", "head")
+        migrate("upgrade", "0019_administrative_audit")
         async with engine.connect() as connection:
             assert (
                 await connection.scalar(text("SELECT count(*) FROM administrative_audit_events"))
@@ -130,7 +114,7 @@ async def test_migration_preserves_logs_and_runtime_atomicity(administrative_aud
         migrate("downgrade", "0018_audit_integrity")
         assert await legacy_snapshot() == before
         await engine.dispose()
-        migrate("upgrade", "head")
+        migrate("upgrade", "0019_administrative_audit")
         assert await legacy_snapshot() == before
         async with engine.begin() as connection:
             await connection.execute(text("CREATE ROLE admin_audit_runtime NOLOGIN NOSUPERUSER"))

@@ -260,7 +260,7 @@ export function KanbanView({
           columns={columns}
           projectId={project.id}
           organizationId={project.organization_id}
-          projectOwnerId={project.owner_id}
+          canManageProject={project.capabilities?.edit ?? false}
           currentUser={currentUser}
           canWrite={canWrite}
           onOpenLinkedTask={onOpenLinkedTask}
@@ -565,7 +565,7 @@ type DrawerProps = {
   columns: ColumnState[];
   projectId: string;
   organizationId: string;
-  projectOwnerId: string;
+  canManageProject: boolean;
   currentUser: UserSummary;
   canWrite: boolean;
   focusCommentId?: string;
@@ -581,7 +581,7 @@ function TaskDrawer({
   columns,
   projectId,
   organizationId,
-  projectOwnerId,
+  canManageProject,
   currentUser,
   canWrite,
   focusCommentId,
@@ -631,7 +631,7 @@ function TaskDrawer({
   const currentTask = details.data ?? task;
   const canManagePlanning =
     canWrite &&
-    (currentUser.id === projectOwnerId ||
+    (canManageProject ||
     currentUser.id === currentTask.reporter_id ||
     currentUser.id === currentTask.assignee_id);
   const save = useMutation({
@@ -691,10 +691,10 @@ function TaskDrawer({
   });
   const canChangeReporter =
     canWrite &&
-    (currentUser.id === projectOwnerId || currentUser.id === task.reporter_id);
+    (canManageProject || currentUser.id === task.reporter_id);
   const canChangeAssignee =
     canWrite &&
-    (currentUser.id === projectOwnerId ||
+    (canManageProject ||
       currentUser.id === task.assignee_id ||
       !task.assignee_id);
 
@@ -1236,7 +1236,7 @@ export function NotificationTaskPanel({
         }))}
         projectId={project.data.id}
         organizationId={project.data.organization_id}
-        projectOwnerId={project.data.owner_id}
+        canManageProject={project.data.capabilities?.edit ?? false}
         currentUser={currentUser}
         canWrite={members.isSuccess}
         focusCommentId={commentId}

@@ -11,11 +11,12 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
+from legacy_audit_helpers import seed_legacy_audit
 from minio import Minio
 from minio.error import S3Error
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from test_chat import post, setup_chat
+from test_chat import post
 
 from app.core.object_storage import ObjectStorage
 from app.db.session import get_session
@@ -23,6 +24,7 @@ from app.main import app
 from app.repositories.chat import ChatRepository
 from app.services.attachment_maintenance import AttachmentMaintenance
 from app.services.errors import ConflictError
+from app.services.sessions import create_access_token
 
 ROOT = Path(__file__).resolve().parents[2]
 pytestmark = pytest.mark.skipif(
@@ -139,7 +141,7 @@ def test_native_bucket_restart_private_access_and_streaming(deployment):
 
 async def test_legacy_migration_review_and_cleanup_lock(deployment, client, monkeypatch):
     _, storage, url, _ = deployment
-    migrate(url, "head")
+    migrate(url, "0014_auth_sessions")
     engine = create_async_engine(url)
     factory = async_sessionmaker(engine, expire_on_commit=False)
 
@@ -151,9 +153,21 @@ async def test_legacy_migration_review_and_cleanup_lock(deployment, client, monk
     monkeypatch.setattr("app.services.chat.get_storage", lambda: storage)
     monkeypatch.setattr("app.api.chat.get_storage", lambda: storage)
     try:
-        owner, member, _, task, _ = await setup_chat(client)
-        # Seed through the current API, then simulate the pre-object-storage schema.
-        migrate(url, "0014_auth_sessions", "downgrade")
+        # Freeze the legacy schema instead of downgrading irreversible role migrations.
+        async with engine.begin() as connection:
+            legacy = await seed_legacy_audit(connection, include_security_events=False)
+            session_id = uuid4()
+            await connection.execute(
+                text(
+                    "INSERT INTO auth_sessions(id,user_id,created_at,expires_at) "
+                    "VALUES (:id,:user,now(),now()+interval '1 day')"
+                ),
+                {"id": session_id, "user": legacy["user"]},
+            )
+        task = {"id": str(legacy["task"]), "reporter_id": str(legacy["user"])}
+        owner = member = {
+            "Authorization": "Bearer " + create_access_token(legacy["user"], session_id)
+        }
         attachment_id, comment_id = uuid4(), uuid4()
         payload = b"legacy attachment bytes"
         async with factory() as session:
@@ -208,9 +222,6 @@ async def test_legacy_migration_review_and_cleanup_lock(deployment, client, monk
             assert row.comment_id == comment_id and row.filename == "legacy.txt"
             assert row.state == "pending"
             await session.rollback()
-            assert (
-                await client.get(f"/api/attachments/{attachment_id}/content", headers=owner)
-            ).status_code == 404
             assert await maintenance.cleanup() >= 1  # Failed verification's abandoned object.
             assert storage.client.stat_object(storage.bucket, key).size == len(payload)
         # Before contract, the retained legacy bytes allow a schema rollback.
@@ -221,9 +232,12 @@ async def test_legacy_migration_review_and_cleanup_lock(deployment, client, monk
             assert await maintenance.migrate_one()
             assert not await maintenance.migrate_one()
             assert await maintenance.cleanup() == 1
-        migrate(url, "head")
+        migrate(url, "0017_attachment_scan_index")
         migrate(url, "0015_attachment_objects", "downgrade")
         migrate(url, "head")
+        assert (
+            await client.get(f"/api/attachments/{attachment_id}/content", headers=owner)
+        ).status_code == 404
         uploaded = await post(client, task, owner, files=[("files", ("new.txt", b"new"))])
         assert uploaded.status_code == 201
         # Concurrent scanners claim distinct rows; rollback makes a claim retryable.
@@ -275,9 +289,8 @@ async def test_legacy_migration_review_and_cleanup_lock(deployment, client, monk
 async def test_compose_http_upload_review_and_download(deployment):
     from httpx import AsyncClient
     from pwdlib import PasswordHash
-    from test_task_domain import create_organization, create_project
 
-    from app.models import User, UserProfile
+    from app.models import OrganizationMember, User, UserProfile
 
     compose, _, url, _ = deployment
     migrate(url, "head")
@@ -300,6 +313,7 @@ async def test_compose_http_upload_review_and_download(deployment):
     try:
         async with factory() as session:
             user = User(
+                is_system_admin=True,
                 email=email,
                 password_hash=PasswordHash.recommended().hash(password),
                 profile=UserProfile(first_name="Smoke", last_name="Test"),
@@ -314,8 +328,23 @@ async def test_compose_http_upload_review_and_download(deployment):
             login = await http.post("/api/auth/login", json={"email": email, "password": password})
             assert login.status_code == 200, login.text
             headers = {"Authorization": "Bearer " + login.json()["access_token"]}
-            organization = await create_organization(http, headers, "Storage smoke")
-            project = await create_project(http, headers, organization["id"], "Files")
+            organization = (
+                await http.post(
+                    "/api/organizations", headers=headers, json={"name": "Storage smoke"}
+                )
+            ).json()
+            async with factory() as session:
+                session.add(
+                    OrganizationMember(organization_id=UUID(organization["id"]), user_id=user.id)
+                )
+                await session.commit()
+            project = (
+                await http.post(
+                    "/api/projects",
+                    headers=headers,
+                    json={"organization_id": organization["id"], "name": "Files"},
+                )
+            ).json()
             statuses = (
                 await http.get(f"/api/projects/{project['id']}/statuses", headers=headers)
             ).json()

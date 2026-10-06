@@ -19,13 +19,15 @@ export type AuthUser = {
   id: string;
   email: string;
   is_active: boolean;
+  is_system_admin?: boolean;
+  must_change_password?: boolean;
   created_at?: string;
   profile?: Profile;
 };
 
 export type Organization = {
   id: string;
-  owner_id: string;
+  capabilities?: Record<string, boolean>;
   name: string;
   deleted_at?: string | null;
 };
@@ -33,7 +35,7 @@ export type Organization = {
 export type Project = {
   id: string;
   organization_id: string;
-  owner_id: string;
+  capabilities?: Record<string, boolean>;
   name: string;
   deleted_at?: string | null;
 };
@@ -329,15 +331,6 @@ export async function removeProjectMember(
   });
 }
 
-export async function transferProjectOwnership(
-  projectId: string,
-  email: string,
-): Promise<Project> {
-  return request<Project>(`/projects/${projectId}/transfer-ownership`, {
-    method: "POST",
-    body: JSON.stringify({ email }),
-  });
-}
 
 export async function deleteProject(projectId: string): Promise<void> {
   await request<unknown>(`/projects/${projectId}`, {

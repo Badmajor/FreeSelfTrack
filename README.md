@@ -1288,7 +1288,36 @@ AUTH_SECRET_KEY has no fallback and must be generated randomly (`openssl rand -h
 Shared deployments require HTTPS and the exact PUBLIC_APP_URL for cookie, CORS and CSRF behavior.
 Plain HTTP access by server IP cannot retain Secure refresh cookies.
 
-Profile offers password change and self-deactivation, both requiring the current password. Transfer
-all organization/project ownership first, including restorable deleted resources. Password change,
-email reset and deactivation end all sessions. “Forgot password?” uses a single-use 30-minute SMTP
+Profile offers password change with the current password for ordinary users. Self-deactivation
+is disabled. Configuration administrator credentials are controlled by ADMIN_*. Password change
+and email reset end all affected sessions. “Forgot password?” uses a single-use 30-minute SMTP
 link; keep registration-mail-worker running for both registration and recovery.
+
+## Configuration administrator and roles (TASK-031)
+
+Set nonempty `ADMIN_EMAIL` and `ADMIN_PASSWORD` in your local environment or `.env` before
+starting Compose/API. These names have **no TRACKER_ prefix**. Do not commit credentials.
+No email-format or password-complexity policy applies to this account; login accepts its
+configured identifier and password. Ordinary registration/new-password policy remains unchanged.
+
+After migrations, API startup runs bootstrap before serving health/API requests. It creates or
+reuses the normalized (`strip().casefold()`) identifier, unblocks it, clears the temporary-password
+flag and applies the configured Argon2 password. Restarting with unchanged credentials preserves
+sessions. Changing credentials or the system role revokes affected sessions and pending email
+actions. Changing ADMIN_EMAIL selects another account, preserving both accounts' memberships and
+local roles; it does not rename the old account or reactivate revoked memberships.
+All replicas must receive identical configuration. Administrator credentials can only be changed
+by updating ADMIN_* and restarting; profile password changes, email reset and self-deactivation
+cannot alter this account. Self-deactivation is disabled for everyone.
+
+Migrations `0020_administration_roles` and `0021_remove_ownership` replace owner_id with
+member/manager roles and active/archived/revoked membership states. Inactive users and archived
+scopes do not acquire active grants. Zero or multiple managers are valid; creating organizations
+(SA only) or projects (SA/scoped OM) does not add the creator. Workflow changes require SA, scoped
+OM or scoped PM. Transfer-ownership endpoints are removed; clients use backend capabilities.
+Downgrade cannot reconstruct ownership; use a coordinated pre-transition backup if needed.
+
+This is an intermediate development stage. Administrative user/membership UI, complete read
+matrix, archive lifecycle and audit views remain TASK-032–037. Registration and ordinary email
+recovery still exist until TASK-032. Do not deploy this intermediate stage over a shared existing
+installation: follow the [coordinated migration plan](docs/architecture/administration-migration.md).

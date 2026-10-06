@@ -253,51 +253,18 @@ async def test_expired_reset_and_mail_retry(client, db_session, caplog):
     assert token not in caplog.text and "private SMTP data" not in caplog.text
 
 
-async def test_deactivation_requires_password_and_no_owned_resources(client, db_session):
-    owner = await account(client)
+async def test_self_deactivation_is_disabled_and_preserves_sessions(client, db_session):
+    response = await account(client)
     cookie = client.cookies.get(REFRESH_COOKIE)
-    org = await client.post("/api/organizations", headers=bearer(owner), json={"name": "Owned"})
-    assert org.status_code == 201
-    body = {"current_password": PASSWORD}
-    assert (
-        await client.post(
-            "/api/auth/deactivate", headers=bearer(owner), json={"current_password": "wrong"}
+    for password in ("wrong", PASSWORD):
+        result = await client.post(
+            "/api/auth/deactivate", headers=bearer(response), json={"current_password": password}
         )
-    ).status_code == 401
-    assert (
-        await client.post("/api/auth/deactivate", headers=bearer(owner), json=body)
-    ).status_code == 409
-    org_id = org.json()["id"]
-    assert (
-        await client.request(
-            "DELETE", f"/api/organizations/{org_id}", headers=bearer(owner), json={"confirm": True}
-        )
-    ).status_code == 204
-    assert (
-        await client.post("/api/auth/deactivate", headers=bearer(owner), json=body)
-    ).status_code == 409
-    # A different user cannot deactivate the owner by adding an ID to their own request.
-    member = await account(client, "member@example.com")
-    assert (
-        await client.post(
-            "/api/auth/deactivate",
-            headers=bearer(member),
-            json=body | {"user_id": owner.json()["user"]["id"]},
-        )
-    ).status_code == 204
-    assert (await client.get("/api/organizations", headers=bearer(owner))).status_code == 200
+        assert result.status_code == 403
+    user = await db_session.scalar(select(User))
+    assert user.is_active
+    assert (await client.get("/api/organizations", headers=bearer(response))).status_code == 200
     assert (await use_refresh(client, cookie)).status_code == 200
-    assert (await client.get("/api/organizations", headers=bearer(member))).status_code == 401
-    user = await db_session.scalar(select(User).where(User.email == "member@example.com"))
-    assert not user.is_active
-    assert (
-        await client.post("/api/auth/login", json={"email": user.email, "password": PASSWORD})
-    ).status_code == 401
-    await client.post("/api/auth/password/reset-request", json={"email": user.email})
-    assert (
-        await db_session.scalar(select(PasswordReset).where(PasswordReset.user_id == user.id))
-        is None
-    )
 
 
 @pytest.mark.parametrize(
@@ -320,54 +287,12 @@ def test_random_key_accepted():
     Settings(database_url="sqlite+aiosqlite://", auth_secret_key=secrets.token_urlsafe(48))
 
 
-async def test_deactivate_after_transferring_both_ownerships_revokes_all(client, db_session):
-    owner = await account(client)
-    original_cookie = client.cookies.get(REFRESH_COOKIE)
-    second = await sign_in(client)
-    await client.post("/api/auth/password/reset-request", json={"email": "session@example.com"})
-    org = (
-        await client.post("/api/organizations", headers=bearer(owner), json={"name": "Owned"})
-    ).json()
-    project = (
-        await client.post(
-            "/api/projects",
-            headers=bearer(owner),
-            json={"name": "Owned project", "organization_id": org["id"]},
+async def test_ownership_transfer_routes_are_removed(client):
+    response = await account(client)
+    for scope in ("organizations", "projects"):
+        result = await client.post(
+            f"/api/{scope}/{uuid4()}/transfer-ownership",
+            headers=bearer(response),
+            json={"email": "successor@example.com"},
         )
-    ).json()
-    await account(client, "successor@example.com")
-    member = {"email": "successor@example.com"}
-    assert (
-        await client.post(
-            f"/api/organizations/{org['id']}/members", headers=bearer(owner), json=member
-        )
-    ).status_code == 200
-    assert (
-        await client.post(
-            f"/api/projects/{project['id']}/members", headers=bearer(owner), json=member
-        )
-    ).status_code == 200
-    assert (
-        await client.post(
-            f"/api/organizations/{org['id']}/transfer-ownership", headers=bearer(owner), json=member
-        )
-    ).status_code == 200
-    assert (
-        await client.post(
-            "/api/auth/deactivate", headers=bearer(owner), json={"current_password": PASSWORD}
-        )
-    ).status_code == 409
-    assert (
-        await client.post(
-            f"/api/projects/{project['id']}/transfer-ownership", headers=bearer(owner), json=member
-        )
-    ).status_code == 200
-    assert (
-        await client.post(
-            "/api/auth/deactivate", headers=bearer(owner), json={"current_password": PASSWORD}
-        )
-    ).status_code == 204
-    for response in (owner, second):
-        assert (await client.get("/api/organizations", headers=bearer(response))).status_code == 401
-    assert (await use_refresh(client, original_cookie)).status_code == 401
-    assert await db_session.scalar(select(PasswordReset)) is None
+        assert result.status_code == 404

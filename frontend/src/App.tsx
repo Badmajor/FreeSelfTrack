@@ -243,7 +243,7 @@ export function App() {
           <input
             id="email"
             name="email"
-            type="email"
+            type={mode === "register" ? "email" : "text"}
             autoComplete="email"
             required
             value={email}
@@ -258,7 +258,7 @@ export function App() {
               mode === "register" ? "new-password" : "current-password"
             }
             minLength={mode === "register" ? 12 : 1}
-            maxLength={128}
+            maxLength={mode === "register" ? 128 : undefined}
             required
             value={password}
             onChange={(event) => setPassword(event.target.value)}

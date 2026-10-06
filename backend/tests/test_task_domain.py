@@ -1,6 +1,6 @@
 from uuid import UUID, uuid4
 
-from auth_helpers import confirm_registration
+from auth_helpers import authenticated_id, confirm_registration, seed_manager, set_system_admin
 from httpx import AsyncClient
 
 
@@ -31,7 +31,10 @@ async def authenticate(client: AsyncClient, user_id: UUID) -> dict[str, str]:
 
 
 async def create_organization(client: AsyncClient, headers: dict[str, str], name: str) -> dict:
+    await set_system_admin(headers)
     response = await client.post("/api/organizations", json={"name": name}, headers=headers)
+    await set_system_admin(headers, False)
+    await seed_manager(headers, "organization", response.json()["id"])
     assert response.status_code == 201
     return response.json()
 
@@ -45,6 +48,7 @@ async def create_project(
         headers=headers,
     )
     assert response.status_code == 201
+    await seed_manager(headers, "project", response.json()["id"])
     return response.json()
 
 
@@ -281,7 +285,6 @@ async def test_membership_authorization_ownership_and_soft_delete_lifecycle(
     )
     assert add_member.status_code == 200
     assert add_member.json()["email"] == member_email
-    member_user_id = add_member.json()["id"]
 
     duplicate_member = await client.post(
         f"/api/organizations/{organization_id}/members",
@@ -325,16 +328,15 @@ async def test_membership_authorization_ownership_and_soft_delete_lifecycle(
         json={"email": member_email},
         headers=owner_headers,
     )
-    assert transfer_project.status_code == 200
-    assert transfer_project.json()["owner_id"] == member_user_id
+    assert transfer_project.status_code == 404
 
     transfer_organization = await client.post(
         f"/api/organizations/{organization_id}/transfer-ownership",
         json={"email": member_email},
         headers=owner_headers,
     )
-    assert transfer_organization.status_code == 200
-    assert transfer_organization.json()["owner_id"] == member_user_id
+    assert transfer_organization.status_code == 404
+    await set_system_admin(member_headers)
 
     add_outsider_to_org = await client.post(
         f"/api/organizations/{organization_id}/members",
@@ -350,7 +352,8 @@ async def test_membership_authorization_ownership_and_soft_delete_lifecycle(
     assert add_outsider_to_project.status_code == 200
 
     remove_old_owner = await client.delete(
-        f"/api/projects/{project_id}/members/{project['owner_id']}", headers=member_headers
+        f"/api/projects/{project_id}/members/{authenticated_id(owner_headers)}",
+        headers=member_headers,
     )
     assert remove_old_owner.status_code == 200
     removed_owner_view = await client.get(f"/api/projects/{project_id}", headers=owner_headers)
@@ -607,7 +610,7 @@ async def test_task_participants_watchers_and_notifications(
     outsider_login_id = uuid4()
     outsider_headers = await authenticate(client, outsider_login_id)
     organization = await create_organization(client, owner_headers, "Acme")
-    owner_id = UUID(organization["owner_id"])
+    owner_id = authenticated_id(owner_headers)
     project = await create_project(client, owner_headers, organization["id"], "Tracker")
     statuses = (
         await client.get(f"/api/projects/{project['id']}/statuses", headers=owner_headers)
@@ -811,7 +814,7 @@ async def test_task_participant_permission_matrix_and_organization_isolation(
     assert owner_reporter_change.status_code == 200
     reporter_reporter_change = await client.patch(
         f"/api/tasks/{task_id}",
-        json={"reporter_id": str(UUID(organization["owner_id"]))},
+        json={"reporter_id": str(authenticated_id(owner_headers))},
         headers=member_headers,
     )
     assert reporter_reporter_change.status_code == 200
@@ -825,8 +828,8 @@ async def test_task_participant_permission_matrix_and_organization_isolation(
     )
     assert stopped_watching.status_code == 200
 
-    foreign_organization = await create_organization(client, foreign_headers, "Foreign")
-    foreign_user_id = UUID(foreign_organization["owner_id"])
+    await create_organization(client, foreign_headers, "Foreign")
+    foreign_user_id = authenticated_id(foreign_headers)
     foreign_watcher = await client.post(
         f"/api/tasks/{task_id}/watchers",
         json={"user_id": str(foreign_user_id)},
@@ -853,7 +856,7 @@ async def test_member_addition_validation_profiles_and_project_idempotency(
         assert denied.status_code == 404
         anonymous = await client.post(url, json={"email": email})
         assert anonymous.status_code == 401
-        invalid = await client.post(url, json={"email": "invalid"}, headers=headers)
+        invalid = await client.post(url, json={"email": ""}, headers=headers)
         assert invalid.status_code == 422
         missing = await client.post(url, json={"email": "missing@example.com"}, headers=headers)
         assert missing.status_code == 404
@@ -912,7 +915,7 @@ async def test_project_list_matches_membership_and_board_access(
         project_id
     ]
     assert (await client.get(board_url, headers=member)).status_code == 200
-    member_project = await create_project(client, member, org_id, "Member project")
+    member_project = await create_project(client, owner, org_id, "Member project")
     assert {item["id"] for item in (await client.get(listing, headers=owner)).json()} == {
         project_id,
         member_project["id"],
@@ -927,6 +930,7 @@ async def test_project_list_matches_membership_and_board_access(
     other_org = await create_organization(client, member, "Another organization")
     await create_project(client, member, other_org["id"], "Other project")
     assert len((await client.get(listing, headers=member)).json()) == 2
+    await set_system_admin(owner)
     # Organization deletion must still include projects hidden from the owner's list.
     deleted = await client.request(
         "DELETE", f"/api/organizations/{org_id}", headers=owner, json={"confirm": True}
