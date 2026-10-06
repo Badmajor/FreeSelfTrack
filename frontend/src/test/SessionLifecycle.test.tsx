@@ -231,31 +231,14 @@ it("clears the reset fragment and submits the token only after an explicit passw
   );
 });
 
-it("shows ownership errors for deactivation and requires explicit confirmation", async () => {
-  const fetchMock = vi.fn(() =>
-    jsonResponse(
-      {
-        detail:
-          "Transfer organization and project ownership before deactivation",
-      },
-      409,
-    ),
-  );
+it("hides configuration administrator credential controls and self-deactivation", () => {
+  const fetchMock = vi.fn();
   vi.stubGlobal("fetch", fetchMock);
-  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
-  renderWithQueryClient(<AccountSecurity />);
-  const actor = userEvent.setup();
-  await actor.type(
-    screen.getByLabelText("Current password"),
-    "my existing password",
-  );
-  await actor.click(screen.getByRole("button", { name: "Deactivate account" }));
+  renderWithQueryClient(<AccountSecurity isSystemAdmin />);
+  expect(screen.getByText(/managed through deployment configuration/)).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Change password" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Deactivate account" })).not.toBeInTheDocument();
   expect(fetchMock).not.toHaveBeenCalled();
-  confirm.mockReturnValue(true);
-  await actor.click(screen.getByRole("button", { name: "Deactivate account" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Transfer organization",
-  );
 });
 
 it("submits current and new passwords and clears credentials on success", async () => {

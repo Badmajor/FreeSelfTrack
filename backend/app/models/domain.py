@@ -26,9 +26,13 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
+    email: Mapped[str] = mapped_column(Text, unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_system_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    must_change_password: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
@@ -66,7 +70,6 @@ class Organization(Base):
     __tablename__ = "organizations"
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    owner_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
     name: Mapped[str] = mapped_column(String(200))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
 
@@ -83,7 +86,20 @@ class OrganizationMember(Base):
         ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
     )
 
-    __table_args__ = (Index("ix_organization_members_user_id", "user_id"),)
+    role: Mapped[Literal["member", "manager"]] = mapped_column(
+        String(16), default="member", server_default="member"
+    )
+    state: Mapped[Literal["active", "archived", "revoked"]] = mapped_column(
+        String(16), default="active", server_default="active"
+    )
+
+    __table_args__ = (
+        Index("ix_organization_members_user_id", "user_id"),
+        CheckConstraint("role IN ('member', 'manager')", name="ck_organization_members_role"),
+        CheckConstraint(
+            "state IN ('active', 'archived', 'revoked')", name="ck_organization_members_state"
+        ),
+    )
 
 
 class Project(Base):
@@ -93,7 +109,6 @@ class Project(Base):
     organization_id: Mapped[UUID] = mapped_column(
         ForeignKey("organizations.id", ondelete="CASCADE"), index=True
     )
-    owner_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
     name: Mapped[str] = mapped_column(String(200))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
 
@@ -125,7 +140,20 @@ class ProjectMember(Base):
         ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
     )
 
-    __table_args__ = (Index("ix_project_members_user_id", "user_id"),)
+    role: Mapped[Literal["member", "manager"]] = mapped_column(
+        String(16), default="member", server_default="member"
+    )
+    state: Mapped[Literal["active", "archived", "revoked"]] = mapped_column(
+        String(16), default="active", server_default="active"
+    )
+
+    __table_args__ = (
+        Index("ix_project_members_user_id", "user_id"),
+        CheckConstraint("role IN ('member', 'manager')", name="ck_project_members_role"),
+        CheckConstraint(
+            "state IN ('active', 'archived', 'revoked')", name="ck_project_members_state"
+        ),
+    )
 
 
 class ProjectStatus(Base):

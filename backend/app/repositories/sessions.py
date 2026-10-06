@@ -1,11 +1,11 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import delete, exists, select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import Organization, Project, User
+from app.models import User
 from app.models.auth_session import AuthSession, PasswordReset, RefreshCredential
 
 
@@ -37,17 +37,6 @@ class SessionRepository:
         )
         await self.session.execute(delete(PasswordReset).where(PasswordReset.user_id == user_id))
         return list(revoked)
-
-    async def owns_resources(self, user_id: UUID) -> bool:
-        # Deleted resources are restorable and still have an owner.
-        return bool(
-            await self.session.scalar(
-                select(
-                    exists().where(Organization.owner_id == user_id)
-                    | exists().where(Project.owner_id == user_id)
-                )
-            )
-        )
 
     async def get_reset(self, reset_id: UUID) -> PasswordReset | None:
         return await self.session.get(PasswordReset, reset_id, populate_existing=True)

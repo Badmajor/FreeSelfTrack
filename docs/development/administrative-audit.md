@@ -2,8 +2,9 @@
 
 Implemented: model, strict internal write schema, transaction-bound writer/repository,
 fixed-size internal query and PostgreSQL migration `0019_administrative_audit`.
-Not implemented: producers for TASK-031–036, authorized entity HTTP reads/UI (TASK-037),
-manager/archive/user lifecycle behavior. Existing TaskHistory and SecurityEvent are unchanged.
+TASK-031 adds producers for bootstrap, current resources/memberships/workflow and guards.
+Not implemented: the remaining TASK-032–036 mutations and authorized audit HTTP reads/UI
+(TASK-037). Existing TaskHistory/SecurityEvent rows remain unchanged.
 
 See [ADR-014](../architecture/decisions/014-administration-membership-and-archive.md),
 [target API](../architecture/api.md#administration-target),
@@ -130,3 +131,11 @@ It also verifies failed audit insertion rolls back a user mutation and a nonempt
 leaves schema/version/data intact. It does not use or migrate the shared Compose database.
 Without the flag it skips explicitly. SQLite tests cover schema policy, aggregation, separate
 objects, no-op behavior, bootstrap identity, rollback, and 20-row pagination including tied times.
+
+## Workflow snapshot compatibility (TASK-031)
+
+An active status requires a nonnegative position. Inactive status snapshots may have negative
+positions because the existing workflow stores archived statuses outside the active ordering.
+Producers preserve these values and include only actually changed status snapshots.
+Bootstrap uses actor_kind=bootstrap with actor_id=null; actual session revocations use separate
+technical SecurityEvent records with the same actor kind. No credentials are audit fields.

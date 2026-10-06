@@ -28,7 +28,9 @@ async def current_auth(
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise authentication_error()
     try:
-        return await SessionService(session).authenticate(credentials.credentials)
+        auth = await SessionService(session).authenticate(credentials.credentials)
+        session.info["authenticated_session_id"] = auth[1].id
+        return auth
     except InvalidCredentialsError as exc:
         raise authentication_error() from exc
 

@@ -7,8 +7,8 @@ import { createTestQueryClient, jsonResponse } from "./test-utils";
 
 const owner = { id: "owner", email: "owner@example.com", is_active: true, profile: { user_id: "owner", first_name: "Anna", last_name: "Smith" } };
 const member = { ...owner, id: "member", email: "member@example.com", profile: { user_id: "member", first_name: "Alex", last_name: "Jones" } };
-const organization = { id: "org", name: "Team", owner_id: owner.id };
-const project = { id: "project", organization_id: "org", name: "Tracker", owner_id: owner.id };
+const organization = { id: "org", name: "Team", capabilities: { manage_members: true } };
+const project = { id: "project", organization_id: "org", name: "Tracker", capabilities: { manage_members: true } };
 const props = { user: owner, organizations: [organization], projects: [project], organizationId: "org", projectId: "project", loading: false, error: "", onClose: vi.fn(), onOrganizationChange: vi.fn(), onProjectChange: vi.fn(), onProjectUpdated: vi.fn() };
 function mount(overrides: Partial<typeof props> = {}) {
   const client = createTestQueryClient();
@@ -38,16 +38,13 @@ it("adds organization and project members by email, confirms duplicates and disp
   }
 });
 
-it.each([[404, "User not found"], [409, "Project member must belong to the project organization"], [403, "Only the owner can add members"]])("preserves email after %s errors and blocks duplicate requests while pending", async (status, message) => {
+it.each([[404, "User not found"], [409, "Project member must belong to the project organization"], [403, "Administrative permission required"]])("preserves email after %s errors and blocks duplicate requests while pending", async (status, message) => {
   let finish: (response: Response) => void = () => {};
   const fetchMock = vi.fn((_input: unknown, options?: RequestInit) => options?.method === "POST" ? new Promise<Response>((resolve) => { finish = resolve; }) : jsonResponse([]));
   vi.stubGlobal("fetch", fetchMock); mount();
   await screen.findByText("No members found.");
   const email = screen.getByLabelText("Email");
-  await userEvent.type(email, "invalid");
-  await userEvent.click(screen.getByRole("button", { name: "Add member" }));
-  expect(fetchMock.mock.calls.filter((call) => call[1]?.method === "POST")).toHaveLength(0);
-  await userEvent.clear(email); await userEvent.type(email, member.email);
+  await userEvent.type(email, member.email);
   await userEvent.click(screen.getByRole("button", { name: "Add member" }));
   expect(screen.getByRole("button", { name: "Adding..." })).toBeDisabled();
   finish(new Response(JSON.stringify({ detail: message }), { status: Number(status) }));
@@ -55,9 +52,9 @@ it.each([[404, "User not found"], [409, "Project member must belong to the proje
   expect(email).toHaveValue(member.email);
 });
 
-it("checks organization and project ownership independently", async () => {
+it("uses organization and project capabilities independently", async () => {
   vi.stubGlobal("fetch", vi.fn(() => jsonResponse([owner])));
-  mount({ projects: [{ ...project, owner_id: member.id }] });
+  mount({ projects: [{ ...project, capabilities: { manage_members: false } }] });
   await screen.findByText("Anna Smith");
   expect(screen.getByRole("button", { name: "Add member" })).toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Project members" }));

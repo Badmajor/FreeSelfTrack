@@ -10,7 +10,6 @@ import {
   listOrganizationMembers,
   listProjectMembers,
   removeProjectMember,
-  transferProjectOwnership,
   type AuthUser,
   type Organization,
   type Project,
@@ -137,8 +136,6 @@ export function MembersPage(props: Props) {
 function MemberList({
   scope,
   resource,
-  user,
-  onProjectUpdated,
 }: {
   scope: "organization" | "project";
   resource: Organization | Project;
@@ -155,9 +152,8 @@ function MemberList({
         : listProjectMembers(resource.id),
   });
   const [email, setEmail] = useState("");
-  const [transferEmail, setTransferEmail] = useState("");
   const [notice, setNotice] = useState("");
-  const owner = resource.owner_id === user.id;
+  const canManage = resource.capabilities?.manage_members ?? false;
   const refresh = () => client.invalidateQueries({ queryKey });
   const add = useMutation({
     mutationFn: (value: string) =>
@@ -174,23 +170,13 @@ function MemberList({
     mutationFn: (id: string) => removeProjectMember(resource.id, id),
     onSuccess: refresh,
   });
-  const transfer = useMutation({
-    mutationFn: () =>
-      transferProjectOwnership(resource.id, transferEmail.trim()),
-    onSuccess: (updated) => {
-      onProjectUpdated(updated);
-      setTransferEmail("");
-      setNotice("Ownership transferred.");
-    },
-  });
-  const pending = add.isPending || remove.isPending || transfer.isPending;
-  const error = add.error || remove.error || transfer.error;
+  const pending = add.isPending || remove.isPending;
+  const error = add.error || remove.error;
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!owner || pending) return;
+    if (!canManage || pending) return;
     setNotice("");
     remove.reset();
-    transfer.reset();
     add.mutate(email.trim());
   }
   return (
@@ -221,16 +207,13 @@ function MemberList({
                     ? member.profile.first_name + " " + member.profile.last_name
                     : "Profile unavailable"}
                 </span>
-                {member.id === resource.owner_id ? (
-                  <span className="role">Owner</span>
-                ) : owner && scope === "project" ? (
+                {canManage && scope === "project" ? (
                   <button
                     className="link-button"
                     disabled={pending}
                     onClick={() => {
                       setNotice("");
                       add.reset();
-                      transfer.reset();
                       remove.mutate(member.id);
                     }}
                   >
@@ -243,13 +226,13 @@ function MemberList({
           {!members.data.length && <p>No members found.</p>}
         </>
       )}
-      {owner && (
+      {canManage && (
         <form className="member-add-form" onSubmit={submit}>
           <h3>Add member</h3>
           <label htmlFor="member-email">Email</label>
           <input
             id="member-email"
-            type="email"
+            type="text"
             required
             value={email}
             onChange={(event) => setEmail(event.target.value)}
@@ -269,33 +252,6 @@ function MemberList({
         <p className="notice" role="status">
           {notice}
         </p>
-      )}
-      {owner && scope === "project" && (
-        <form
-          className="member-add-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (pending) return;
-            setNotice("");
-            add.reset();
-            remove.reset();
-            transfer.mutate();
-          }}
-        >
-          <h3>Transfer ownership</h3>
-          <label htmlFor="transfer-email">Member email</label>
-          <input
-            id="transfer-email"
-            type="email"
-            required
-            value={transferEmail}
-            onChange={(event) => setTransferEmail(event.target.value)}
-            disabled={pending}
-          />
-          <button className="button secondary compact" disabled={pending}>
-            {transfer.isPending ? "Transferring..." : "Transfer"}
-          </button>
-        </form>
       )}
     </section>
   );

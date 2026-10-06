@@ -1,9 +1,8 @@
 # Development Setup
 
-> TASK-029 defines a future administrative release; it has not been implemented.
-> The instructions below describe the current deployment. For the planned removal of
-> registration/reset/deactivation and required ADMIN_* bootstrap, see the
-> [migration plan](../architecture/administration-migration.md).
+> TASK-031 implements roles and required ADMIN_* bootstrap. This is an intermediate stage;
+> registration/reset removal and the full administrative release remain TASK-032–038.
+> Existing installations require the [coordinated migration plan](../architecture/administration-migration.md).
 
 ## Docker Compose
 
@@ -18,6 +17,7 @@ Prepare local variables and start the stack:
 
 ```bash
 cp .env.example .env
+# Set ADMIN_EMAIL and ADMIN_PASSWORD locally.
 # Generate AUTH_SECRET_KEY with openssl rand -hex 32; configure credentials, SMTP and PUBLIC_APP_URL.
 docker compose up --build
 ```
@@ -104,3 +104,32 @@ transfer at migration 0015 before upgrading to head.** See [attachment operation
 for exact cutover, quarantine review, resource limits, backup/restore and rollback instructions.
 New and migrated files remain pending until the automatic ClamAV worker verifies and releases them.
 The default Compose stack includes ClamAV and the scan worker; see attachments.md for operation and retries.
+
+## Configuration administrator and roles (TASK-031)
+
+Set nonempty `ADMIN_EMAIL` and `ADMIN_PASSWORD` in your local environment or `.env` before
+starting Compose/API. These names have **no TRACKER_ prefix**. Do not commit credentials.
+No email-format or password-complexity policy applies to this account; login accepts its
+configured identifier and password. Ordinary registration/new-password policy remains unchanged.
+
+After migrations, API startup runs bootstrap before serving health/API requests. It creates or
+reuses the normalized (`strip().casefold()`) identifier, unblocks it, clears the temporary-password
+flag and applies the configured Argon2 password. Restarting with unchanged credentials preserves
+sessions. Changing credentials or the system role revokes affected sessions and pending email
+actions. Changing ADMIN_EMAIL selects another account, preserving both accounts' memberships and
+local roles; it does not rename the old account or reactivate revoked memberships.
+All replicas must receive identical configuration. Administrator credentials can only be changed
+by updating ADMIN_* and restarting; profile password changes, email reset and self-deactivation
+cannot alter this account. Self-deactivation is disabled for everyone.
+
+Migrations `0020_administration_roles` and `0021_remove_ownership` replace owner_id with
+member/manager roles and active/archived/revoked membership states. Inactive users and archived
+scopes do not acquire active grants. Zero or multiple managers are valid; creating organizations
+(SA only) or projects (SA/scoped OM) does not add the creator. Workflow changes require SA, scoped
+OM or scoped PM. Transfer-ownership endpoints are removed; clients use backend capabilities.
+Downgrade cannot reconstruct ownership; use a coordinated pre-transition backup if needed.
+
+This is an intermediate development stage. Administrative user/membership UI, complete read
+matrix, archive lifecycle and audit views remain TASK-032–037. Registration and ordinary email
+recovery still exist until TASK-032. Do not deploy this intermediate stage over a shared existing
+installation: follow the [coordinated migration plan](../architecture/administration-migration.md).

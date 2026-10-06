@@ -1,9 +1,10 @@
 from datetime import date
 from uuid import UUID, uuid4
 
-from auth_helpers import confirm_registration
+from auth_helpers import authenticated_id, confirm_registration
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
+from test_task_domain import create_organization, create_project
 
 from app.services.deadlines import DeadlineService
 
@@ -37,9 +38,7 @@ async def setup_project(
     assignee_headers = await authenticate(client, assignee_login)
     regular_headers = await authenticate(client, regular_login)
 
-    organization = (
-        await client.post("/api/organizations", json={"name": "Planning"}, headers=owner_headers)
-    ).json()
+    organization = await create_organization(client, owner_headers, "Planning")
     member_ids: list[str] = []
     for login_id in (assignee_login, regular_login):
         response = await client.post(
@@ -50,13 +49,7 @@ async def setup_project(
         assert response.status_code == 200
         member_ids.append(response.json()["id"])
 
-    project = (
-        await client.post(
-            "/api/projects",
-            json={"organization_id": organization["id"], "name": "Roadmap"},
-            headers=owner_headers,
-        )
-    ).json()
+    project = await create_project(client, owner_headers, organization["id"], "Roadmap")
     response = await client.post(
         f"/api/projects/{project['id']}/members",
         json={"email": f"{regular_login}@example.com"},
@@ -67,7 +60,7 @@ async def setup_project(
         await client.get(f"/api/projects/{project['id']}/statuses", headers=owner_headers)
     ).json()[0]
     users = {
-        "owner": project["owner_id"],
+        "owner": str(authenticated_id(owner_headers)),
         "assignee": member_ids[0],
         "regular": member_ids[1],
     }

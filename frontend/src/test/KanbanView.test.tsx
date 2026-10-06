@@ -9,7 +9,7 @@ import type { Project } from "../api";
 const project: Project = {
   id: "project-1",
   organization_id: "organization-1",
-  owner_id: "user-1",
+  capabilities: { edit: true, manage_members: true, manage_workflow: true, archive: true },
   name: "Product",
 };
 

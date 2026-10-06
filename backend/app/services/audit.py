@@ -15,7 +15,9 @@ def record_event(
     target_type: str,
     target_id: UUID | None,
     organization_id: UUID | None = None,
-    actor_kind: Literal["user", "anonymous", "attachment_scanner", "attachment_operator"] = "user",
+    actor_kind: Literal[
+        "user", "anonymous", "attachment_scanner", "attachment_operator", "bootstrap"
+    ] = "user",
     member_id: UUID | None = None,
     previous_owner_id: UUID | None = None,
     owner_id: UUID | None = None,

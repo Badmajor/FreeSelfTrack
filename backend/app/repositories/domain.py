@@ -1,7 +1,7 @@
 from datetime import date
 from uuid import UUID
 
-from sqlalchemy import and_, desc, exists, func, or_, select
+from sqlalchemy import and_, desc, exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -20,6 +20,7 @@ from app.models import (
     TaskWatcher,
     User,
 )
+from app.repositories.administration import AdministrationRepository
 
 
 class DomainRepository:
@@ -86,6 +87,8 @@ class DomainRepository:
                 Project.deleted_at.is_(None),
                 Organization.deleted_at.is_(None),
                 User.is_active.is_(True),
+                OrganizationMember.state == "active",
+                ProjectMember.state == "active",
                 ~delivered,
             )
             .order_by(Task.due_date, Task.id)
@@ -102,11 +105,21 @@ class DomainRepository:
         )
 
     async def list_organizations_for_user(self, user_id: UUID) -> list[Organization]:
+        user = await self.get_user(user_id)
+        if user is not None and user.is_active and user.is_system_admin:
+            return list(
+                await self.session.scalars(
+                    select(Organization)
+                    .where(Organization.deleted_at.is_(None))
+                    .order_by(Organization.name)
+                )
+            )
         result = await self.session.scalars(
             select(Organization)
             .join(OrganizationMember, OrganizationMember.organization_id == Organization.id)
             .where(
                 OrganizationMember.user_id == user_id,
+                OrganizationMember.state == "active",
                 Organization.deleted_at.is_(None),
             )
             .order_by(Organization.name)
@@ -132,6 +145,7 @@ class DomainRepository:
                 Project.organization_id == organization_id,
                 Project.deleted_at.is_(None),
                 ProjectMember.user_id == user_id,
+                ProjectMember.state == "active",
             )
             .order_by(Project.name)
         )
@@ -142,7 +156,11 @@ class DomainRepository:
             select(User)
             .options(selectinload(User.profile))
             .join(OrganizationMember, OrganizationMember.user_id == User.id)
-            .where(OrganizationMember.organization_id == organization_id)
+            .where(
+                OrganizationMember.organization_id == organization_id,
+                OrganizationMember.state == "active",
+                User.is_active.is_(True),
+            )
             .order_by(User.email)
         )
         return list(result)
@@ -152,7 +170,11 @@ class DomainRepository:
             select(User)
             .options(selectinload(User.profile))
             .join(ProjectMember, ProjectMember.user_id == User.id)
-            .where(ProjectMember.project_id == project_id)
+            .where(
+                ProjectMember.project_id == project_id,
+                ProjectMember.state == "active",
+                User.is_active.is_(True),
+            )
             .order_by(User.email)
         )
         return list(result)
@@ -168,30 +190,31 @@ class DomainRepository:
         return await self.session.get(ProjectMember, {"project_id": project_id, "user_id": user_id})
 
     async def has_organization_access(self, organization_id: UUID, user_id: UUID) -> bool:
-        result = await self.session.scalar(
-            select(OrganizationMember.organization_id)
-            .join(Organization, Organization.id == OrganizationMember.organization_id)
-            .where(
-                OrganizationMember.organization_id == organization_id,
-                OrganizationMember.user_id == user_id,
-                Organization.deleted_at.is_(None),
-            )
-        )
-        return result is not None
+        user = await self.get_user(user_id)
+        organization = await self.get_organization(organization_id)
+        if user is None or not user.is_active or organization is None or organization.deleted_at:
+            return False
+        if user.is_system_admin or await AdministrationRepository(self.session).active_manager(
+            user_id, organization_id
+        ):
+            return True
+        member = await self.get_organization_member(organization_id, user_id)
+        return member is not None and member.state == "active"
 
     async def has_project_access(self, project_id: UUID, user_id: UUID) -> bool:
-        result = await self.session.scalar(
-            select(ProjectMember.project_id)
-            .join(Project, Project.id == ProjectMember.project_id)
-            .join(Organization, Organization.id == Project.organization_id)
-            .where(
-                ProjectMember.project_id == project_id,
-                ProjectMember.user_id == user_id,
-                Project.deleted_at.is_(None),
-                Organization.deleted_at.is_(None),
-            )
-        )
-        return result is not None
+        project = await self.get_project(project_id)
+        if project is None or project.deleted_at is not None:
+            return False
+        if not await self.has_organization_access(project.organization_id, user_id):
+            return False
+        user = await self.get_user(user_id)
+        assert user is not None
+        if user.is_system_admin or await AdministrationRepository(self.session).active_manager(
+            user_id, project.organization_id
+        ):
+            return True
+        member = await self.get_project_member(project_id, user_id)
+        return member is not None and member.state == "active"
 
     async def add_organization_member(
         self, organization_id: UUID, user_id: UUID
@@ -212,12 +235,25 @@ class DomainRepository:
     async def remove_organization_member(self, organization_id: UUID, user_id: UUID) -> None:
         member = await self.get_organization_member(organization_id, user_id)
         if member is not None:
-            await self.session.delete(member)
+            member.state = "revoked"
+            member.role = "member"
+
+        await self.session.execute(
+            update(ProjectMember)
+            .where(
+                ProjectMember.user_id == user_id,
+                ProjectMember.project_id.in_(
+                    select(Project.id).where(Project.organization_id == organization_id)
+                ),
+            )
+            .values(state="revoked", role="member")
+        )
 
     async def remove_project_member(self, project_id: UUID, user_id: UUID) -> None:
         member = await self.get_project_member(project_id, user_id)
         if member is not None:
-            await self.session.delete(member)
+            member.state = "revoked"
+            member.role = "member"
 
     async def list_statuses(self, project_id: UUID) -> list[ProjectStatus]:
         result = await self.session.scalars(

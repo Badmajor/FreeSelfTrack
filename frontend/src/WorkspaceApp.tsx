@@ -82,23 +82,23 @@ export function AuthenticatedApp(props: Props) {
         <Route index element={<RootRedirect />} />
         <Route
           path="management/organizations"
-          element={<OrganizationManagementPage user={props.user} />}
+          element={<OrganizationManagementPage />}
         />
         <Route
           path="management/organizations/:organizationId"
-          element={<OrganizationManagementPage user={props.user} />}
+          element={<OrganizationManagementPage />}
         />
         <Route
           path="management/projects"
-          element={<ProjectManagementPage user={props.user} />}
+          element={<ProjectManagementPage />}
         />
         <Route
           path="management/projects/:projectId"
-          element={<ProjectManagementPage user={props.user} />}
+          element={<ProjectManagementPage />}
         />
         <Route
           path="management/projects/:projectId/workflow"
-          element={<WorkflowManagementPage user={props.user} />}
+          element={<WorkflowManagementPage />}
         />
         <Route
           path="organizations/:organizationId/members"
@@ -493,7 +493,7 @@ function RootRedirect() {
   );
 }
 
-function OrganizationManagementPage({ user }: { user: AuthUser }) {
+function OrganizationManagementPage() {
   const { organizationId } = useParams();
   const navigate = useNavigate();
   const client = useQueryClient();
@@ -566,8 +566,6 @@ function OrganizationManagementPage({ user }: { user: AuthUser }) {
               <dl className="resource-facts">
                 <dt>Identifier</dt>
                 <dd>{selected.id}</dd>
-                <dt>Owner</dt>
-                <dd>{selected.owner_id}</dd>
               </dl>
               <Link
                 className="text-link"
@@ -575,7 +573,7 @@ function OrganizationManagementPage({ user }: { user: AuthUser }) {
               >
                 Manage members
               </Link>
-              {selected.owner_id === user.id ? (
+              {selected.capabilities?.archive ? (
                 <button
                   className="button danger compact"
                   disabled={remove.isPending}
@@ -592,7 +590,7 @@ function OrganizationManagementPage({ user }: { user: AuthUser }) {
                 </button>
               ) : (
                 <p className="readonly-note">
-                  Only the organization owner can change this organization.
+                  Organization administration requires the appropriate permissions.
                 </p>
               )}
               {remove.isError && <InlineError error={remove.error} />}
@@ -626,7 +624,7 @@ function OrganizationManagementPage({ user }: { user: AuthUser }) {
   );
 }
 
-function ProjectManagementPage({ user }: { user: AuthUser }) {
+function ProjectManagementPage() {
   const { projectId } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -727,8 +725,6 @@ function ProjectManagementPage({ user }: { user: AuthUser }) {
               <dl className="resource-facts">
                 <dt>Identifier</dt>
                 <dd>{project.data.id}</dd>
-                <dt>Owner</dt>
-                <dd>{project.data.owner_id}</dd>
               </dl>
               <div className="inline-actions">
                 <Link
@@ -750,7 +746,7 @@ function ProjectManagementPage({ user }: { user: AuthUser }) {
                   Members
                 </Link>
               </div>
-              {project.data.owner_id === user.id ? (
+              {project.data.capabilities?.archive ? (
                 <button
                   className="button danger compact"
                   disabled={remove.isPending}
@@ -799,7 +795,7 @@ function ProjectManagementPage({ user }: { user: AuthUser }) {
   );
 }
 
-function WorkflowManagementPage({ user }: { user: AuthUser }) {
+function WorkflowManagementPage() {
   const { projectId = "" } = useParams();
   const client = useQueryClient();
   const project = useQuery({
@@ -818,7 +814,7 @@ function WorkflowManagementPage({ user }: { user: AuthUser }) {
     enabled: Boolean(project.data),
     retry: false,
   });
-  const owner = project.data?.owner_id === user.id;
+  const owner = project.data?.capabilities?.manage_workflow ?? false;
   const refresh = async () => {
     await Promise.all([
       client.invalidateQueries({ queryKey: ["statuses", projectId] }),
@@ -851,7 +847,7 @@ function WorkflowManagementPage({ user }: { user: AuthUser }) {
     <Page title={`${project.data.name} workflow`} eyebrow="Workflow management">
       {!owner && (
         <p className="readonly-note">
-          You can inspect this workflow. Only the project owner can change it.
+          You can inspect this workflow. Workflow changes require manager permissions.
         </p>
       )}
       {mutation.isError && <InlineError error={mutation.error} />}
@@ -1294,7 +1290,7 @@ function ProfilePage({
         {save.isError && <InlineError error={save.error} />}
         {save.isSuccess && <p className="notice">Profile saved.</p>}
       </form>
-      <AccountSecurity />
+      <AccountSecurity isSystemAdmin={user.is_system_admin ?? false} />
     </Page>
   );
 }

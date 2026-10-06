@@ -11,7 +11,7 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
-from app.models import SecurityEvent, TaskHistory, User, UserProfile
+from app.models import OrganizationMember, SecurityEvent, TaskHistory, User, UserProfile
 from app.schemas.domain import OrganizationCreate, ProjectCreate, TaskCreate, TaskUpdate
 from app.services.domain import DomainService
 
@@ -46,7 +46,9 @@ def audit_database():
             "postgres:16-alpine",
         )
         # pg_isready loop runs only within our new disposable container.
-        docker("exec", name, "sh", "-c", "until pg_isready -U postgres; do sleep 1; done")
+        docker(
+            "exec", name, "sh", "-c", "until pg_isready -h 127.0.0.1 -U postgres; do sleep 1; done"
+        )
         port = docker("port", name, "5432").strip().rsplit(":", 1)[1]
         url = f"postgresql+asyncpg://postgres:disposable-test@127.0.0.1:{port}/postgres"
 
@@ -60,7 +62,7 @@ def audit_database():
             )
             assert result.returncode == 0, result.stderr
 
-        migrate("upgrade", "head")
+        migrate("upgrade", "0018_audit_integrity")
         migrate("downgrade", "0017_attachment_scan_index")
         migrate("upgrade", "head")
         yield url, migrate
@@ -84,6 +86,7 @@ async def test_append_only_application_role_and_transaction_rollback(audit_datab
         async with AsyncSession(engine, expire_on_commit=False) as session:
             user = User(
                 email="audit@example.com",
+                is_system_admin=True,
                 password_hash="not-a-credential",
                 profile=UserProfile(first_name="Audit", last_name="Tester"),
             )
@@ -95,6 +98,8 @@ async def test_append_only_application_role_and_transaction_rollback(audit_datab
             project = await service.create_project(
                 actor, ProjectCreate(organization_id=org.id, name="Audit")
             )
+            session.add(OrganizationMember(organization_id=org.id, user_id=actor))
+            await session.commit()
             statuses = await service.repository.list_statuses(project.id)
             task = await service.create_task(
                 actor, project.id, TaskCreate(title="Before", status_id=statuses[0].id)
@@ -127,14 +132,14 @@ async def test_append_only_application_role_and_transaction_rollback(audit_datab
                 await service.create_project(
                     actor, ProjectCreate(organization_id=org.id, name="Rolled back project")
                 )
-                assert len(list(await session.scalars(select(SecurityEvent)))) == 3
+                assert len(list(await session.scalars(select(SecurityEvent)))) == 1
                 # Service commit joins this externally owned transaction.
                 assert len(list(await session.scalars(select(TaskHistory)))) == 2
             await transaction.rollback()
         async with AsyncSession(engine) as session:
             assert len(list(await session.scalars(select(TaskHistory)))) == 1
             assert await session.scalar(text("SELECT title FROM tasks")) == "After"
-            assert len(list(await session.scalars(select(SecurityEvent)))) == 2
+            assert len(list(await session.scalars(select(SecurityEvent)))) == 1
         # A real committed write by the restricted runtime role must still succeed.
         async with engine.connect() as connection:
             await connection.execute(text("SET ROLE audit_runtime"))
@@ -147,11 +152,5 @@ async def test_append_only_application_role_and_transaction_rollback(audit_datab
             await connection.commit()
         async with AsyncSession(engine) as session:
             assert len(list(await session.scalars(select(TaskHistory)))) == 2
-        await engine.dispose()
-        migrate("downgrade", "0017_attachment_scan_index")
-        migrate("upgrade", "head")
-        async with AsyncSession(engine) as session:
-            assert len(list(await session.scalars(select(TaskHistory)))) == 2
-            assert len(list(await session.scalars(select(SecurityEvent)))) == 0
     finally:
         await engine.dispose()

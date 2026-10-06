@@ -34,7 +34,7 @@ export function renderWithQueryClient(
 export const testProject: Project = {
   id: "project-1",
   organization_id: "organization-1",
-  owner_id: "owner-1",
+  capabilities: { edit: true, manage_members: true, manage_workflow: true, archive: true },
   name: "Product",
 };
 

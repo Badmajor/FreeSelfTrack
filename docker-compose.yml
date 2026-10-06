@@ -49,6 +49,8 @@ services:
       dockerfile: Dockerfile
     environment:
       TRACKER_DATABASE_URL: ${TRACKER_DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-tracker}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-tracker}}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:?Set ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD}
       TRACKER_AUTH_SECRET_KEY: ${AUTH_SECRET_KEY:?Set a random AUTH_SECRET_KEY of at least 32 bytes}
       TRACKER_REDIS_URL: redis://redis:6379/0
       TRACKER_S3_ENDPOINT: minio:9000
@@ -112,6 +114,8 @@ services:
     command: ["python", "-m", "app.workers.attachment_scan"]
     environment:
       TRACKER_DATABASE_URL: ${TRACKER_DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-tracker}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-tracker}}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:?Set ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD}
       TRACKER_AUTH_SECRET_KEY: ${AUTH_SECRET_KEY:?Set AUTH_SECRET_KEY}
       TRACKER_S3_ENDPOINT: minio:9000
       TRACKER_S3_BUCKET: ${S3_BUCKET:-tracker-attachments}
@@ -139,6 +143,8 @@ services:
     command: ["python", "-m", "app.workers.attachment_cleanup"]
     environment:
       TRACKER_DATABASE_URL: ${TRACKER_DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-tracker}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-tracker}}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:?Set ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD}
       TRACKER_AUTH_SECRET_KEY: ${AUTH_SECRET_KEY:?Set AUTH_SECRET_KEY}
       TRACKER_S3_ENDPOINT: minio:9000
       TRACKER_S3_BUCKET: ${S3_BUCKET:-tracker-attachments}
@@ -158,6 +164,8 @@ services:
     command: ["python", "-m", "app.workers.deadlines"]
     environment:
       TRACKER_DATABASE_URL: ${TRACKER_DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-tracker}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-tracker}}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:?Set ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD}
       TRACKER_AUTH_SECRET_KEY: ${AUTH_SECRET_KEY:?Set a random AUTH_SECRET_KEY of at least 32 bytes}
       TRACKER_DEADLINE_WORKER_INTERVAL_SECONDS: ${DEADLINE_WORKER_INTERVAL_SECONDS:-60}
     depends_on:
@@ -173,6 +181,8 @@ services:
     command: ["python", "-m", "app.workers.registration_mail"]
     environment:
       TRACKER_DATABASE_URL: ${TRACKER_DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-tracker}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-tracker}}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:?Set ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD}
       TRACKER_AUTH_SECRET_KEY: ${AUTH_SECRET_KEY:?Set a random AUTH_SECRET_KEY of at least 32 bytes}
       TRACKER_PUBLIC_APP_URL: ${PUBLIC_APP_URL:-http://localhost:5173}
       TRACKER_SMTP_HOST: ${SMTP_HOST:-localhost}

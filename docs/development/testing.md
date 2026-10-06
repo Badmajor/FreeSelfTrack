@@ -24,8 +24,8 @@ TEST_POSTGRES_URL=<disposable postgresql+asyncpg URL> uv run pytest -q tests/tes
 
 These tests create users and registration rows; never point them at a production/shared database.
 They check concurrent single-use confirmation, unique-email races and SMTP worker locking.
-Without `TEST_POSTGRES_URL`, the three PostgreSQL tests skip explicitly. Validate downgrade to
-`0012_task_links` and upgrade to head on that disposable database before removing it.
+Without `TEST_POSTGRES_URL`, the three PostgreSQL tests skip explicitly. Historical TASK-021 round trips must pin `0013_pending_registrations` before downgrading
+to `0012_task_links`; current head has a deliberately irreversible owner contract migration.
 
 Frontend, from `frontend/`: `npm test`, `npm run lint`, `npm run typecheck`, `npm run build`.
 If the existing dependency cache is read-only, use `npm test -- --no-cache` and build to a writable
@@ -34,9 +34,8 @@ to a dedicated temporary environment for all uv commands.
 
 
 TASK-022: `uv run pytest -q tests/test_sessions.py tests/test_sessions_integration.py` covers
-JWT validation, cookie/CSRF behavior, logout, replay, password/reset/deactivation and ownership
-boundaries. TEST_POSTGRES_URL enables real races for refresh replay, password-change vs login,
-one-time reset and deactivation vs ownership creation. Use only a disposable migrated database.
+JWT validation, cookie/CSRF behavior, logout, replay, password/reset and disabled self-deactivation. TEST_POSTGRES_URL enables real races for refresh replay, password-change vs login,
+one-time reset and rejected employee creation/self-deactivation. Use only a disposable migrated database.
 Migration 0014 should upgrade, downgrade to 0013_pending_registrations, and upgrade again.
 Frontend lifecycle tests: `npm test -- --no-cache src/test/SessionLifecycle.test.tsx`.
 
@@ -190,3 +189,33 @@ Use UV_PROJECT_ENVIRONMENT and UV_CACHE_DIR under /tmp if the workspace .venv/ca
 unavailable. A dedicated pytest --basetemp under /tmp also isolates local Redis Unix sockets.
 Application migrations were exercised only in disposable PostgreSQL; no new frontend checks
 are required because TASK-030 adds no frontend or HTTP endpoints.
+
+## TASK-031 role and bootstrap validation
+
+From backend/:
+
+```sh
+uv run pytest -q
+RUN_ROLES_INTEGRATION=1 RUN_AUDIT_INTEGRATION=1 RUN_ADMINISTRATIVE_AUDIT_INTEGRATION=1 \
+  uv run pytest -q tests/test_administration_roles.py tests/test_administration_roles_integration.py \
+  tests/test_audit_integration.py tests/test_administrative_audit_integration.py
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy app
+```
+
+The roles suite creates its own disposable PostgreSQL 16 container, upgrades legacy and empty
+schemas, checks owner backfill for inactive/archived/missing memberships, preserves old audit,
+and races five bootstrap starts and password bootstrap versus old-password login. It never
+migrates the shared Compose database. SQLite/API tests cover required config, non-email/long
+credentials, startup, repeated bootstrap, email switch, unblocking without reactivating grants,
+credential protection, audit rollback and scoped workflow/global levels. Test ADMIN_* are
+synthetic fixture values, never deployment defaults. Without flags external tests skip explicitly.
+
+The 0019 migration suite is pinned to that revision and seeds pre-role data using frozen SQL,
+so current models are not run against an old schema. Audit runtime protection also runs at the
+current head. 0020/0021 deliberately reject downgrade; do not force an owner reconstruction.
+
+Frontend: `npm test`, `npm run lint`, `npm run typecheck`, `npm run build`. Capability fixtures
+replace owner_id; tests cover scoped workflow controls and config-admin credential UI.
+If the existing .venv/cache is read-only, use a temporary UV_PROJECT_ENVIRONMENT and UV_CACHE_DIR.

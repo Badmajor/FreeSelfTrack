@@ -24,11 +24,11 @@ const user = {
   is_active: true,
   profile: { user_id: "owner-1", first_name: "Owner", last_name: "User" },
 };
-const organization = { id: "organization-1", owner_id: user.id, name: "Acme" };
+const organization = { id: "organization-1", capabilities: { edit: true, manage_members: true, manage_workflow: true, archive: true }, name: "Acme" };
 const project = {
   id: "project-1",
   organization_id: organization.id,
-  owner_id: user.id,
+  capabilities: { edit: true, manage_members: true, manage_workflow: true, archive: true },
   name: "Tracker",
 };
 const statuses = [
@@ -132,10 +132,10 @@ it("restores workflow from its URL and persists collapsed sidebar with a project
 });
 
 it("renders workflow controls read-only for a project member", async () => {
-  mount({ ...user, id: "member-1" }, { ...project, owner_id: "owner-1" });
+  mount({ ...user, id: "member-1" }, { ...project, capabilities: { edit: false, manage_members: false, manage_workflow: false, archive: false } });
   expect(
     await screen.findByText(
-      "You can inspect this workflow. Only the project owner can change it.",
+      "You can inspect this workflow. Workflow changes require manager permissions.",
     ),
   ).toBeInTheDocument();
   await waitFor(() =>

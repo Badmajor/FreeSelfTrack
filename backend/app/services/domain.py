@@ -19,8 +19,14 @@ from app.models import (
     TaskLink,
     User,
 )
+from app.repositories.administration import AdministrationRepository
 from app.repositories.domain import DomainRepository
 from app.repositories.sessions import SessionRepository
+from app.schemas.administrative_audit import (
+    AdministrativeAuditWrite,
+    AuditChange,
+    WorkflowStatusSnapshot,
+)
 from app.schemas.domain import (
     BoardColumnResponse,
     BoardResponse,
@@ -28,9 +34,11 @@ from app.schemas.domain import (
     MembershipRequest,
     NotificationResponse,
     OrganizationCreate,
+    OrganizationResponse,
     ParticipantSummary,
     ProfileResponse,
     ProjectCreate,
+    ProjectResponse,
     ProjectUpdate,
     StatusCreate,
     StatusReorder,
@@ -49,6 +57,8 @@ from app.schemas.domain import (
     UnreadCountResponse,
     WatcherRequest,
 )
+from app.services.administration import AdministrationService
+from app.services.administrative_audit import AdministrativeAuditService
 from app.services.audit import record_event
 from app.services.errors import (
     ConflictError,
@@ -56,6 +66,7 @@ from app.services.errors import (
     NotFoundError,
     PermissionDeniedError,
 )
+from app.services.sessions import SessionService
 
 DEFAULT_STATUSES = ("Backlog", "In Progress", "Done")
 
@@ -79,12 +90,185 @@ class DomainService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
         self.repository = DomainRepository(session)
+        self.administration = AdministrationService(session)
+
+    async def organization_responses(
+        self, user_id: UUID, organizations: list[Organization]
+    ) -> list[OrganizationResponse]:
+        user = await self.repository.get_user(user_id)
+        admin = bool(user and user.is_active and user.is_system_admin)
+        org_roles, _ = await AdministrationRepository(self.session).active_memberships(user_id)
+        responses = []
+        for organization in organizations:
+            active = organization.deleted_at is None
+            manager = admin or org_roles.get(organization.id) == "manager"
+            result = OrganizationResponse.model_validate(organization)
+            result.capabilities = {
+                "edit": active and manager,
+                "manage_members": active and manager,
+                "manage_managers": active and admin,
+                "archive": active and admin,
+                "restore": not active and admin,
+                "create_project": active and manager,
+                "create_user": False,
+                "view_audit": False,
+            }
+            responses.append(result)
+        return responses
+
+    async def organization_response(
+        self, user_id: UUID, organization: Organization
+    ) -> OrganizationResponse:
+        return (await self.organization_responses(user_id, [organization]))[0]
+
+    async def project_responses(
+        self, user_id: UUID, projects: list[Project]
+    ) -> list[ProjectResponse]:
+        user = await self.repository.get_user(user_id)
+        admin = bool(user and user.is_active and user.is_system_admin)
+        org_roles, project_roles = await AdministrationRepository(self.session).active_memberships(
+            user_id
+        )
+        responses = []
+        for project in projects:
+            active = project.deleted_at is None
+            parent_manager = admin or org_roles.get(project.organization_id) == "manager"
+            manager = parent_manager or project_roles.get(project.id) == "manager"
+            result = ProjectResponse.model_validate(project)
+            result.capabilities = {
+                "edit": active and manager,
+                "manage_members": active and manager,
+                "manage_managers": active and parent_manager,
+                "archive": active and parent_manager,
+                "restore": not active and parent_manager,
+                "manage_workflow": active and manager,
+                "create_task": active and (parent_manager or project.id in project_roles),
+                "view_audit": False,
+            }
+            responses.append(result)
+        return responses
+
+    async def project_response(self, user_id: UUID, project: Project) -> ProjectResponse:
+        return (await self.project_responses(user_id, [project]))[0]
+
+    async def _workflow_snapshot(self, project_id: UUID) -> tuple[WorkflowStatusSnapshot, ...]:
+        statuses = await self.repository.list_statuses(project_id)
+        statuses += await self.repository.list_archived_statuses(project_id)
+        return tuple(
+            WorkflowStatusSnapshot(
+                id=item.id,
+                name=item.name,
+                position=item.position,
+                is_active=item.is_active,
+                is_completed=item.is_completed,
+            )
+            for item in sorted(statuses, key=lambda item: item.id)
+        )
+
+    async def _audit_workflow(
+        self, actor_id: UUID, project_id: UUID, before: tuple[WorkflowStatusSnapshot, ...]
+    ) -> None:
+        await self.session.flush()
+        after = await self._workflow_snapshot(project_id)
+        old_by_id = {item.id: item for item in before}
+        new_by_id = {item.id: item for item in after}
+        changed = {
+            key
+            for key in old_by_id.keys() | new_by_id.keys()
+            if old_by_id.get(key) != new_by_id.get(key)
+        }
+        AdministrativeAuditService(self.session).record(
+            AdministrativeAuditWrite(
+                actor_id=actor_id,
+                entity_type="project",
+                entity_id=project_id,
+                action="workflow_changed",
+                changes=(
+                    AuditChange(
+                        field="statuses",
+                        old=tuple(item for item in before if item.id in changed),
+                        new=tuple(item for item in after if item.id in changed),
+                    ),
+                ),
+            )
+        )
+
+    def _audit_membership(
+        self,
+        actor_id: UUID,
+        scope: Literal["organization", "project"],
+        scope_id: UUID,
+        target_id: UUID,
+        *,
+        removed: bool = False,
+        old_state: str | None = None,
+        old_role: str | None = None,
+    ) -> None:
+        audit = AdministrativeAuditService(self.session)
+        entities: tuple[tuple[Literal["organization", "project", "user"], UUID], ...] = (
+            (scope, scope_id),
+            ("user", target_id),
+        )
+        for entity_type, entity_id in entities:
+            audit.record(
+                AdministrativeAuditWrite(
+                    actor_id=actor_id,
+                    entity_type=entity_type,
+                    entity_id=entity_id,
+                    subject_user_id=target_id,
+                    action="member_removed" if removed else "member_added",
+                    changes=(
+                        AuditChange(
+                            field="organization_id" if scope == "organization" else "project_id",
+                            old=scope_id if removed else None,
+                            new=None if removed else scope_id,
+                        ),
+                        AuditChange(
+                            field="state", old=old_state, new="revoked" if removed else "active"
+                        ),
+                        AuditChange(field="role", old=old_role, new="member"),
+                    ),
+                )
+            )
+
+    def _audit_lifecycle(
+        self,
+        actor_id: UUID,
+        scope: Literal["organization", "project"],
+        scope_id: UUID,
+        old: datetime | None,
+        new: datetime | None,
+    ) -> None:
+        # deleted_at remains the storage name until TASK-035; audit uses the target term.
+        if old is not None and old.tzinfo is None:
+            old = old.replace(tzinfo=UTC)
+        AdministrativeAuditService(self.session).record(
+            AdministrativeAuditWrite(
+                actor_id=actor_id,
+                entity_type=scope,
+                entity_id=scope_id,
+                action="archived" if new is not None else "restored",
+                changes=(AuditChange(field="archived_at", old=old, new=new),),
+            )
+        )
 
     async def _add_organization_member(
         self, actor_id: UUID, organization_id: UUID, member_id: UUID
     ) -> None:
-        if await self.repository.get_organization_member(organization_id, member_id) is None:
+        member = await self.repository.get_organization_member(organization_id, member_id)
+        if member is not None and member.state != "active":
+            self._audit_membership(
+                actor_id,
+                "organization",
+                organization_id,
+                member_id,
+                old_state=member.state,
+                old_role=member.role,
+            )
+            member.state, member.role = "active", "member"
+        if member is None:
             await self.repository.add_organization_member(organization_id, member_id)
+            self._audit_membership(actor_id, "organization", organization_id, member_id)
             record_event(
                 self.session,
                 "membership_added",
@@ -95,11 +279,27 @@ class DomainService:
                 member_id=member_id,
             )
 
-    async def _add_project_member(self, actor_id: UUID, project_id: UUID, member_id: UUID) -> None:
-        if await self.repository.get_project_member(project_id, member_id) is None:
+    async def _add_project_member(
+        self, actor_id: UUID, project_id: UUID, member_id: UUID, *, reactivate: bool = False
+    ) -> None:
+        member = await self.repository.get_project_member(project_id, member_id)
+        if member is not None and member.state != "active":
+            if not reactivate:
+                raise ConflictError("Restore project participation before assigning this user")
+            self._audit_membership(
+                actor_id,
+                "project",
+                project_id,
+                member_id,
+                old_state=member.state,
+                old_role=member.role,
+            )
+            member.state, member.role = "active", "member"
+        if member is None:
             project = await self.repository.get_project(project_id)
             assert project is not None
             await self.repository.add_project_member(project_id, member_id)
+            self._audit_membership(actor_id, "project", project_id, member_id)
             record_event(
                 self.session,
                 "membership_added",
@@ -111,11 +311,20 @@ class DomainService:
             )
 
     async def create_organization(self, user_id: UUID, data: OrganizationCreate) -> Organization:
-        await self._lock_active_owner(user_id)
-        organization = Organization(owner_id=user_id, name=data.name)
+        await self._lock_active_user(user_id)
+        await self.administration.require_manager(user_id)
+        organization = Organization(name=data.name)
         self.session.add(organization)
         await self.session.flush()
-        await self._add_organization_member(user_id, organization.id, user_id)
+        AdministrativeAuditService(self.session).record(
+            AdministrativeAuditWrite(
+                actor_id=user_id,
+                entity_type="organization",
+                entity_id=organization.id,
+                action="created",
+                changes=(AuditChange(field="name", old=None, new=organization.name),),
+            )
+        )
         await self.session.commit()
         return organization
 
@@ -135,17 +344,16 @@ class DomainService:
         return await self.repository.list_projects_for_organization(organization_id)
 
     async def create_project(self, user_id: UUID, data: ProjectCreate) -> Project:
-        await self._lock_active_owner(user_id)
+        await self._lock_active_user(user_id)
         await self.get_organization(user_id, data.organization_id)
+        await self.administration.require_manager(user_id, data.organization_id)
         project = Project(
             organization_id=data.organization_id,
-            owner_id=user_id,
             name=data.name,
         )
         self.session.add(project)
         await self.session.flush()
         self.session.add(ProjectTaskSequence(project_id=project.id, next_number=1))
-        await self._add_project_member(user_id, project.id, user_id)
         for position, name in enumerate(DEFAULT_STATUSES):
             self.session.add(
                 ProjectStatus(
@@ -155,6 +363,15 @@ class DomainService:
                     is_completed=name == "Done",
                 )
             )
+        AdministrativeAuditService(self.session).record(
+            AdministrativeAuditWrite(
+                actor_id=user_id,
+                entity_type="project",
+                entity_id=project.id,
+                action="created",
+                changes=(AuditChange(field="name", old=None, new=project.name),),
+            )
+        )
         await self.session.commit()
         return project
 
@@ -179,8 +396,19 @@ class DomainService:
         return project
 
     async def update_project(self, user_id: UUID, project_id: UUID, data: ProjectUpdate) -> Project:
+        await self._lock_active_user(user_id)
         project = await self.get_project(user_id, project_id)
+        await self.administration.require_manager(user_id, project.organization_id, project.id)
         if data.name is not None:
+            AdministrativeAuditService(self.session).record(
+                AdministrativeAuditWrite(
+                    actor_id=user_id,
+                    entity_type="project",
+                    entity_id=project_id,
+                    action="updated",
+                    changes=(AuditChange(field="name", old=project.name, new=data.name),),
+                )
+            )
             project.name = data.name
         await self.session.commit()
         return project
@@ -192,9 +420,11 @@ class DomainService:
     async def add_organization_member(
         self, user_id: UUID, organization_id: UUID, data: MembershipRequest
     ) -> User:
+        await self._lock_active_user(user_id)
         organization = await self.get_organization(user_id, organization_id)
-        self._require_owner(user_id, organization.owner_id)
+        await self.administration.require_manager(user_id, organization.id)
         member_user = await self._find_user(data.email)
+        await self.administration.require_lower_level(user_id, member_user.id)
         await self._add_organization_member(user_id, organization_id, member_user.id)
         await self.session.commit()
         return member_user
@@ -202,16 +432,28 @@ class DomainService:
     async def remove_organization_member(
         self, user_id: UUID, organization_id: UUID, member_id: UUID
     ) -> User:
+        await self._lock_active_user(user_id)
         organization = await self.get_organization(user_id, organization_id)
-        self._require_owner(user_id, organization.owner_id)
-        if member_id == organization.owner_id:
-            raise ConflictError("Organization owner must transfer ownership first")
+        await self.administration.require_manager(user_id, organization.id)
+        await self.administration.require_lower_level(user_id, member_id)
         member = await self.repository.get_organization_member(organization_id, member_id)
         if member is None:
             raise NotFoundError("Organization member not found")
         member_user = await self.repository.get_user(member_id)
         if member_user is None:
             raise NotFoundError("Organization member not found")
+        if member.state == "revoked":
+            await self.session.commit()
+            return member_user
+        self._audit_membership(
+            user_id,
+            "organization",
+            organization_id,
+            member_id,
+            removed=True,
+            old_state=member.state,
+            old_role=member.role,
+        )
         await self.repository.remove_organization_member(organization_id, member_id)
         record_event(
             self.session,
@@ -225,37 +467,17 @@ class DomainService:
         await self.session.commit()
         return member_user
 
-    async def transfer_organization_ownership(
-        self, user_id: UUID, organization_id: UUID, data: MembershipRequest
-    ) -> Organization:
-        organization = await self.get_organization(user_id, organization_id)
-        self._require_owner(user_id, organization.owner_id)
-        target = await self._find_user(data.email)
-        await self._lock_active_owner(target.id)
-        if await self.repository.get_organization_member(organization_id, target.id) is None:
-            raise ConflictError("New owner must be an organization member")
-        if organization.owner_id != target.id:
-            record_event(
-                self.session,
-                "ownership_transferred",
-                actor_id=user_id,
-                target_type="organization",
-                target_id=organization_id,
-                organization_id=organization_id,
-                previous_owner_id=organization.owner_id,
-                owner_id=target.id,
-            )
-        organization.owner_id = target.id
-        await self.session.commit()
-        return organization
-
     async def delete_organization(
         self, user_id: UUID, organization_id: UUID, data: ConfirmRequest
     ) -> None:
+        await self._lock_active_user(user_id)
         organization = await self.get_organization(user_id, organization_id)
-        self._require_owner(user_id, organization.owner_id)
+        await self.administration.require_manager(user_id)
         self._require_confirmation(data)
         deleted_at = datetime.now(UTC)
+        self._audit_lifecycle(
+            user_id, "organization", organization_id, organization.deleted_at, deleted_at
+        )
         organization.deleted_at = deleted_at
         record_event(
             self.session,
@@ -267,6 +489,7 @@ class DomainService:
         )
         projects = await self.repository.list_projects_for_organization(organization_id)
         for project in projects:
+            self._audit_lifecycle(user_id, "project", project.id, project.deleted_at, deleted_at)
             project.deleted_at = deleted_at
             record_event(
                 self.session,
@@ -279,8 +502,12 @@ class DomainService:
         await self.session.commit()
 
     async def restore_organization(self, user_id: UUID, organization_id: UUID) -> Organization:
+        await self._lock_active_user(user_id)
         organization = await self._get_deleted_organization(organization_id)
-        self._require_owner(user_id, organization.owner_id)
+        await self.administration.require_manager(user_id)
+        self._audit_lifecycle(
+            user_id, "organization", organization_id, organization.deleted_at, None
+        )
         organization.deleted_at = None
         record_event(
             self.session,
@@ -300,28 +527,43 @@ class DomainService:
     async def add_project_member(
         self, user_id: UUID, project_id: UUID, data: MembershipRequest
     ) -> User:
+        await self._lock_active_user(user_id)
         project = await self.get_project(user_id, project_id)
-        self._require_owner(user_id, project.owner_id)
+        await self.administration.require_manager(user_id, project.organization_id, project.id)
         member_user = await self._find_user(data.email)
-        if not await self.repository.has_organization_access(
+        await self.administration.require_lower_level(user_id, member_user.id)
+        organization_member = await self.repository.get_organization_member(
             project.organization_id, member_user.id
-        ):
+        )
+        if organization_member is None or organization_member.state != "active":
             raise ConflictError("Project member must belong to the project organization")
-        await self._add_project_member(user_id, project_id, member_user.id)
+        await self._add_project_member(user_id, project_id, member_user.id, reactivate=True)
         await self.session.commit()
         return member_user
 
     async def remove_project_member(self, user_id: UUID, project_id: UUID, member_id: UUID) -> User:
+        await self._lock_active_user(user_id)
         project = await self.get_project(user_id, project_id)
-        self._require_owner(user_id, project.owner_id)
-        if member_id == project.owner_id:
-            raise ConflictError("Project owner must transfer ownership first")
+        await self.administration.require_manager(user_id, project.organization_id, project.id)
+        await self.administration.require_lower_level(user_id, member_id)
         member = await self.repository.get_project_member(project_id, member_id)
         if member is None:
             raise NotFoundError("Project member not found")
         member_user = await self.repository.get_user(member_id)
         if member_user is None:
             raise NotFoundError("Project member not found")
+        if member.state == "revoked":
+            await self.session.commit()
+            return member_user
+        self._audit_membership(
+            user_id,
+            "project",
+            project_id,
+            member_id,
+            removed=True,
+            old_state=member.state,
+            old_role=member.role,
+        )
         await self.repository.remove_project_member(project_id, member_id)
         record_event(
             self.session,
@@ -335,35 +577,14 @@ class DomainService:
         await self.session.commit()
         return member_user
 
-    async def transfer_project_ownership(
-        self, user_id: UUID, project_id: UUID, data: MembershipRequest
-    ) -> Project:
-        project = await self.get_project(user_id, project_id)
-        self._require_owner(user_id, project.owner_id)
-        target = await self._find_user(data.email)
-        await self._lock_active_owner(target.id)
-        if await self.repository.get_project_member(project_id, target.id) is None:
-            raise ConflictError("New owner must be a project member")
-        if project.owner_id != target.id:
-            record_event(
-                self.session,
-                "ownership_transferred",
-                actor_id=user_id,
-                target_type="project",
-                target_id=project_id,
-                organization_id=project.organization_id,
-                previous_owner_id=project.owner_id,
-                owner_id=target.id,
-            )
-        project.owner_id = target.id
-        await self.session.commit()
-        return project
-
     async def delete_project(self, user_id: UUID, project_id: UUID, data: ConfirmRequest) -> None:
+        await self._lock_active_user(user_id)
         project = await self.get_project(user_id, project_id)
-        self._require_owner(user_id, project.owner_id)
+        await self.administration.require_manager(user_id, project.organization_id)
         self._require_confirmation(data)
-        project.deleted_at = datetime.now(UTC)
+        deleted_at = datetime.now(UTC)
+        self._audit_lifecycle(user_id, "project", project_id, project.deleted_at, deleted_at)
+        project.deleted_at = deleted_at
         record_event(
             self.session,
             "resource_deleted",
@@ -375,11 +596,13 @@ class DomainService:
         await self.session.commit()
 
     async def restore_project(self, user_id: UUID, project_id: UUID) -> Project:
+        await self._lock_active_user(user_id)
         project = await self._get_deleted_project(project_id)
-        self._require_owner(user_id, project.owner_id)
+        await self.administration.require_manager(user_id, project.organization_id)
         organization = await self.repository.get_organization(project.organization_id)
         if organization is None or organization.deleted_at is not None:
             raise ConflictError("Restore the project organization first")
+        self._audit_lifecycle(user_id, "project", project_id, project.deleted_at, None)
         project.deleted_at = None
         record_event(
             self.session,
@@ -395,8 +618,10 @@ class DomainService:
     async def create_status(
         self, user_id: UUID, project_id: UUID, data: StatusCreate
     ) -> ProjectStatus:
+        await self._lock_active_user(user_id, shared=True)
         project = await self.get_project(user_id, project_id)
-        self._require_owner(user_id, project.owner_id)
+        await self.administration.require_manager(user_id, project.organization_id, project.id)
+        before = await self._workflow_snapshot(project_id)
         statuses = await self.repository.list_statuses(project_id)
         position = len(statuses) if data.position is None else min(data.position, len(statuses))
         if not data.is_active:
@@ -412,6 +637,7 @@ class DomainService:
         self.session.add(project_status)
         statuses.insert(position, project_status)
         await self._renumber(statuses)
+        await self._audit_workflow(user_id, project_id, before)
         await self.session.commit()
         return project_status
 
@@ -426,8 +652,10 @@ class DomainService:
     async def update_status(
         self, user_id: UUID, project_id: UUID, status_id: UUID, data: StatusUpdate
     ) -> ProjectStatus:
+        await self._lock_active_user(user_id, shared=True)
         project = await self.get_project(user_id, project_id)
-        self._require_owner(user_id, project.owner_id)
+        await self.administration.require_manager(user_id, project.organization_id, project.id)
+        before = await self._workflow_snapshot(project_id)
         project_status = await self._get_project_status(project_id, status_id)
         if data.is_active is False:
             return await self.archive_status(user_id, project_id, status_id)
@@ -446,14 +674,17 @@ class DomainService:
             statuses.remove(project_status)
             statuses.insert(min(data.position, len(statuses)), project_status)
             await self._renumber(statuses)
+        await self._audit_workflow(user_id, project_id, before)
         await self.session.commit()
         return project_status
 
     async def reorder_statuses(
         self, user_id: UUID, project_id: UUID, data: StatusReorder
     ) -> list[ProjectStatus]:
+        await self._lock_active_user(user_id, shared=True)
         project = await self.get_project(user_id, project_id)
-        self._require_owner(user_id, project.owner_id)
+        await self.administration.require_manager(user_id, project.organization_id, project.id)
+        before = await self._workflow_snapshot(project_id)
         statuses = await self.repository.list_statuses(project_id)
         current_ids = {project_status.id for project_status in statuses}
         if len(data.status_ids) != len(set(data.status_ids)) or set(data.status_ids) != current_ids:
@@ -463,14 +694,17 @@ class DomainService:
         by_id = {project_status.id: project_status for project_status in statuses}
         ordered = [by_id[status_id] for status_id in data.status_ids]
         await self._renumber(ordered)
+        await self._audit_workflow(user_id, project_id, before)
         await self.session.commit()
         return ordered
 
     async def archive_status(
         self, user_id: UUID, project_id: UUID, status_id: UUID
     ) -> ProjectStatus:
+        await self._lock_active_user(user_id, shared=True)
         project = await self.get_project(user_id, project_id)
-        self._require_owner(user_id, project.owner_id)
+        await self.administration.require_manager(user_id, project.organization_id, project.id)
+        before = await self._workflow_snapshot(project_id)
         project_status = await self._get_project_status(project_id, status_id)
         if not project_status.is_active:
             return project_status
@@ -488,14 +722,17 @@ class DomainService:
         await self.session.flush()
         active_statuses = await self.repository.list_statuses(project_id)
         await self._renumber(active_statuses)
+        await self._audit_workflow(user_id, project_id, before)
         await self.session.commit()
         return project_status
 
     async def restore_status(
         self, user_id: UUID, project_id: UUID, status_id: UUID
     ) -> ProjectStatus:
+        await self._lock_active_user(user_id, shared=True)
         project = await self.get_project(user_id, project_id)
-        self._require_owner(user_id, project.owner_id)
+        await self.administration.require_manager(user_id, project.organization_id, project.id)
+        before = await self._workflow_snapshot(project_id)
         project_status = await self._get_project_status(project_id, status_id)
         if project_status.is_active:
             return project_status
@@ -504,10 +741,12 @@ class DomainService:
         project_status.position = len(active_statuses)
         active_statuses.append(project_status)
         await self._renumber(active_statuses)
+        await self._audit_workflow(user_id, project_id, before)
         await self.session.commit()
         return project_status
 
     async def create_task(self, user_id: UUID, project_id: UUID, data: TaskCreate) -> Task:
+        await self._lock_active_user(user_id, shared=True)
         project = await self.get_project(user_id, project_id)
         project_status = await self.repository.get_status(data.status_id)
         if (
@@ -530,13 +769,12 @@ class DomainService:
             await self._add_project_member(user_id, project_id, data.assignee_id)
         if (
             data.story_points is not None or data.due_date is not None or data.priority is not None
-        ) and user_id not in {
-            project.owner_id,
-            reporter_id,
-            data.assignee_id,
-        }:
+        ) and not (
+            await self.administration.can_manage(user_id, project.organization_id, project.id)
+            or user_id in {reporter_id, data.assignee_id}
+        ):
             raise PermissionDeniedError(
-                "Only the project owner, reporter, or assignee can set planning fields"
+                "Only the scoped manager, reporter, or assignee can set planning fields"
             )
         task = Task(
             project_id=project_id,
@@ -604,13 +842,16 @@ class DomainService:
         return await self._task_response(await self.get_task(user_id, task_id))
 
     async def update_task(self, user_id: UUID, task_id: UUID, data: TaskUpdate) -> Task:
+        await self._lock_active_user(user_id, shared=True)
         task = await self.get_task(user_id, task_id)
         if not await self.repository.has_project_access(task.project_id, user_id):
             raise PermissionDeniedError("Project membership is required to update tasks")
         project = await self.repository.get_project(task.project_id)
         if project is None:
             raise NotFoundError("Task not found")
-        can_manage_planning = user_id in {project.owner_id, task.reporter_id, task.assignee_id}
+        can_manage_planning = await self.administration.can_manage(
+            user_id, project.organization_id, project.id
+        ) or user_id in {task.reporter_id, task.assignee_id}
         events: list[tuple[str, str, dict[str, str]]] = []
         if data.title is not None and data.title != task.title:
             old_title = task.title
@@ -659,7 +900,7 @@ class DomainService:
                 ("status_changed", "Task status changed", {"status_id": str(project_status.id)})
             )
         if "reporter_id" in data.model_fields_set:
-            self._require_reporter_permission(user_id, task, project.owner_id)
+            await self._require_reporter_permission(user_id, task, project)
             if data.reporter_id is None:
                 raise InvalidWorkflowError("A task must have a reporter")
             await self._require_organization_user(project.organization_id, data.reporter_id)
@@ -679,7 +920,7 @@ class DomainService:
                     )
                 )
         if "assignee_id" in data.model_fields_set:
-            self._require_assignee_permission(user_id, task, project.owner_id, data.assignee_id)
+            await self._require_assignee_permission(user_id, task, project, data.assignee_id)
             if data.assignee_id is not None:
                 await self._require_organization_user(project.organization_id, data.assignee_id)
                 await self._add_project_member(user_id, task.project_id, data.assignee_id)
@@ -704,7 +945,7 @@ class DomainService:
         if "story_points" in data.model_fields_set and data.story_points != task.story_points:
             if not can_manage_planning:
                 raise PermissionDeniedError(
-                    "Only the project owner, reporter, or assignee can change story points"
+                    "Only the scoped manager, reporter, or assignee can change story points"
                 )
             old_points = str(task.story_points) if task.story_points is not None else None
             new_points = str(data.story_points) if data.story_points is not None else None
@@ -715,7 +956,7 @@ class DomainService:
         if "priority" in data.model_fields_set and data.priority != task.priority:
             if not can_manage_planning:
                 raise PermissionDeniedError(
-                    "Only the project owner, reporter, or assignee can change priority"
+                    "Only the scoped manager, reporter, or assignee can change priority"
                 )
             old_priority = task.priority
             task.priority = data.priority
@@ -731,7 +972,7 @@ class DomainService:
         if deadline_changed:
             if not can_manage_planning:
                 raise PermissionDeniedError(
-                    "Only the project owner, reporter, or assignee can change deadline"
+                    "Only the scoped manager, reporter, or assignee can change deadline"
                 )
             old_deadline = task.due_date.isoformat() if task.due_date is not None else None
             new_deadline = data.due_date.isoformat() if data.due_date is not None else None
@@ -779,6 +1020,7 @@ class DomainService:
     async def create_task_link(
         self, user_id: UUID, task_id: UUID, data: TaskLinkCreate
     ) -> tuple[TaskLinkResponse, bool]:
+        await self._lock_active_user(user_id, shared=True)
         source = await self.get_task(user_id, task_id)
         target = await self.repository.get_task(data.target_task_id)
         if target is None:
@@ -846,6 +1088,7 @@ class DomainService:
         return await self._task_link_response(source, link), True
 
     async def delete_task_link(self, user_id: UUID, task_id: UUID, link_id: UUID) -> None:
+        await self._lock_active_user(user_id, shared=True)
         source = await self.get_task(user_id, task_id)
         link = await self.repository.get_task_link(link_id)
         if link is None or source.id not in {link.task_a_id, link.task_b_id}:
@@ -875,6 +1118,7 @@ class DomainService:
     async def add_task_watcher(
         self, user_id: UUID, task_id: UUID, data: WatcherRequest
     ) -> list[ParticipantSummary]:
+        await self._lock_active_user(user_id, shared=True)
         task = await self.get_task(user_id, task_id)
         if not await self.repository.has_project_access(task.project_id, user_id):
             raise PermissionDeniedError("Project membership is required to manage watchers")
@@ -883,7 +1127,7 @@ class DomainService:
             raise NotFoundError("Task not found")
         target_id = data.user_id or user_id
         if target_id != user_id:
-            self._require_watcher_manager(user_id, task, project.owner_id)
+            await self._require_watcher_manager(user_id, task, project)
         await self._require_organization_user(project.organization_id, target_id)
         existing = await self.repository.get_task_watcher(task.id, target_id)
         await self._add_project_member(user_id, task.project_id, target_id)
@@ -901,6 +1145,7 @@ class DomainService:
     async def remove_task_watcher(
         self, user_id: UUID, task_id: UUID, watcher_id: UUID
     ) -> list[ParticipantSummary]:
+        await self._lock_active_user(user_id, shared=True)
         task = await self.get_task(user_id, task_id)
         if not await self.repository.has_project_access(task.project_id, user_id):
             raise PermissionDeniedError("Project membership is required to manage watchers")
@@ -908,7 +1153,7 @@ class DomainService:
         if project is None:
             raise NotFoundError("Task not found")
         if watcher_id != user_id:
-            self._require_watcher_manager(user_id, task, project.owner_id)
+            await self._require_watcher_manager(user_id, task, project)
         if await self.repository.get_task_watcher(task.id, watcher_id) is None:
             raise NotFoundError("Task watcher not found")
         old_value = await self._display_name(watcher_id)
@@ -1243,31 +1488,38 @@ class DomainService:
                 event_data=payload,
             )
 
-    @staticmethod
-    def _require_assignee_permission(
-        user_id: UUID, task: Task, project_owner_id: UUID, new_assignee_id: UUID | None
+    async def _require_assignee_permission(
+        self, user_id: UUID, task: Task, project: Project, new_assignee_id: UUID | None
     ) -> None:
         if task.assignee_id is None and new_assignee_id == user_id:
             return
-        if user_id not in {project_owner_id, task.assignee_id}:
+        if user_id != task.assignee_id and not await self.administration.can_manage(
+            user_id, project.organization_id, project.id
+        ):
             raise PermissionDeniedError(
-                "Only the project owner or current assignee can change assignee"
+                "Only the scoped manager or current assignee can change assignee"
             )
 
-    @staticmethod
-    def _require_reporter_permission(user_id: UUID, task: Task, project_owner_id: UUID) -> None:
-        if user_id not in {project_owner_id, task.reporter_id}:
-            raise PermissionDeniedError("Only the project owner or reporter can change reporter")
+    async def _require_reporter_permission(
+        self, user_id: UUID, task: Task, project: Project
+    ) -> None:
+        if user_id != task.reporter_id and not await self.administration.can_manage(
+            user_id, project.organization_id, project.id
+        ):
+            raise PermissionDeniedError("Only the scoped manager or reporter can change reporter")
 
-    @staticmethod
-    def _require_watcher_manager(user_id: UUID, task: Task, project_owner_id: UUID) -> None:
-        if user_id not in {project_owner_id, task.assignee_id}:
-            raise PermissionDeniedError("Only the project owner or assignee can manage watchers")
+    async def _require_watcher_manager(self, user_id: UUID, task: Task, project: Project) -> None:
+        if user_id != task.assignee_id and not await self.administration.can_manage(
+            user_id, project.organization_id, project.id
+        ):
+            raise PermissionDeniedError("Only the scoped manager or assignee can manage watchers")
 
-    async def _lock_active_owner(self, user_id: UUID) -> None:
+    async def _lock_active_user(self, user_id: UUID, *, shared: bool = False) -> None:
+        await AdministrationRepository(self.session).lock_lifecycle(shared=shared)
         user = await SessionRepository(self.session).lock_user(user_id)
         if user is None or not user.is_active:
             raise NotFoundError("User not found")
+        await SessionService(self.session).recheck_request_session(user_id)
 
     async def _find_user(self, email: str) -> User:
         user = await self.repository.get_user_by_email(normalized_email(str(email)))
@@ -1286,11 +1538,6 @@ class DomainService:
         if project is None or project.deleted_at is None:
             raise NotFoundError("Project not found")
         return project
-
-    @staticmethod
-    def _require_owner(user_id: UUID, owner_id: UUID) -> None:
-        if user_id != owner_id:
-            raise PermissionDeniedError("Only the owner can perform this operation")
 
     @staticmethod
     def _require_confirmation(data: ConfirmRequest) -> None:
