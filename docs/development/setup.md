@@ -1,7 +1,7 @@
 # Development Setup
 
 > TASK-031 implements roles and required ADMIN_* bootstrap. This is an intermediate stage;
-> registration/reset removal and the full administrative release remain TASK-032–038.
+> TASK-032 removes registration/reset; the full administrative release remains TASK-033–038.
 > Existing installations require the [coordinated migration plan](../architecture/administration-migration.md).
 
 ## Docker Compose
@@ -40,13 +40,17 @@ Set `FRONTEND_PORT` or `POSTGRES_PORT` in `.env` when the default host ports are
 Backend development uses `uv` from `backend/`; set `TRACKER_DATABASE_URL` in the backend environment before starting it directly. The Compose backend receives its internal `db:5432` URL from environment variables; the published PostgreSQL host port is only for external debugging. Frontend development uses npm from `frontend/`. The Vite dev server proxies `/api` to `http://localhost:8000`, matching the same-origin URL used by the Compose frontend.
 
 
-## Account registration
+## Account provisioning
 
-New accounts require SMTP email confirmation. Configure `.env` SMTP values and `PUBLIC_APP_URL`
-before using registration; Compose starts `registration-mail-worker`. Existing users remain usable.
-See [authentication operations](authentication.md) for deployment, proxy trust, Redis limits and
-password-blocklist configuration. See [testing](testing.md) for validation commands.
-
+Set ADMIN_EMAIL and ADMIN_PASSWORD, migrate to head, then start the API. In **Users**, SA can
+create accounts globally or in an organization; OM creates in their managed organization.
+Creation returns a temporary password once, without mail. The user signs in, sets a permanent
+password, then signs in again. Only SA issues replacement temporary passwords (except config admin).
+Public register/verify-email/reset-request/reset/deactivate routes return 404, including old links.
+Migration 0022 clears pending registration/reset requests. The legacy mail-worker service now
+performs expired-session cleanup only; replace old worker images during the coordinated upgrade.
+Block/unblock is global for SA/OM; block revokes sessions and memberships but retains task IDs.
+Unblock never restores memberships. Do not apply migrations to a shared database during testing.
 
 ## Session security upgrade
 
@@ -110,7 +114,7 @@ The default Compose stack includes ClamAV and the scan worker; see attachments.m
 Set nonempty `ADMIN_EMAIL` and `ADMIN_PASSWORD` in your local environment or `.env` before
 starting Compose/API. These names have **no TRACKER_ prefix**. Do not commit credentials.
 No email-format or password-complexity policy applies to this account; login accepts its
-configured identifier and password. Ordinary registration/new-password policy remains unchanged.
+configured identifier and password. Ordinary permanent-password policy remains unchanged.
 
 After migrations, API startup runs bootstrap before serving health/API requests. It creates or
 reuses the normalized (`strip().casefold()`) identifier, unblocks it, clears the temporary-password
@@ -129,7 +133,5 @@ scopes do not acquire active grants. Zero or multiple managers are valid; creati
 OM or scoped PM. Transfer-ownership endpoints are removed; clients use backend capabilities.
 Downgrade cannot reconstruct ownership; use a coordinated pre-transition backup if needed.
 
-This is an intermediate development stage. Administrative user/membership UI, complete read
-matrix, archive lifecycle and audit views remain TASK-032–037. Registration and ordinary email
-recovery still exist until TASK-032. Do not deploy this intermediate stage over a shared existing
+This is an intermediate development stage. Membership UI, complete read matrix, archive lifecycle and audit views remain TASK-033–037. Registration and email recovery are disabled by TASK-032. Do not deploy this intermediate stage over a shared existing
 installation: follow the [coordinated migration plan](../architecture/administration-migration.md).

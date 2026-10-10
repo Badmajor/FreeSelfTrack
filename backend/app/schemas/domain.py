@@ -184,6 +184,8 @@ class UserSummary(BaseModel):
 class ParticipantSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
+    is_active: bool = True
+
     id: UUID
     first_name: str
     last_name: str

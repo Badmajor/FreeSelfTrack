@@ -1,6 +1,5 @@
 import secrets
 from datetime import UTC, datetime, timedelta
-from unittest.mock import patch
 from uuid import uuid4
 
 import jwt
@@ -12,27 +11,15 @@ from app.core.config import Settings, get_settings
 from app.dependencies.session_cookie import REFRESH_COOKIE
 from app.models import User
 from app.models.auth_session import AuthSession, PasswordReset, RefreshCredential
-from app.services.reset_mail import ResetMailService
-from app.services.sessions import reset_token, token_digest
-from tests.auth_helpers import confirm_registration
+from app.services.sessions import token_digest
+from tests.auth_helpers import seed_account
 
 PASSWORD = "correct horse battery staple"
 NEW_PASSWORD = "another excellent horse passphrase"
 
 
 async def account(client, email="session@example.com"):
-    assert (
-        await client.post(
-            "/api/auth/register",
-            json={
-                "email": email,
-                "password": PASSWORD,
-                "first_name": "Session",
-                "last_name": "Tester",
-            },
-        )
-    ).status_code == 202
-    await confirm_registration(client, email)
+    await seed_account(email)
     return await sign_in(client, email)
 
 
@@ -163,7 +150,17 @@ async def test_password_change_revokes_every_session_and_pending_reset(client, d
     first = await account(client)
     cookie = client.cookies.get(REFRESH_COOKIE)
     second = await sign_in(client)
-    await client.post("/api/auth/password/reset-request", json={"email": "session@example.com"})
+    user = await db_session.scalar(select(User))
+    db_session.add(
+        PasswordReset(
+            user_id=user.id,
+            email=user.email,
+            token_hash="a" * 64,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+            next_attempt_at=datetime.now(UTC),
+        )
+    )
+    await db_session.commit()
     for current, new, expected in (("wrong", NEW_PASSWORD, 401), (PASSWORD, "password1234", 422)):
         response = await client.post(
             "/api/auth/password/change",
@@ -190,69 +187,6 @@ async def test_password_change_revokes_every_session_and_pending_reset(client, d
     await sign_in(client, password=NEW_PASSWORD)
 
 
-async def test_reset_request_uniformity_consumption_and_revocation(client, db_session):
-    first = await account(client)
-    cookie = client.cookies.get(REFRESH_COOKIE)
-    second = await sign_in(client)
-    responses = [
-        await client.post("/api/auth/password/reset-request", json={"email": email})
-        for email in ("session@example.com", "unknown@example.com")
-    ]
-    assert responses[0].status_code == responses[1].status_code == 202
-    assert responses[0].json() == responses[1].json()
-    pending = await db_session.scalar(select(PasswordReset))
-    token = reset_token(pending.id)
-    assert pending.token_hash == token_digest(token)
-    assert token not in responses[0].text
-    for invalid in ("bad", str(uuid4()) + ".bad", token[:-1] + ("a" if token[-1] != "a" else "b")):
-        assert (
-            await client.post(
-                "/api/auth/password/reset", json={"token": invalid, "new_password": NEW_PASSWORD}
-            )
-        ).status_code == 401
-    assert (
-        await client.post(
-            "/api/auth/password/reset", json={"token": token, "new_password": "password1234"}
-        )
-    ).status_code == 422
-    response = await client.post(
-        "/api/auth/password/reset", json={"token": token, "new_password": NEW_PASSWORD}
-    )
-    assert response.status_code == 204
-    assert (
-        await client.post(
-            "/api/auth/password/reset", json={"token": token, "new_password": PASSWORD}
-        )
-    ).status_code == 401
-    for login in (first, second):
-        assert (await client.get("/api/organizations", headers=bearer(login))).status_code == 401
-    assert (await use_refresh(client, cookie)).status_code == 401
-    await sign_in(client, password=NEW_PASSWORD)
-
-
-async def test_expired_reset_and_mail_retry(client, db_session, caplog):
-    await account(client)
-    await client.post("/api/auth/password/reset-request", json={"email": "session@example.com"})
-    pending = await db_session.scalar(select(PasswordReset))
-    token = reset_token(pending.id)
-    with patch("app.services.reset_mail.send_reset", side_effect=OSError("private SMTP data")):
-        assert await ResetMailService(db_session).process_one()
-    assert pending.attempts == 1 and pending.sent_at is None
-    pending.next_attempt_at = datetime.now(UTC) - timedelta(seconds=1)
-    await db_session.commit()
-    with patch("app.services.reset_mail.send_message") as send:
-        assert await ResetMailService(db_session).process_one()
-        text = send.call_args.args[0].get_content()
-        assert "#reset=" + token in text
-    pending.expires_at = datetime.now(UTC) - timedelta(seconds=1)
-    await db_session.commit()
-    response = await client.post(
-        "/api/auth/password/reset", json={"token": token, "new_password": NEW_PASSWORD}
-    )
-    assert response.status_code == 401
-    assert token not in caplog.text and "private SMTP data" not in caplog.text
-
-
 async def test_self_deactivation_is_disabled_and_preserves_sessions(client, db_session):
     response = await account(client)
     cookie = client.cookies.get(REFRESH_COOKIE)
@@ -260,7 +194,7 @@ async def test_self_deactivation_is_disabled_and_preserves_sessions(client, db_s
         result = await client.post(
             "/api/auth/deactivate", headers=bearer(response), json={"current_password": password}
         )
-        assert result.status_code == 403
+        assert result.status_code == 404
     user = await db_session.scalar(select(User))
     assert user.is_active
     assert (await client.get("/api/organizations", headers=bearer(response))).status_code == 200

@@ -177,60 +177,6 @@ it("shows a retry state when restoration fails due to the network", async () => 
   expect(screen.getByLabelText("Email")).toBeInTheDocument();
 });
 
-it("requests a reset using a neutral response", async () => {
-  const fetchMock = vi.fn((input: string | URL | Request) =>
-    String(input).endsWith("/auth/refresh")
-      ? jsonResponse({ detail: "Authentication required" }, 401)
-      : jsonResponse(
-          {
-            message:
-              "If this account is active, a password reset link will be emailed.",
-          },
-          202,
-        ),
-  );
-  vi.stubGlobal("fetch", fetchMock);
-  renderWithQueryClient(<App />);
-  const actor = userEvent.setup();
-  await actor.click(
-    await screen.findByRole("button", { name: "Forgot password?" }),
-  );
-  await actor.type(screen.getByLabelText("Email"), user.email);
-  await actor.click(screen.getByRole("button", { name: "Send reset link" }));
-  expect(await screen.findByRole("status")).toHaveTextContent(
-    "If this account is active",
-  );
-});
-
-it("clears the reset fragment and submits the token only after an explicit password choice", async () => {
-  window.history.replaceState(null, "", "/#reset=single-use-token");
-  const fetchMock = vi.fn(() =>
-    Promise.resolve(new Response(null, { status: 204 })),
-  );
-  vi.stubGlobal("fetch", fetchMock);
-  renderWithQueryClient(<App />);
-  expect(window.location.hash).toBe("");
-  expect(fetchMock).not.toHaveBeenCalled();
-  const actor = userEvent.setup();
-  await actor.type(
-    screen.getByLabelText("New password"),
-    "a sufficiently long new password",
-  );
-  await actor.click(screen.getByRole("button", { name: "Save new password" }));
-  expect(await screen.findByRole("status")).toHaveTextContent(
-    "Password changed",
-  );
-  expect(fetchMock).toHaveBeenCalledWith(
-    "/api/auth/password/reset",
-    expect.objectContaining({
-      body: JSON.stringify({
-        token: "single-use-token",
-        new_password: "a sufficiently long new password",
-      }),
-    }),
-  );
-});
-
 it("hides configuration administrator credential controls and self-deactivation", () => {
   const fetchMock = vi.fn();
   vi.stubGlobal("fetch", fetchMock);

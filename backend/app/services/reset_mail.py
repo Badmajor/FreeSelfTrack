@@ -1,10 +1,7 @@
 import logging
-import smtplib
-from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from starlette.concurrency import run_in_threadpool
 
 from app.core.config import get_settings
 from app.models.auth_session import PasswordReset
@@ -38,22 +35,5 @@ class ResetMailService:
         self.repository = SessionRepository(session)
 
     async def process_one(self) -> bool:
-        now = datetime.now(UTC)
-        pending = await self.repository.next_reset_mail(now)
-        if pending is None:
-            await self.repository.clean_expired(now)
-            await self.session.commit()
-            return False
-        try:
-            await run_in_threadpool(send_reset, pending)
-        except (OSError, smtplib.SMTPException):
-            pending.attempts += 1
-            pending.next_attempt_at = now + timedelta(
-                seconds=min(300, 5 * 2 ** min(pending.attempts, 6))
-            )
-            logger.warning("auth outcome=reset_delivery_retry")
-        else:
-            pending.sent_at = datetime.now(UTC)
-            logger.info("auth outcome=reset_delivered")
-        await self.session.commit()
-        return True
+        """Legacy outbox is disabled; no registration/reset messages are sent."""
+        return False

@@ -1,22 +1,12 @@
 from uuid import UUID, uuid4
 
-from auth_helpers import authenticated_id, confirm_registration, seed_manager, set_system_admin
+from auth_helpers import authenticated_id, seed_account, seed_manager, set_system_admin
 from httpx import AsyncClient
 
 
 async def authenticate(client: AsyncClient, user_id: UUID) -> dict[str, str]:
     email = f"{user_id}@example.com"
-    response = await client.post(
-        "/api/auth/register",
-        json={
-            "email": email,
-            "password": "correct horse battery staple",
-            "first_name": "Test",
-            "last_name": "User",
-        },
-    )
-    assert response.status_code == 202
-    await confirm_registration(client, email)
+    await seed_account(email)
     response = await client.post(
         "/api/auth/login",
         json={
@@ -671,6 +661,7 @@ async def test_task_participants_watchers_and_notifications(
     assert self_assigned.status_code == 200
     assert self_assigned.json()["assignee_id"] == str(organization_user_id)
     assert self_assigned.json()["assignee"] == {
+        "is_active": True,
         "id": str(organization_user_id),
         "first_name": "Test",
         "last_name": "User",

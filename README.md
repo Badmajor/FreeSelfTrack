@@ -52,7 +52,7 @@ FreeSelfTrack is designed for managing projects, tasks, and team workflows.
 
 Current features include:
 
-* user registration with SMTP email confirmation and authentication;
+* administrative user creation, temporary passwords and authentication;
 * organizations;
 * organization members;
 * projects;
@@ -111,7 +111,7 @@ The easiest way to run FreeSelfTrack is with Docker Compose.
 
 For a standard installation, you do **not** need to install Python, Node.js, PostgreSQL, or Redis separately.
 
-To run the containers, you need Docker with Docker Compose support. New user registration also requires an accessible SMTP server, either your own or your email provider's.
+To run the containers, you need Docker with Docker Compose support. Account creation and password recovery are administrative operations and do not require SMTP.
 
 ## 1. Requirements
 
@@ -122,7 +122,7 @@ At minimum, you need:
 * Docker Compose;
 * SSH access to the server;
 * an available TCP port for the web interface;
-* an SMTP server and connection settings for confirmation emails.
+* administrator credentials (`ADMIN_EMAIL` and `ADMIN_PASSWORD`).
 
 For a small team, you can start with approximately:
 
@@ -203,7 +203,7 @@ Open the file:
 nano .env
 ```
 
-At minimum, change the passwords and application secret, configure SMTP, and set `PUBLIC_APP_URL` and `PUBLIC_HOST`. The example below is for local use; for a server, use HTTPS and the settings in the custom-domain section.
+At minimum, change the passwords and application secret, set administrator credentials, and set `PUBLIC_APP_URL` and `PUBLIC_HOST`. The example below is for local use; for a server, use HTTPS and the settings in the custom-domain section.
 
 Example:
 
@@ -249,7 +249,7 @@ nginx. For local use, open exactly `http://localhost:5173`.
 
 ## Connect an SMTP Server
 
-New accounts are created only after email confirmation. Registration cannot be completed without working SMTP; existing users can still sign in. Compose does not include a mail server: configure your own server or your email provider's settings.
+SMTP is not used for account creation or password recovery. The settings below are reserved for email-change delivery (TASK-036); that flow is not implemented yet.
 
 | Variable | Value |
 | --- | --- |
@@ -262,7 +262,7 @@ New accounts are created only after email confirmation. Registration cannot be c
 
 Replace the example values in `.env` with your settings. Both `starttls` and `tls` verify the server certificate. Do not publish `.env` containing mail credentials.
 
-Compose automatically starts `registration-mail-worker`, which sends queued messages from PostgreSQL and retries failed deliveries. After changing `.env`, apply the settings with `docker compose up -d`. If a link does not open your application, check `PUBLIC_APP_URL` and request a new email by submitting registration again.
+Compose retains the `registration-mail-worker` service for expired-session cleanup. It no longer sends registration or password-reset messages.
 
 ## Important
 
@@ -337,14 +337,14 @@ The bundled frontend listens on HTTP internally; do not use remote plain HTTP fo
 
 Open FreeSelfTrack in your browser.
 
-1. Submit the registration form with an email address you can access and a password of at least 12 characters.
-2. Open the confirmation email and follow its link.
-3. Enter the password you chose during registration and confirm your email. Opening the link alone does not create an account.
-4. Sign in with your email and password.
+1. Sign in with the deployment's ADMIN_EMAIL and ADMIN_PASSWORD.
+2. Open **Users** and create an account; share its one-time displayed temporary password securely.
+3. The new user signs in, sets a permanent password, and signs in again.
 
-Links expire after one hour by default and can be used once. If a link expires, submit registration again. The application displays the same message for new and already registered addresses; existing accounts remain unchanged.
+The temporary password has no expiry, but cannot grant workspace access before password change.
+Existing users retain their passwords. Public registration and email recovery are disabled.
 
-After confirming your email and signing in, you can create an organization:
+After signing in as system administrator, you can create an organization:
 
 ```text
 Organization
@@ -452,7 +452,7 @@ A background worker that periodically checks task deadlines and creates correspo
 
 ### Registration Mail Worker
 
-The `registration-mail-worker` container sends confirmation emails through the configured SMTP server. PostgreSQL stores the queue, request expiration and delivery state. Temporary failures are retried until the registration request expires.
+The `registration-mail-worker` container now cleans expired sessions. Registration/reset mail is disabled.
 
 ---
 
@@ -888,7 +888,7 @@ The backend requires:
 * PostgreSQL;
 * Redis;
 * MinIO and ClamAV with the attachment scan worker for file uploads;
-* an SMTP server or local test mail sink for registration.
+* ADMIN_EMAIL and ADMIN_PASSWORD for administrator bootstrap.
 
 The project uses `uv` for Python dependency management.
 
@@ -1081,18 +1081,11 @@ Press Ctrl+Shift+R. The current client queues downloads and retries temporary li
 For other errors, inspect backend logs and the user's access to the task.
 
 
-## Confirmation Email Does Not Arrive
+## Account creation or password recovery
 
-Check the mail worker and its logs:
-
-```bash
-docker compose ps registration-mail-worker
-docker compose logs --tail=100 registration-mail-worker
-```
-
-Check the spam folder, SMTP connectivity from the container, port and encryption mode, credentials, and authorized sender address. The `confirmation_delivery_retry` event means delivery will be retried; `mail_database_unavailable` indicates that the worker cannot access PostgreSQL.
-
-The form's “Check your email” response means the request was accepted, not that the message has already arrived. After correcting `.env`, run `docker compose up -d`. If the request's one-hour lifetime has expired, register again; frequent attempts may be temporarily rate-limited. If the email arrives but its link points to the wrong address, correct `PUBLIC_APP_URL`.
+No confirmation or reset email is sent. Ask a system administrator for a new temporary password.
+Organization managers can create users in their organizations but cannot reset passwords.
+Old verification/reset links are disabled even when their original expiration has not passed.
 
 ---
 
@@ -1290,15 +1283,15 @@ Plain HTTP access by server IP cannot retain Secure refresh cookies.
 
 Profile offers password change with the current password for ordinary users. Self-deactivation
 is disabled. Configuration administrator credentials are controlled by ADMIN_*. Password change
-and email reset end all affected sessions. “Forgot password?” uses a single-use 30-minute SMTP
-link; keep registration-mail-worker running for both registration and recovery.
+and administrative reset end all affected sessions. Public registration, email recovery and old
+confirmation/reset links are disabled. Contact an administrator for a new temporary password.
 
 ## Configuration administrator and roles (TASK-031)
 
 Set nonempty `ADMIN_EMAIL` and `ADMIN_PASSWORD` in your local environment or `.env` before
 starting Compose/API. These names have **no TRACKER_ prefix**. Do not commit credentials.
 No email-format or password-complexity policy applies to this account; login accepts its
-configured identifier and password. Ordinary registration/new-password policy remains unchanged.
+configured identifier and password. Ordinary permanent-password policy remains unchanged.
 
 After migrations, API startup runs bootstrap before serving health/API requests. It creates or
 reuses the normalized (`strip().casefold()`) identifier, unblocks it, clears the temporary-password
@@ -1317,7 +1310,30 @@ scopes do not acquire active grants. Zero or multiple managers are valid; creati
 OM or scoped PM. Transfer-ownership endpoints are removed; clients use backend capabilities.
 Downgrade cannot reconstruct ownership; use a coordinated pre-transition backup if needed.
 
-This is an intermediate development stage. Administrative user/membership UI, complete read
-matrix, archive lifecycle and audit views remain TASK-032–037. Registration and ordinary email
-recovery still exist until TASK-032. Do not deploy this intermediate stage over a shared existing
+This is an intermediate development stage. Membership UI, complete read matrix, archive
+lifecycle and audit views remain TASK-033–037. User lifecycle is implemented; registration
+and email recovery are disabled by TASK-032. Do not deploy this intermediate stage over a shared existing
 installation: follow the [coordinated migration plan](docs/architecture/administration-migration.md).
+
+
+## Administrative user lifecycle (TASK-032)
+
+Open **Users** in the sidebar. The system administrator creates users without membership or
+in an organization; an organization manager selects an organization they manage. Creation and
+initial membership commit together. The temporary password is displayed once, is not emailed,
+and is stored only as an Argon2 hash. Share it securely; after closing the result, only the
+system administrator can issue a replacement. It has no expiry and permits repeated sign-in,
+but only password change, session refresh and logout are available until a permanent password
+is set. Changing it signs out every session; sign in again with the permanent password.
+
+System administrators and active organization managers can block/unblock users globally,
+including equal-level managers. Blocking revokes every session and all memberships/manager
+roles. Unblocking restores neither memberships nor roles. Task participant IDs remain unchanged;
+a blocked assignee is shown struck through with a readable label. The configuration administrator
+cannot be blocked or have their password reset through the API/UI.
+
+Migration `0022_disable_public_auth` invalidates old registration/reset outboxes, preserving
+existing users, passwords and audit records. Deploy API, SPA and cleanup worker together with
+writers stopped; use the [release plan](docs/architecture/administration-migration.md).
+New user mutations and the paginated user directory are implemented; full user cards, profile/email
+administration, membership administration and audit views remain in later tasks.

@@ -193,53 +193,6 @@ export async function changePassword(
   endSession();
 }
 
-export async function deactivateAccount(
-  currentPassword: string,
-): Promise<void> {
-  await request<void>("/auth/deactivate", {
-    method: "POST",
-    body: JSON.stringify({ current_password: currentPassword }),
-  });
-  endSession();
-}
-
-export function requestPasswordReset(
-  email: string,
-): Promise<{ message: string }> {
-  return request("/auth/password/reset-request", {
-    method: "POST",
-    body: JSON.stringify({ email }),
-  });
-}
-
-export async function resetPassword(
-  token: string,
-  newPassword: string,
-): Promise<void> {
-  await request<void>("/auth/password/reset", {
-    method: "POST",
-    body: JSON.stringify({ token, new_password: newPassword }),
-  });
-  endSession();
-}
-
-export async function register(
-  email: string,
-  password: string,
-  firstName: string,
-  lastName: string,
-): Promise<{ message: string }> {
-  return request<{ message: string }>("/auth/register", {
-    method: "POST",
-    body: JSON.stringify({
-      email,
-      password,
-      first_name: firstName,
-      last_name: lastName,
-    }),
-  });
-}
-
 export async function getMyProfile(): Promise<Profile> {
   return request<Profile>("/users/me/profile");
 }
@@ -344,7 +297,12 @@ export type UserSummary = {
   email: string;
 };
 
-export type Participant = { id: string; first_name: string; last_name: string };
+export type Participant = {
+  id: string;
+  first_name: string;
+  last_name: string;
+  is_active?: boolean;
+};
 export type Priority = "low" | "normal" | "major" | "critical";
 export type Task = {
   id: string;
@@ -739,12 +697,51 @@ export function getProject(id: string): Promise<Project> {
   return request<Project>(`/projects/${id}`);
 }
 
-export async function verifyEmail(
-  token: string,
-  password: string,
-): Promise<{ message: string }> {
-  return request<{ message: string }>("/auth/verify-email", {
-    method: "POST",
-    body: JSON.stringify({ token, password }),
-  });
+export type UserCard = {
+  id: string;
+  first_name: string;
+  last_name: string;
+  is_active: boolean;
+  created_at: string;
+  capabilities: Record<string, boolean>;
+};
+export type TemporaryPasswordResponse = {
+  user: AuthUser;
+  temporary_password: string;
+};
+export function listUsers(q: string, state: string, cursor?: string) {
+  const params = new URLSearchParams({ q, state });
+  if (cursor) params.set("cursor", cursor);
+  return request<{ items: UserCard[]; next_cursor: string | null }>(
+    `/users?${params}`,
+  );
+}
+export function createUser(
+  email: string,
+  first_name: string,
+  last_name: string,
+  organizationId?: string,
+) {
+  return request<TemporaryPasswordResponse>(
+    organizationId ? `/organizations/${organizationId}/users` : "/users",
+    {
+      method: "POST",
+      body: JSON.stringify({ email, first_name, last_name }),
+    },
+  );
+}
+export function issueTemporaryPassword(userId: string) {
+  return request<TemporaryPasswordResponse>(
+    `/users/${userId}/temporary-password`,
+    { method: "POST" },
+  );
+}
+export function setUserBlocked(userId: string, blocked: boolean) {
+  return request<AuthUser>(
+    `/users/${userId}/${blocked ? "block" : "unblock"}`,
+    {
+      method: "POST",
+      ...(blocked ? { body: JSON.stringify({ confirm: true }) } : {}),
+    },
+  );
 }

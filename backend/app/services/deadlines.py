@@ -4,6 +4,7 @@ from datetime import UTC, date, datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import DeadlineNotificationDelivery
+from app.repositories.administration import AdministrationRepository
 from app.repositories.domain import DomainRepository
 
 
@@ -13,6 +14,7 @@ class DeadlineService:
         self.repository = DomainRepository(session)
 
     async def process_due(self, current_date: date | None = None, limit: int = 500) -> int:
+        await AdministrationRepository(self.session).lock_lifecycle(shared=True)
         today = current_date or datetime.now(UTC).date()
         tasks = await self.repository.list_due_tasks(today, limit)
         for task in tasks:

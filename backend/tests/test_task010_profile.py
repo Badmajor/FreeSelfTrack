@@ -1,25 +1,9 @@
-from auth_helpers import confirm_registration
+from auth_helpers import seed_account
 from httpx import AsyncClient
 
 
-async def test_registration_requires_and_returns_profile(client: AsyncClient) -> None:
-    missing_names = await client.post(
-        "/api/auth/register",
-        json={"email": "profile@example.com", "password": "correct horse battery staple"},
-    )
-    assert missing_names.status_code == 422
-
-    registered = await client.post(
-        "/api/auth/register",
-        json={
-            "email": "profile@example.com",
-            "password": "correct horse battery staple",
-            "first_name": "Ada",
-            "last_name": "Lovelace",
-        },
-    )
-    assert registered.status_code == 202
-    await confirm_registration(client, "profile@example.com")
+async def test_existing_account_profile_read_and_update(client: AsyncClient) -> None:
+    await seed_account("profile@example.com", first_name="Ada", last_name="Lovelace")
 
     token = (
         await client.post(

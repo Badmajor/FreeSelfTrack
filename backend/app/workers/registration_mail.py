@@ -1,12 +1,12 @@
 import asyncio
 import logging
+from datetime import UTC, datetime
 
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.config import get_settings
 from app.db.session import SessionFactory
-from app.services.registration_mail import RegistrationMailService
-from app.services.reset_mail import ResetMailService
+from app.repositories.sessions import SessionRepository
 
 logger = logging.getLogger("security.auth")
 
@@ -14,11 +14,9 @@ logger = logging.getLogger("security.auth")
 async def run() -> None:
     while True:
         try:
-            for service in (RegistrationMailService, ResetMailService):
-                for _ in range(100):
-                    async with SessionFactory() as session:
-                        if not await service(session).process_one():
-                            break
+            async with SessionFactory() as session:
+                await SessionRepository(session).clean_expired(datetime.now(UTC))
+                await session.commit()
         except SQLAlchemyError:
             # SQL parameters may contain credentials. Record only a sanitized outcome.
             logger.error("auth outcome=mail_database_unavailable")

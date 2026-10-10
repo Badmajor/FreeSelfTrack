@@ -110,7 +110,7 @@ class DomainService:
                 "archive": active and admin,
                 "restore": not active and admin,
                 "create_project": active and manager,
-                "create_user": False,
+                "create_user": active and manager,
                 "view_audit": False,
             }
             responses.append(result)
@@ -1392,6 +1392,7 @@ class DomainService:
             id=user.id,
             first_name=user.profile.first_name,
             last_name=user.profile.last_name,
+            is_active=user.is_active,
         )
 
     async def _require_organization_user(self, organization_id: UUID, user_id: UUID) -> User:

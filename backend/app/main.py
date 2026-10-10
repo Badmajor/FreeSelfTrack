@@ -14,11 +14,13 @@ from app.api.chat import router as chat_router
 from app.api.router import router
 from app.api.sessions import router as session_router
 from app.api.upload_limit import ChatUploadLimit
+from app.api.user_lifecycle import router as user_lifecycle_router
 from app.core.audit import AuditCorrelation
 from app.core.browser_security import SecureFastAPI
 from app.core.config import get_settings
 from app.db.session import SessionFactory
 from app.services.bootstrap import bootstrap_administrator
+from app.services.errors import AdministrativeError
 
 settings = get_settings()
 # Uvicorn configures its own loggers, not the root logger. Enable sanitized auth
@@ -58,6 +60,8 @@ app.add_middleware(
     www_redirect=False,
 )
 app.add_middleware(AuditCorrelation)
+
+app.include_router(user_lifecycle_router, prefix=settings.api_prefix)
 app.include_router(router, prefix=settings.api_prefix)
 app.include_router(session_router, prefix=settings.api_prefix)
 app.include_router(chat_router, prefix=settings.api_prefix)
@@ -70,7 +74,13 @@ async def health() -> dict[str, str]:
 
 @app.exception_handler(RequestValidationError)
 async def validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
-    if not request.url.path.startswith(settings.api_prefix + "/auth/"):
+    path = request.url.path.removeprefix(settings.api_prefix)
+    if not (
+        path.startswith("/auth/")
+        or path == "/users"
+        or path.endswith("/users")
+        or path.endswith("/temporary-password")
+    ):
         return await request_validation_exception_handler(request, exc)
     return JSONResponse(
         status_code=422,
@@ -80,4 +90,13 @@ async def validation_error(request: Request, exc: RequestValidationError) -> JSO
                 for error in exc.errors()
             ]
         },
+    )
+
+
+@app.exception_handler(AdministrativeError)
+async def administrative_error(request: Request, exc: AdministrativeError) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": str(exc), "code": exc.code},
+        headers={"WWW-Authenticate": "Bearer"} if exc.status_code == 401 else None,
     )

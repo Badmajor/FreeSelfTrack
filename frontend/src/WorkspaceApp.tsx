@@ -58,6 +58,7 @@ import {
 } from "./api";
 import { KanbanView, NotificationTaskPanel } from "./KanbanView";
 import { MembersRoutePage } from "./MembersPage";
+import { UsersPage } from "./UsersPage";
 import { AccountSecurity } from "./AccountSecurity";
 import type { LinkSelection } from "./TaskLinks";
 
@@ -80,6 +81,7 @@ export function AuthenticatedApp(props: Props) {
     <Routes>
       <Route element={<AuthenticatedLayout {...props} />}>
         <Route index element={<RootRedirect />} />
+        <Route path="management/users" element={<UsersPage user={props.user} />} />
         <Route
           path="management/organizations"
           element={<OrganizationManagementPage />}
@@ -232,6 +234,12 @@ function AppSidebar({
         </button>
       </div>
       <nav className="sidebar-nav">
+        <SidebarLink
+          to="/management/users"
+          icon={<Users size={18} />}
+          label="Users"
+          collapsed={collapsed}
+        />
         <SidebarLink
           to="/profile"
           icon={<UserRound size={18} />}
