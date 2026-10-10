@@ -24,3 +24,10 @@ class DuplicateEmailError(DomainError):
 
 class InvalidCredentialsError(DomainError):
     status_code = 401
+
+
+class AdministrativeError(DomainError):
+    def __init__(self, status_code: int, code: str, message: str) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.code = code

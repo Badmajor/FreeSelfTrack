@@ -78,6 +78,7 @@ class ChatService:
     async def create(
         self, user_id: UUID, task_id: UUID, data: CommentCreate, files: list[Uploaded]
     ) -> CommentResponse:
+        await self.domain._lock_active_user(user_id, shared=True)
         task = await self.authorize(user_id, task_id)
         if (not data.text.strip() and not files) or len(files) > MAX_FILES:
             raise InvalidWorkflowError("Write a message or attach up to 5 files")

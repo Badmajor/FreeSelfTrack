@@ -75,7 +75,7 @@ async def test_bootstrap_login_idempotency_and_credentials_protection(client, db
         ("deactivate", {"current_password": "x"}),
     ]:
         response = await client.post("/api/auth/" + path, headers=headers, json=data)
-        assert response.status_code == 403
+        assert response.status_code == (404 if path == "deactivate" else 403)
     # No public system-role mutation or ownership-transfer alias exists.
     assert (
         await client.patch(

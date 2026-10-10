@@ -1,24 +1,20 @@
 from uuid import UUID
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
 from app.models import User
 from app.models.auth_session import AuthSession
-from app.services.errors import InvalidCredentialsError
+from app.services.errors import AdministrativeError, InvalidCredentialsError
 from app.services.sessions import SessionService
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
-def authentication_error() -> HTTPException:
-    return HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Authentication required",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
+def authentication_error() -> AdministrativeError:
+    return AdministrativeError(401, "authentication_required", "Authentication required")
 
 
 async def current_auth(
@@ -35,7 +31,13 @@ async def current_auth(
         raise authentication_error() from exc
 
 
+async def password_change_user(auth: tuple[User, AuthSession] = Depends(current_auth)) -> User:
+    return auth[0]
+
+
 async def current_user(auth: tuple[User, AuthSession] = Depends(current_auth)) -> User:
+    if auth[0].must_change_password:
+        raise AdministrativeError(403, "password_change_required", "Password change required")
     return auth[0]
 
 

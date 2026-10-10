@@ -1,38 +1,27 @@
-from httpx import AsyncClient
-from sqlalchemy import select
-
 from app.db.session import get_session
 from app.main import app
-from app.models.registration import PendingRegistration
-from app.services.verification import create_verification_token
+from app.models import User, UserProfile
+from app.services.auth import password_hash
 
 
-async def confirmation_token(email: str) -> str:
+async def seed_account(
+    email, password="correct horse battery staple", first_name="Test", last_name="User", **flags
+):
+    """Seed a pre-existing account; tests of onboarding use the real administrative API."""
     generator = app.dependency_overrides[get_session]()
     session = await anext(generator)
     try:
-        registration = await session.scalar(
-            select(PendingRegistration)
-            .where(PendingRegistration.email == email.strip().casefold())
-            .order_by(PendingRegistration.expires_at.desc())
+        user = User(
+            email=email.strip().casefold(),
+            password_hash=password_hash.hash(password),
+            profile=UserProfile(first_name=first_name, last_name=last_name),
+            **flags,
         )
-        assert registration is not None
-        return create_verification_token(registration)
+        session.add(user)
+        await session.commit()
+        return user.id
     finally:
         await generator.aclose()
-
-
-async def confirm_registration(
-    client: AsyncClient, email: str, password: str = "correct horse battery staple"
-) -> None:
-    response = await client.post(
-        "/api/auth/verify-email",
-        json={
-            "token": await confirmation_token(email),
-            "password": password,
-        },
-    )
-    assert response.status_code == 200, response.text
 
 
 def authenticated_id(headers):

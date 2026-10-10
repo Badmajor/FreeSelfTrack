@@ -1,11 +1,9 @@
 import logging
 import smtplib
 import ssl
-from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from starlette.concurrency import run_in_threadpool
 
 from app.core.config import get_settings
 from app.models.registration import PendingRegistration
@@ -67,23 +65,5 @@ class RegistrationMailService:
         self.repository = RegistrationRepository(session)
 
     async def process_one(self) -> bool:
-        now = datetime.now(UTC)
-        registration = await self.repository.next_mail(now)
-        if registration is None:
-            await self.repository.clean_expired(now)
-            await self.session.commit()
-            return False
-        try:
-            await run_in_threadpool(send_confirmation, registration)
-        except (OSError, smtplib.SMTPException):
-            # SMTP exceptions can contain recipients/server responses: never log them.
-            registration.attempts += 1
-            registration.next_attempt_at = now + timedelta(
-                seconds=min(300, 5 * 2 ** min(registration.attempts, 6))
-            )
-            logger.warning("auth outcome=confirmation_delivery_retry")
-        else:
-            registration.sent_at = datetime.now(UTC)
-            logger.info("auth outcome=confirmation_delivered")
-        await self.session.commit()
-        return True
+        """Legacy outbox is disabled; no registration/reset messages are sent."""
+        return False

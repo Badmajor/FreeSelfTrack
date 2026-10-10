@@ -1,10 +1,10 @@
 from uuid import UUID
 
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import Organization, OrganizationMember, Project, ProjectMember, User
+from app.models import Organization, OrganizationMember, Project, ProjectMember, User, UserProfile
 from app.models.registration import PendingRegistration
 
 # Shared by bootstrap and lifecycle writers. Never upgrade a shared lock to exclusive.
@@ -132,3 +132,25 @@ class AdministrationRepository:
             {identifier: role for identifier, role in organizations},
             {identifier: role for identifier, role in projects},
         )
+
+    async def revoke_memberships(self, user_id: UUID) -> None:
+        for model in (OrganizationMember, ProjectMember):
+            await self.session.execute(
+                update(model).where(model.user_id == user_id).values(state="revoked", role="member")
+            )
+
+    async def users_page(
+        self, query: str, state: str, after: UUID | None, limit: int
+    ) -> list[User]:
+        statement = select(User).join(UserProfile).options(selectinload(User.profile))
+        if query:
+            statement = statement.where(
+                (UserProfile.first_name + " " + UserProfile.last_name).icontains(
+                    query, autoescape=True
+                )
+            )
+        if state != "all":
+            statement = statement.where(User.is_active.is_(state == "active"))
+        if after is not None:
+            statement = statement.where(User.id > after)
+        return list(await self.session.scalars(statement.order_by(User.id).limit(limit + 1)))

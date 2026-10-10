@@ -1,6 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-
 import {
   getUnreadNotificationCount,
   listNotifications,
@@ -9,102 +8,75 @@ import {
   restoreSession,
   ApiError,
   openNotification,
-  register,
   type AuthUser,
   type Profile,
 } from "./api";
-import { PasswordRecovery } from "./PasswordRecovery";
-import { VerifyEmail } from "./VerifyEmail";
 import { AuthenticatedApp } from "./WorkspaceApp";
-
-type Mode = "login" | "register";
+import { AccountSecurity } from "./AccountSecurity";
 
 export function App() {
-  const [verificationToken, setVerificationToken] = useState(() =>
-    new URLSearchParams(window.location.hash.slice(1)).get("verify"),
-  );
   const queryClient = useQueryClient();
-  const [resetToken, setResetToken] = useState(() =>
-    new URLSearchParams(window.location.hash.slice(1)).get("reset"),
-  );
-  const [recovering, setRecovering] = useState(false);
-  const [restoring, setRestoring] = useState(!verificationToken && !resetToken);
+  const [restoring, setRestoring] = useState(true);
   const [restoreError, setRestoreError] = useState("");
-  const [mode, setMode] = useState<Mode>("register");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [firstName, setFirstName] = useState("");
-  const [lastName, setLastName] = useState("");
   const [user, setUser] = useState<AuthUser | null>(null);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
   const [submitting, setSubmitting] = useState(false);
-
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setError("");
-    setNotice("");
-    setSubmitting(true);
-    try {
-      if (mode === "register") {
-        await register(email, password, firstName, lastName);
-        setPassword("");
-        setMode("login");
-        setNotice(
-          "Check your email to confirm your registration, then sign in.",
-        );
-      } else {
-        const response = await login(email, password);
-        setUser(response.user);
-        setPassword("");
-      }
-    } catch (submitError) {
-      setError(
-        submitError instanceof Error ? submitError.message : "Request failed",
-      );
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
+  const [legacyLink] = useState(() => {
+    const params = new URLSearchParams(window.location.hash.slice(1));
+    return params.has("verify") || params.has("reset");
+  });
   useEffect(() => {
     let active = true;
+    if (legacyLink)
+      window.history.replaceState(
+        null,
+        "",
+        window.location.pathname + window.location.search,
+      );
     localStorage.removeItem("freeselftrack.access_token");
     localStorage.removeItem("freeselftrack.user");
     const expired = () => {
       queryClient.clear();
       setUser(null);
-      setMode("login");
-      setNotice("");
     };
     window.addEventListener("freeselftrack:session-ended", expired);
-    if (!verificationToken && !resetToken) {
-      restoreSession()
-        .then((result) => {
-          if (active) setUser(result.user);
-        })
-        .catch((err: unknown) => {
-          if (active && !(err instanceof ApiError && err.status === 401)) {
-            setMode("login");
-            setRestoreError(
-              err instanceof ApiError && err.status === 403
-                ? "Session restoration was rejected. Open the configured application address or contact your administrator."
-                : "Unable to restore your session. Try again or sign in.",
-            );
-          }
-        })
-        .finally(() => {
-          if (active) setRestoring(false);
-        });
-    }
+    restoreSession()
+      .then((result) => {
+        if (active) setUser(result.user);
+      })
+      .catch((err: unknown) => {
+        if (active && !(err instanceof ApiError && err.status === 401)) {
+          setRestoreError(
+            err instanceof ApiError && err.status === 403
+              ? "Session restoration was rejected. Open the configured application address or contact your administrator."
+              : "Unable to restore your session. Try again or sign in.",
+          );
+        }
+      })
+      .finally(() => {
+        if (active) setRestoring(false);
+      });
     return () => {
       active = false;
       window.removeEventListener("freeselftrack:session-ended", expired);
     };
-    // Startup restoration only; completing an email flow leads to explicit sign-in.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queryClient]);
-
+  }, [queryClient, legacyLink]);
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setSubmitting(true);
+    try {
+      const result = await login(email, password);
+      setUser(result.user);
+      setPassword("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Request failed");
+    } finally {
+      setSubmitting(false);
+    }
+  }
   async function signOut() {
     setError("");
     try {
@@ -113,38 +85,25 @@ export function App() {
       setError("Sign out failed. Try again.");
     }
   }
-
   function saveProfile(profile: Profile) {
-    if (!user) return;
-    const next = { ...user, profile };
-    setUser(next);
+    if (user) setUser({ ...user, profile });
   }
-
-  if (resetToken || recovering)
-    return (
-      <PasswordRecovery
-        token={resetToken}
-        onDone={() => {
-          setResetToken(null);
-          setRecovering(false);
-          setRestoring(false);
-          setMode("login");
-        }}
-      />
-    );
-
-  if (verificationToken)
-    return (
-      <VerifyEmail
-        token={verificationToken}
-        onDone={() => {
-          setVerificationToken(null);
-          setMode("login");
-        }}
-      />
-    );
-
   if (restoring) return <p role="status">Restoring session...</p>;
+  if (user?.must_change_password)
+    return (
+      <main className="shell">
+        <h1>Set a permanent password</h1>
+        <p>
+          Your temporary password permits only a password change. Sign in again
+          after changing it.
+        </p>
+        <AccountSecurity />
+        <button type="button" onClick={() => void signOut()}>
+          Sign out
+        </button>
+        {error && <p role="alert">{error}</p>}
+      </main>
+    );
   if (user)
     return (
       <>
@@ -156,129 +115,51 @@ export function App() {
         />
       </>
     );
-
   return (
     <main className="shell">
       <section className="auth-panel" aria-labelledby="auth-title">
         <div className="eyebrow">FreeSelfTrack</div>
+        <h1 id="auth-title">Welcome back</h1>
+        <p className="muted">
+          Sign in to continue to your workspace. Contact your administrator to
+          create an account or reset your password.
+        </p>
+        {legacyLink && (
+          <p role="status">
+            Registration and password reset links are no longer supported.
+            Contact your administrator.
+          </p>
+        )}
         {restoreError && (
           <div>
             <p role="alert">{restoreError}</p>
-            <button
-              className="button secondary"
-              type="button"
-              onClick={() => window.location.reload()}
-            >
+            <button type="button" onClick={() => window.location.reload()}>
               Retry
             </button>
           </div>
         )}
-        <h1 id="auth-title">
-          {mode === "register" ? "Create your account" : "Welcome back"}
-        </h1>
-        <p className="muted">
-          {mode === "register"
-            ? "Set up your account to start organizing work."
-            : "Sign in to continue to your workspace."}
-        </p>
-        <div
-          className="mode-switch"
-          role="tablist"
-          aria-label="Authentication mode"
-        >
-          <button
-            className={mode === "register" ? "tab active" : "tab"}
-            type="button"
-            role="tab"
-            aria-selected={mode === "register"}
-            onClick={() => {
-              setMode("register");
-              setError("");
-              setNotice("");
-            }}
-          >
-            Register
-          </button>
-          <button
-            className={mode === "login" ? "tab active" : "tab"}
-            type="button"
-            role="tab"
-            aria-selected={mode === "login"}
-            onClick={() => {
-              setMode("login");
-              setError("");
-              setNotice("");
-            }}
-          >
-            Sign in
-          </button>
-        </div>
-        <button
-          className="text-link"
-          type="button"
-          onClick={() => setRecovering(true)}
-        >
-          Forgot password?
-        </button>
-        <form onSubmit={handleSubmit} noValidate>
-          {mode === "register" && (
-            <>
-              <label htmlFor="first-name">First name</label>
-              <input
-                id="first-name"
-                value={firstName}
-                onChange={(event) => setFirstName(event.target.value)}
-                required
-              />
-              <label htmlFor="last-name">Last name</label>
-              <input
-                id="last-name"
-                value={lastName}
-                onChange={(event) => setLastName(event.target.value)}
-                required
-              />
-            </>
-          )}
+        <form onSubmit={handleSubmit}>
           <label htmlFor="email">Email</label>
           <input
             id="email"
-            name="email"
-            type={mode === "register" ? "email" : "text"}
+            type="text"
             autoComplete="email"
             required
             value={email}
-            onChange={(event) => setEmail(event.target.value)}
+            onChange={(e) => setEmail(e.target.value)}
           />
           <label htmlFor="password">Password</label>
           <input
             id="password"
-            name="password"
             type="password"
-            autoComplete={
-              mode === "register" ? "new-password" : "current-password"
-            }
-            minLength={mode === "register" ? 12 : 1}
-            maxLength={mode === "register" ? 128 : undefined}
+            autoComplete="current-password"
             required
             value={password}
-            onChange={(event) => setPassword(event.target.value)}
+            onChange={(e) => setPassword(e.target.value)}
           />
-          {notice && (
-            <p className="notice" role="status">
-              {notice}
-            </p>
-          )}
-          {error && (
-            <p className="error" role="alert">
-              {error}
-            </p>
-          )}
-          <button className="button" type="submit" disabled={submitting}>
-            {submitting
-              ? "Working..."
-              : mode === "register"
-                ? "Create account"
-                : "Sign in"}
+          {error && <p role="alert">{error}</p>}
+          <button className="button" disabled={submitting}>
+            {submitting ? "Working..." : "Sign in"}
           </button>
         </form>
       </section>

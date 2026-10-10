@@ -24,8 +24,6 @@ from app.schemas.domain import (
     ProjectCreate,
     ProjectResponse,
     ProjectUpdate,
-    RegisterRequest,
-    RegistrationResponse,
     StatusCreate,
     StatusReorder,
     StatusResponse,
@@ -40,15 +38,12 @@ from app.schemas.domain import (
     TaskUpdate,
     UnreadCountResponse,
     UserResponse,
-    VerificationResponse,
-    VerifyEmailRequest,
     WatcherRequest,
 )
 from app.services.auth import AuthService
 from app.services.auth_protection import AuthLimiter, normalize_email
 from app.services.domain import DomainService
-from app.services.errors import DomainError
-from app.services.verification import InvalidVerificationError, read_verification_token
+from app.services.errors import AdministrativeError, DomainError
 
 router = APIRouter()
 
@@ -61,41 +56,14 @@ def translate_errors(operation: Callable[..., Awaitable[Any]]) -> Callable[..., 
     async def wrapped(*args: Any, **kwargs: Any) -> Any:
         try:
             return await operation(*args, **kwargs)
+        except AdministrativeError:
+            raise
         except DomainError as exc:
             raise HTTPException(
                 status_code=exc.status_code, detail=str(exc), headers=getattr(exc, "headers", None)
             ) from exc
 
     return wrapped
-
-
-@router.post("/auth/register", response_model=RegistrationResponse, status_code=202)
-async def register(
-    data: RegisterRequest,
-    session: AsyncSession = Depends(get_session),
-    limiter: AuthLimiter = Depends(auth_limiter),
-    address: str = Depends(auth_client_address),
-) -> RegistrationResponse:
-    await translate_errors(limiter.check)("register", normalize_email(str(data.email)), address)
-    await translate_errors(AuthService(session).register)(data)
-    return RegistrationResponse()
-
-
-@router.post("/auth/verify-email", response_model=VerificationResponse)
-async def verify_email(
-    data: VerifyEmailRequest,
-    session: AsyncSession = Depends(get_session),
-    limiter: AuthLimiter = Depends(auth_limiter),
-    address: str = Depends(auth_client_address),
-) -> VerificationResponse:
-    # Invalid tokens still consume the address budget; no token is persisted in Redis keys.
-    try:
-        identifier = str(read_verification_token(data.token))
-    except InvalidVerificationError:
-        identifier = "invalid"
-    await translate_errors(limiter.check)("verify", identifier, address)
-    await translate_errors(AuthService(session).verify_email)(data)
-    return VerificationResponse()
 
 
 @router.post("/auth/login", response_model=LoginResponse, dependencies=[Depends(csrf_protection)])

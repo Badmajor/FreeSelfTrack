@@ -3,20 +3,12 @@
 import asyncio
 from uuid import uuid4
 
-from sqlalchemy import select
-
-from app.models import User
-from app.models.auth_session import PasswordReset
-from app.schemas.domain import LoginRequest, OrganizationCreate
-from app.services.auth import AuthService
-from app.services.domain import DomainService
-from app.services.errors import InvalidCredentialsError, PermissionDeniedError
-from app.services.sessions import SessionService, reset_token
-from tests.test_auth_integration import (
-    PASSWORD,
-    confirm,
-    request_registration,
-)
+from app.models import User, UserProfile
+from app.schemas.domain import LoginRequest
+from app.services.auth import AuthService, password_hash
+from app.services.errors import InvalidCredentialsError
+from app.services.sessions import SessionService
+from tests.test_auth_integration import PASSWORD
 from tests.test_auth_integration import postgres_sessions as pg_sessions
 
 postgres_sessions = pg_sessions
@@ -24,9 +16,15 @@ postgres_sessions = pg_sessions
 
 async def create_account(sessions):
     email = f"{uuid4()}@example.com"
-    token = await request_registration(sessions, email)
-    await confirm(sessions, token)
     async with sessions() as session:
+        session.add(
+            User(
+                email=email,
+                password_hash=password_hash.hash(PASSWORD),
+                profile=UserProfile(first_name="Integration", last_name="User"),
+            )
+        )
+        await session.commit()
         access, refresh, user = await AuthService(session).login(
             LoginRequest(email=email, password=PASSWORD)
         )
@@ -78,40 +76,3 @@ async def test_postgres_password_change_serializes_with_login(postgres_sessions)
                 pass
             else:
                 raise AssertionError("Old-password login escaped password-change revocation")
-
-
-async def test_postgres_reset_is_single_use_under_concurrency(postgres_sessions):
-    email, _, _, _ = await create_account(postgres_sessions)
-    async with postgres_sessions() as session:
-        await AuthService(session).request_password_reset(email)
-        pending = await session.scalar(select(PasswordReset).where(PasswordReset.email == email))
-        token = reset_token(pending.id)
-
-    async def reset():
-        async with postgres_sessions() as session:
-            await AuthService(session).reset_password(token, "a reset integration passphrase")
-
-    results = await asyncio.gather(*[reset() for _ in range(6)], return_exceptions=True)
-    assert results.count(None) == 1
-    assert sum(isinstance(r, InvalidCredentialsError) for r in results) == 5
-
-
-async def test_postgres_employee_cannot_create_organization_or_self_deactivate(postgres_sessions):
-    _, user_id, _, _ = await create_account(postgres_sessions)
-
-    async def create():
-        async with postgres_sessions() as session:
-            return await DomainService(session).create_organization(
-                user_id, OrganizationCreate(name="Race")
-            )
-
-    async def deactivate():
-        async with postgres_sessions() as session:
-            await AuthService(session).deactivate(user_id, PASSWORD)
-
-    created, deactivated = await asyncio.gather(create(), deactivate(), return_exceptions=True)
-    async with postgres_sessions() as session:
-        user = await session.get(User, user_id)
-        assert user.is_active
-        assert isinstance(deactivated, PermissionDeniedError)
-        assert isinstance(created, PermissionDeniedError)

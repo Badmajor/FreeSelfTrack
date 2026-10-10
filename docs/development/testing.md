@@ -1,3 +1,7 @@
+> TASK-032 replaces obsolete registration/reset expectations with administrative provisioning,
+> restricted-session and legacy-link rejection tests. Historical TASK-021/022 mail/confirmation
+> commands below describe earlier releases; use the TASK-032 checks for current lifecycle behavior.
+
 # Testing
 
 Backend uses Python 3.13+ and uv. From `backend/`:
@@ -219,3 +223,26 @@ current head. 0020/0021 deliberately reject downgrade; do not force an owner rec
 Frontend: `npm test`, `npm run lint`, `npm run typecheck`, `npm run build`. Capability fixtures
 replace owner_id; tests cover scoped workflow controls and config-admin credential UI.
 If the existing .venv/cache is read-only, use a temporary UV_PROJECT_ENVIRONMENT and UV_CACHE_DIR.
+
+
+## TASK-032 administrative user lifecycle
+
+Backend: `uv run pytest -q`, `uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy app`.
+Focused: `uv run pytest -q tests/test_user_lifecycle.py tests/test_auth.py tests/test_sessions.py`.
+Existing domain fixtures seed pre-existing accounts directly; provisioning tests use the real API.
+Coverage includes all registered protected routes under a restricted session, repeated temporary
+login, change/relogin, one-time secrets/no-store, role/scope validation, peer OM blocking, protected
+SA, preserved assignments/history, revoked access/refresh/memberships, no-op audit and rollback,
+blocked reset, old signed link rejection and filter-bound directory pagination.
+
+`RUN_USER_LIFECYCLE_INTEGRATION=1 uv run pytest -q tests/test_user_lifecycle_integration.py`
+creates/removes its own PostgreSQL 16 container with synthetic credentials. It verifies 0022
+upgrade/downgrade/upgrade invalidates pending actions and races duplicate creation, reset/change,
+and block/login. It never accesses the shared database; no flag means an explicit skip.
+The prior TASK-021 confirmation concurrency tests are replaced by these current lifecycle races;
+the real Redis limiter test and session rotation/change races remain.
+
+Frontend: `npm test`, `npm run lint`, `npm run typecheck`, `npm run build`.
+Auth/UsersPage tests cover disabled fragments, forced change before workspace requests, password
+visibility/dismissal without storage, capability-controlled actions, block confirmation and readable
+assignee strike-through. Use `npm test -- --no-cache` and build under /tmp for read-only caches.

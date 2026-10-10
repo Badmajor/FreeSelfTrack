@@ -1,7 +1,7 @@
 from datetime import date
 from uuid import UUID, uuid4
 
-from auth_helpers import authenticated_id, confirm_registration
+from auth_helpers import authenticated_id, seed_account
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 from test_task_domain import create_organization, create_project
@@ -11,17 +11,7 @@ from app.services.deadlines import DeadlineService
 
 async def authenticate(client: AsyncClient, login_id: UUID) -> dict[str, str]:
     email = f"{login_id}@example.com"
-    registered = await client.post(
-        "/api/auth/register",
-        json={
-            "email": email,
-            "password": "correct horse battery staple",
-            "first_name": "Planning",
-            "last_name": "User",
-        },
-    )
-    assert registered.status_code == 202
-    await confirm_registration(client, email)
+    await seed_account(email, first_name="Planning")
     logged_in = await client.post(
         "/api/auth/login",
         json={"email": email, "password": "correct horse battery staple"},
@@ -302,11 +292,13 @@ async def test_priority_permissions_history_profiles_and_no_notification(
     task_body = task.json()
     assert task_body["priority"] is None
     assert task_body["reporter"] == {
+        "is_active": True,
         "id": users["owner"],
         "first_name": "Planning",
         "last_name": "User",
     }
     assert task_body["assignee"] == {
+        "is_active": True,
         "id": users["assignee"],
         "first_name": "Planning",
         "last_name": "User",
@@ -392,6 +384,7 @@ async def test_priority_permissions_history_profiles_and_no_notification(
     assert watched.status_code == 200
     assert watched.json() == [
         {
+            "is_active": True,
             "id": users["assignee"],
             "first_name": "Planning",
             "last_name": "User",

@@ -548,9 +548,9 @@ function TaskCard({ task, status, onClick, onDragStart, selecting }: CardProps) 
         Updated {new Date(task.updated_at).toLocaleString()}
       </time>
       <span>
-        {task.assignee
-          ? `Assignee: ${task.assignee.first_name} ${task.assignee.last_name}`
-          : "Unassigned"}
+        {task.assignee ? (
+          <>Assignee: <AssigneeName participant={task.assignee} /></>
+        ) : "Unassigned"}
       </span>
       <span>Watchers: {task.watchers.length}</span>
       <span className="task-status" aria-label={`Status: ${status.name}`}>
@@ -887,6 +887,7 @@ function TaskDrawer({
         </div>
         <div className="participant-row">
           <label htmlFor="task-assignee">Assignee</label>
+          {currentTask.assignee && <AssigneeName participant={currentTask.assignee} />}
           <select
             id="task-assignee"
             value={assigneeId}
@@ -898,6 +899,13 @@ function TaskDrawer({
             }}
           >
             <option value="">Unassigned</option>
+            {currentTask.assignee &&
+              !members.data?.some(member => member.id === currentTask.assignee?.id) && (
+                <option value={currentTask.assignee.id}>
+                  {participantName(currentTask.assignee)}
+                  {currentTask.assignee.is_active === false ? " (Blocked)" : ""}
+                </option>
+              )}
             {members.data?.map((member) => (
               <option key={member.id} value={member.id}>
                 {profileName(member.profile)}
@@ -1253,5 +1261,21 @@ export function NotificationTaskPanel({
         </p>
       )}
     </>
+  );
+}
+
+
+export function AssigneeName({
+  participant,
+}: {
+  participant: { first_name: string; last_name: string; is_active?: boolean };
+}) {
+  const name = `${participant.first_name} ${participant.last_name}`;
+  return participant.is_active === false ? (
+    <span>
+      <s>{name}</s> <span>(Blocked)</span>
+    </span>
+  ) : (
+    <span>{name}</span>
   );
 }

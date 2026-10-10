@@ -3,7 +3,8 @@
 Implemented: model, strict internal write schema, transaction-bound writer/repository,
 fixed-size internal query and PostgreSQL migration `0019_administrative_audit`.
 TASK-031 adds producers for bootstrap, current resources/memberships/workflow and guards.
-Not implemented: the remaining TASK-032–036 mutations and authorized audit HTTP reads/UI
+TASK-032 adds user_created, user_blocked/user_unblocked and real session revocations.
+Not implemented: the remaining TASK-033–036 mutations and authorized audit HTTP reads/UI
 (TASK-037). Existing TaskHistory/SecurityEvent rows remain unchanged.
 
 See [ADR-014](../architecture/decisions/014-administration-membership-and-archive.md),
@@ -139,3 +140,11 @@ positions because the existing workflow stores archived statuses outside the act
 Producers preserve these values and include only actually changed status snapshots.
 Bootstrap uses actor_kind=bootstrap with actor_id=null; actual session revocations use separate
 technical SecurityEvent records with the same actor kind. No credentials are audit fields.
+
+
+TASK-032 creation in an organization produces one user_created (including membership fields)
+and one organization member_added, sharing operation_id and transaction. Blocking/unblocking
+produces one user event only on actual state change. Cascade membership revocation does not
+produce member_removed events or task history. Reset/password change produces no administrative
+event; every actually revoked session gets a technical session_revoked with the initiating actor.
+No generated password, hash, email or token is included in either journal.
