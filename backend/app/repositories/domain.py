@@ -1,9 +1,23 @@
 from datetime import date
 from uuid import UUID
 
-from sqlalchemy import and_, desc, exists, func, or_, select, update
+from sqlalchemy import (
+    JSON,
+    String,
+    and_,
+    cast,
+    desc,
+    exists,
+    func,
+    literal,
+    or_,
+    select,
+    type_coerce,
+    update,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import aliased, selectinload
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.models import (
     DeadlineNotificationDelivery,
@@ -20,7 +34,11 @@ from app.models import (
     TaskWatcher,
     User,
 )
-from app.repositories.administration import AdministrationRepository
+from app.repositories.task_access import (
+    organization_visibility,
+    project_editability,
+    project_visibility,
+)
 
 
 class DomainRepository:
@@ -65,20 +83,6 @@ class DomainRepository:
             .join(Project, Project.id == Task.project_id)
             .join(Organization, Organization.id == Project.organization_id)
             .join(User, User.id == Task.assignee_id)
-            .join(
-                ProjectMember,
-                and_(
-                    ProjectMember.project_id == Task.project_id,
-                    ProjectMember.user_id == Task.assignee_id,
-                ),
-            )
-            .join(
-                OrganizationMember,
-                and_(
-                    OrganizationMember.organization_id == Project.organization_id,
-                    OrganizationMember.user_id == Task.assignee_id,
-                ),
-            )
             .where(
                 Task.due_date.is_not(None),
                 Task.due_date <= current_date,
@@ -87,13 +91,12 @@ class DomainRepository:
                 Project.deleted_at.is_(None),
                 Organization.deleted_at.is_(None),
                 User.is_active.is_(True),
-                OrganizationMember.state == "active",
-                ProjectMember.state == "active",
+                project_visibility(Task.assignee_id),
                 ~delivered,
             )
             .order_by(Task.due_date, Task.id)
             .limit(limit)
-            .with_for_update(skip_locked=True)
+            .with_for_update(skip_locked=True, of=Task)
         )
         return list(result)
 
@@ -105,26 +108,13 @@ class DomainRepository:
         )
 
     async def list_organizations_for_user(self, user_id: UUID) -> list[Organization]:
-        user = await self.get_user(user_id)
-        if user is not None and user.is_active and user.is_system_admin:
-            return list(
-                await self.session.scalars(
-                    select(Organization)
-                    .where(Organization.deleted_at.is_(None))
-                    .order_by(Organization.name)
-                )
+        return list(
+            await self.session.scalars(
+                select(Organization)
+                .where(organization_visibility(user_id))
+                .order_by(Organization.name)
             )
-        result = await self.session.scalars(
-            select(Organization)
-            .join(OrganizationMember, OrganizationMember.organization_id == Organization.id)
-            .where(
-                OrganizationMember.user_id == user_id,
-                OrganizationMember.state == "active",
-                Organization.deleted_at.is_(None),
-            )
-            .order_by(Organization.name)
         )
-        return list(result)
 
     async def list_projects_for_organization(self, organization_id: UUID) -> list[Project]:
         result = await self.session.scalars(
@@ -138,18 +128,13 @@ class DomainRepository:
         return list(result)
 
     async def list_projects_for_user(self, organization_id: UUID, user_id: UUID) -> list[Project]:
-        result = await self.session.scalars(
-            select(Project)
-            .join(ProjectMember, ProjectMember.project_id == Project.id)
-            .where(
-                Project.organization_id == organization_id,
-                Project.deleted_at.is_(None),
-                ProjectMember.user_id == user_id,
-                ProjectMember.state == "active",
+        return list(
+            await self.session.scalars(
+                select(Project)
+                .where(Project.organization_id == organization_id, project_visibility(user_id))
+                .order_by(Project.name)
             )
-            .order_by(Project.name)
         )
-        return list(result)
 
     async def list_organization_members(self, organization_id: UUID) -> list[User]:
         result = await self.session.scalars(
@@ -190,31 +175,22 @@ class DomainRepository:
         return await self.session.get(ProjectMember, {"project_id": project_id, "user_id": user_id})
 
     async def has_organization_access(self, organization_id: UUID, user_id: UUID) -> bool:
-        user = await self.get_user(user_id)
-        organization = await self.get_organization(organization_id)
-        if user is None or not user.is_active or organization is None or organization.deleted_at:
-            return False
-        if user.is_system_admin or await AdministrationRepository(self.session).active_manager(
-            user_id, organization_id
-        ):
-            return True
-        member = await self.get_organization_member(organization_id, user_id)
-        return member is not None and member.state == "active"
+        return (
+            await self.session.scalar(
+                select(Organization.id).where(
+                    Organization.id == organization_id, organization_visibility(user_id)
+                )
+            )
+            is not None
+        )
 
     async def has_project_access(self, project_id: UUID, user_id: UUID) -> bool:
-        project = await self.get_project(project_id)
-        if project is None or project.deleted_at is not None:
-            return False
-        if not await self.has_organization_access(project.organization_id, user_id):
-            return False
-        user = await self.get_user(user_id)
-        assert user is not None
-        if user.is_system_admin or await AdministrationRepository(self.session).active_manager(
-            user_id, project.organization_id
-        ):
-            return True
-        member = await self.get_project_member(project_id, user_id)
-        return member is not None and member.state == "active"
+        return (
+            await self.session.scalar(
+                select(Project.id).where(Project.id == project_id, project_editability(user_id))
+            )
+            is not None
+        )
 
     async def add_organization_member(
         self, organization_id: UUID, user_id: UUID
@@ -319,17 +295,22 @@ class DomainRepository:
             .where(TaskLink.task_a_id == task_a_id, TaskLink.task_b_id == task_b_id)
         )
 
-    async def list_task_links(self, task_id: UUID) -> list[TaskLink]:
+    async def list_task_links(self, task_id: UUID, user_id: UUID) -> list[TaskLink]:
+        visible_tasks = select(Task.id).join(Project).where(project_visibility(user_id))
         result = await self.session.scalars(
             select(TaskLink)
             .options(selectinload(TaskLink.creator).selectinload(User.profile))
-            .where(or_(TaskLink.task_a_id == task_id, TaskLink.task_b_id == task_id))
+            .where(
+                or_(TaskLink.task_a_id == task_id, TaskLink.task_b_id == task_id),
+                TaskLink.task_a_id.in_(visible_tasks),
+                TaskLink.task_b_id.in_(visible_tasks),
+            )
             .order_by(TaskLink.created_at, TaskLink.id)
         )
         return list(result)
 
     async def search_organization_tasks(
-        self, organization_id: UUID, slug: str, limit: int
+        self, organization_id: UUID, slug: str, limit: int, user_id: UUID
     ) -> list[tuple[Task, Project, ProjectStatus]]:
         rows = await self.session.execute(
             select(Task, Project, ProjectStatus)
@@ -340,6 +321,7 @@ class DomainRepository:
                 Project.organization_id == organization_id,
                 Project.deleted_at.is_(None),
                 Organization.deleted_at.is_(None),
+                project_visibility(user_id),
                 func.lower(Task.slug).startswith(slug.casefold(), autoescape=True),
             )
             .order_by(Project.name, Task.id)
@@ -348,12 +330,50 @@ class DomainRepository:
         return [(task, project, status) for task, project, status in rows]
 
     async def list_task_history(
-        self, task_id: UUID, limit: int, cursor: tuple[object, UUID] | None = None
+        self, task_id: UUID, limit: int, cursor: tuple[object, UUID] | None = None, *, user_id: UUID
     ) -> list[TaskHistory]:
+        # Legacy link history stores a slug/title snapshot, not a target UUID. Match in
+        # the source organization and hide ambiguous snapshots if any match is inaccessible.
+        linked = aliased(Task)
+        source_project = aliased(Project)
+        source = aliased(Task)
+        organization_id = (
+            select(source_project.organization_id)
+            .join(source, source.project_id == source_project.id)
+            .where(source.id == task_id)
+            .scalar_subquery()
+        )
+        snapshot = func.coalesce(TaskHistory.new_value, TaskHistory.old_value)
+        prefixes = [
+            literal(relation + ": ") + linked.slug + literal(" ")
+            for relation in ("blocks", "depends_on", "related")
+        ]
+        match = (
+            select(linked.id)
+            .join(Project, Project.id == linked.project_id)
+            .where(
+                Project.organization_id == organization_id,
+                linked.id != task_id,
+                or_(
+                    *(
+                        func.substr(snapshot, 1, func.length(prefix)) == prefix
+                        for prefix in prefixes
+                    )
+                ),
+            )
+            .correlate(TaskHistory)
+        )
+        visible = or_(
+            TaskHistory.event_type.not_in(("task_link_added", "task_link_removed")),
+            and_(
+                match.where(project_visibility(user_id)).exists(),
+                ~match.where(~project_visibility(user_id)).exists(),
+            ),
+        )
         query = (
             select(TaskHistory)
             .options(selectinload(TaskHistory.actor).selectinload(User.profile))
-            .where(TaskHistory.task_id == task_id)
+            .where(TaskHistory.task_id == task_id, visible)
         )
         if cursor is not None:
             timestamp, item_id = cursor
@@ -402,13 +422,50 @@ class DomainRepository:
         if watcher is not None:
             await self.session.delete(watcher)
 
-    async def get_notification(self, notification_id: UUID) -> Notification | None:
-        return await self.session.get(Notification, notification_id)
+    async def get_notification(self, notification_id: UUID, user_id: UUID) -> Notification | None:
+        return await self.session.scalar(
+            select(Notification)
+            .join(Task)
+            .join(Project)
+            .where(
+                Notification.id == notification_id,
+                Notification.recipient_id == user_id,
+                self.notification_visibility(user_id),
+            )
+        )
+
+    def notification_visibility(self, user_id: UUID) -> ColumnElement[bool]:
+        linked = aliased(Task)
+        payload = (
+            cast(Notification.event_data, JSON)
+            if self.session.get_bind().dialect.name == "postgresql"
+            else type_coerce(Notification.event_data, JSON)
+        )
+        linked_id = payload["linked_task_id"].as_string()
+        linked_visible = (
+            select(linked.id)
+            .join(Project, Project.id == linked.project_id)
+            .where(
+                func.replace(cast(linked.id, String), "-", "") == func.replace(linked_id, "-", ""),
+                project_visibility(user_id),
+            )
+            .correlate(Notification)
+            .exists()
+        )
+        return and_(
+            project_visibility(user_id),
+            or_(
+                Notification.event_type.not_in(("task_link_added", "task_link_removed")),
+                linked_visible,
+            ),
+        )
 
     async def list_notifications(self, user_id: UUID, limit: int = 100) -> list[Notification]:
         result = await self.session.scalars(
             select(Notification)
-            .where(Notification.recipient_id == user_id)
+            .join(Task, Task.id == Notification.task_id)
+            .join(Project, Project.id == Task.project_id)
+            .where(Notification.recipient_id == user_id, self.notification_visibility(user_id))
             .order_by(desc(Notification.created_at), desc(Notification.id))
             .limit(limit)
         )
@@ -416,8 +473,13 @@ class DomainRepository:
 
     async def count_unread_notifications(self, user_id: UUID) -> int:
         count = await self.session.scalar(
-            select(func.count(Notification.id)).where(
-                Notification.recipient_id == user_id, Notification.read_at.is_(None)
+            select(func.count(Notification.id))
+            .join(Task, Task.id == Notification.task_id)
+            .join(Project, Project.id == Task.project_id)
+            .where(
+                self.notification_visibility(user_id),
+                Notification.recipient_id == user_id,
+                Notification.read_at.is_(None),
             )
         )
         return int(count or 0)

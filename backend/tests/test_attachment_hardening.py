@@ -7,7 +7,7 @@ import pytest
 from PIL import Image
 from sqlalchemy import select
 from test_chat import post, setup_chat
-from test_task_domain import authenticate, create_organization
+from test_task_domain import authenticate
 
 from app.api.upload_limit import ChatUploadLimit
 from app.core.config import get_settings
@@ -65,7 +65,6 @@ async def test_attachment_organization_revocation_and_soft_delete(
     await AttachmentMaintenance(db_session, attachment_storage).review(row.id, row.sha256, "ready")
     url = f"/api/attachments/{row.id}/content"
     outsider = await authenticate(client, uuid4())
-    await create_organization(client, outsider, "Other organization")
     before = attachment_storage.opens
     assert (await client.get(url, headers=outsider)).status_code == 404
     assert (await client.get(url)).status_code == 401

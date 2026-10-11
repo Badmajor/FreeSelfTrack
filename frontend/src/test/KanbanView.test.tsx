@@ -1,4 +1,4 @@
-import { membershipPage } from "./test-utils";
+import { participantPage } from "./test-utils";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -10,7 +10,7 @@ import type { Project } from "../api";
 const project: Project = {
   id: "project-1",
   organization_id: "organization-1",
-  capabilities: { edit: true, manage_members: true, manage_workflow: true, archive: true },
+  capabilities: { create_task: true, edit: true, manage_members: true, manage_workflow: true, archive: true },
   name: "Product",
 };
 
@@ -28,6 +28,7 @@ const board = {
       },
       tasks: [
         {
+          capabilities: { edit: true, comment: true, watch: true },
           id: "task-1",
           project_id: project.id,
           status_id: "status-backlog",
@@ -113,6 +114,8 @@ describe("KanbanView", () => {
     const fetchMock = vi.fn(
       (input: string | URL | Request, options?: RequestInit) => {
         const url = String(input);
+    if (url.includes("/projects/") && url.includes("/members")) return Promise.resolve(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
+    if (url.includes("kind=mention")) return Promise.resolve(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
       if (url.includes("/organizations/") && url.includes("/members")) return Promise.resolve(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
         if (url.includes("/comments?"))
           return Promise.resolve(
@@ -144,9 +147,9 @@ describe("KanbanView", () => {
           return Promise.resolve(
             new Response(JSON.stringify([]), { status: 200 }),
           );
-        if (url.includes("/projects/project-1/members"))
+        if (url.includes("/tasks/task-1/participants"))
           return Promise.resolve(
-            new Response(JSON.stringify(membershipPage([])), { status: 200 }),
+            new Response(JSON.stringify(participantPage([])), { status: 200 }),
           );
         if (url === "/api/tasks/task-1")
           return Promise.resolve(

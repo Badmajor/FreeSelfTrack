@@ -21,6 +21,7 @@ from app.schemas.domain import (
     OrganizationCreate,
     OrganizationResponse,
     OrganizationUpdate,
+    ParticipantPage,
     ParticipantSummary,
     ProfileResponse,
     ProfileUpdate,
@@ -558,3 +559,18 @@ async def open_notification(
     session: AsyncSession = Depends(get_session),
 ) -> Any:
     return await translate_errors(service(session).open_notification)(user_id, notification_id)
+
+
+@router.get("/tasks/{task_id}/participants", response_model=ParticipantPage)
+async def task_participants(
+    task_id: UUID,
+    kind: Literal["reporter", "assignee", "watcher", "mention"],
+    q: str = Query("", max_length=200),
+    cursor: str | None = None,
+    limit: int = Query(50, ge=1, le=100),
+    user_id: UUID = Depends(current_user_id),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    return await translate_errors(service(session).participants)(
+        user_id, task_id, kind, q, cursor, limit
+    )

@@ -307,6 +307,7 @@ export type Participant = {
 };
 export type Priority = "low" | "normal" | "major" | "critical";
 export type Task = {
+  capabilities?: Record<string, boolean>;
   id: string;
   project_id: string;
   status_id: string;
@@ -390,6 +391,7 @@ export async function restoreStatus(
 
 export type TaskLinkRelation = "blocks" | "depends_on" | "related";
 export type TaskLinkTask = {
+  can_edit?: boolean;
   id: string;
   slug: string;
   title: string;
@@ -399,6 +401,7 @@ export type TaskLinkTask = {
   status_name: string;
 };
 export type TaskLink = {
+  can_delete?: boolean;
   id: string;
   relation_type: TaskLinkRelation;
   task: TaskLinkTask;
@@ -730,4 +733,14 @@ export function setUserBlocked(userId: string, blocked: boolean) {
       ...(blocked ? { body: JSON.stringify({ confirm: true }) } : {}),
     },
   );
+}
+
+export function listTaskParticipants(
+  taskId: string,
+  kind: "reporter" | "assignee" | "watcher" | "mention",
+  cursor?: string,
+) {
+  const params = new URLSearchParams({ kind });
+  if (cursor) params.set("cursor", cursor);
+  return request<{items: Participant[]; next_cursor: string | null}>(`/tasks/${taskId}/participants?${params}`);
 }

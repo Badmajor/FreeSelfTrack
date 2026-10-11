@@ -166,3 +166,14 @@ and failed/retried scans do not duplicate them. See ADR-013 for service-principa
 
 The browser queues attachment downloads to avoid exhausting server download slots when a chat
 contains many images. HTTP 429 is retried up to three times using Retry-After (1–30 seconds).
+
+
+## Task access (TASK-034)
+
+Uploads require reading the active task, not field-edit permission. Download and preview check
+current task reading before storage access and remain ready-only. Ordinary organization-only
+members no longer have access; scoped managers can read/comment according to the role matrix.
+Revoked project access cannot be recovered through a saved assignment, watcher or attachment URL.
+Mention targets are rechecked under the shared administrative lifecycle lock before publishing
+metadata/objects. The quarantine, checksum, image inspection, limits and scanner contracts above
+are unchanged. Archived retained reading and scanner archive lifecycle are TASK-035.

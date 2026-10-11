@@ -25,11 +25,11 @@ const user = {
   is_active: true,
   profile: { user_id: "owner-1", first_name: "Owner", last_name: "User" },
 };
-const organization = { id: "organization-1", capabilities: { edit: true, manage_members: true, manage_workflow: true, archive: true }, name: "Acme" };
+const organization = { id: "organization-1", capabilities: { create_task: true, edit: true, manage_members: true, manage_workflow: true, archive: true }, name: "Acme" };
 const project = {
   id: "project-1",
   organization_id: organization.id,
-  capabilities: { edit: true, manage_members: true, manage_workflow: true, archive: true },
+  capabilities: { create_task: true, edit: true, manage_members: true, manage_workflow: true, archive: true },
   name: "Tracker",
 };
 const statuses = [
@@ -61,6 +61,7 @@ function mount(currentUser = user, currentProject = project) {
   const fetchMock = vi.fn(
     (input: string | URL | Request, options?: RequestInit) => {
       const url = String(input);
+      if (url.includes("/participants")) return jsonResponse({ items: [], next_cursor: null });
       if (url.includes("/organizations/") && url.includes("/members")) return Promise.resolve(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
       if (url.endsWith("/organizations")) return jsonResponse([organization]);
       if (url.endsWith("/organizations/organization-1/projects"))
@@ -134,7 +135,7 @@ it("restores workflow from its URL and persists collapsed sidebar with a project
 });
 
 it("renders workflow controls read-only for a project member", async () => {
-  mount({ ...user, id: "member-1" }, { ...project, capabilities: { edit: false, manage_members: false, manage_workflow: false, archive: false } });
+  mount({ ...user, id: "member-1" }, { ...project, capabilities: { create_task: false, edit: false, manage_members: false, manage_workflow: false, archive: false } });
   expect(
     await screen.findByText(
       "You can inspect this workflow. Workflow changes require manager permissions.",
@@ -169,6 +170,7 @@ it("opens a notification on the addressable task route", async () => {
     "fetch",
     vi.fn((input: string | URL | Request) => {
       const url = String(input);
+      if (url.includes("/participants")) return jsonResponse({ items: [], next_cursor: null });
       if (url.includes("/organizations/") && url.includes("/members")) return Promise.resolve(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
       if (url.endsWith("/organizations")) return jsonResponse([organization]);
       if (url.endsWith("/notifications/unread-count"))

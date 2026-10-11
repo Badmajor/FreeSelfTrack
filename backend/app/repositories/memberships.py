@@ -32,6 +32,18 @@ class MembershipRepository:
             .order_by(model.user_id)
             .limit(limit + 1)
         )
+        if state == "active":
+            statement = statement.where(User.is_active.is_(True))
+            if scope == "project":
+                statement = (
+                    statement.join(Project, Project.id == ProjectMember.project_id)
+                    .join(
+                        OrganizationMember,
+                        (OrganizationMember.organization_id == Project.organization_id)
+                        & (OrganizationMember.user_id == User.id),
+                    )
+                    .where(OrganizationMember.state == "active")
+                )
         if after is not None:
             statement = statement.where(model.user_id > after)
         rows = []

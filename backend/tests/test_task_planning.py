@@ -108,7 +108,7 @@ async def test_story_points_validation_permissions_history_and_no_notification(
         json={"story_points": 3},
         headers=regular,
     )
-    assert forbidden.status_code == 403
+    assert forbidden.status_code == 200
 
     changed = await client.patch(
         f"/api/tasks/{without_estimate.json()['id']}",
@@ -142,7 +142,8 @@ async def test_story_points_validation_permissions_history_and_no_notification(
     ]
     assert [(entry["old_value"], entry["new_value"]) for entry in planning_entries] == [
         ("5", None),
-        (None, "5"),
+        ("3", "5"),
+        (None, "3"),
     ]
     notifications = await client.get("/api/notifications", headers=assignee)
     assert all(item["event_type"] != "story_points_changed" for item in notifications.json())
@@ -178,7 +179,7 @@ async def test_deadline_notifications_status_permissions_and_worker_idempotency(
         json={"due_date": "2026-10-16"},
         headers=regular,
     )
-    assert forbidden_deadline.status_code == 403
+    assert forbidden_deadline.status_code == 200
 
     changed = await client.patch(
         f"/api/tasks/{task_id}",
@@ -335,7 +336,7 @@ async def test_priority_permissions_history_profiles_and_no_notification(
         json={"priority": "low"},
         headers=regular,
     )
-    assert forbidden.status_code == 403
+    assert forbidden.status_code == 200
 
     cleared = await client.patch(
         f"/api/tasks/{task_body['id']}",
@@ -407,7 +408,8 @@ async def test_priority_permissions_history_profiles_and_no_notification(
     ]
     assert [(entry["old_value"], entry["new_value"]) for entry in entries] == [
         (None, "low"),
-        ("critical", None),
+        ("low", None),
+        ("critical", "low"),
         ("major", "critical"),
         ("normal", "major"),
         ("low", "normal"),

@@ -16,11 +16,12 @@ import type { Project } from "../api";
 const project: Project = {
   id: "project-1",
   organization_id: "organization-1",
-  capabilities: { edit: true, manage_members: true, manage_workflow: true, archive: true },
+  capabilities: { create_task: true, edit: true, manage_members: true, manage_workflow: true, archive: true },
   name: "Product",
 };
 
 const task = {
+  capabilities: { edit: true, comment: true, watch: true },
   id: "task-1",
   project_id: project.id,
   status_id: "status-backlog",
@@ -101,6 +102,8 @@ describe("Kanban interactions", () => {
   it("loads the next page independently for each column", async () => {
     const fetchMock = vi.fn((input: string | URL | Request) => {
       const url = String(input);
+    if (url.includes("/projects/") && url.includes("/members")) return Promise.resolve(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
+    if (url.includes("/participants")) return Promise.resolve(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
       if (url.includes("/organizations/") && url.includes("/members")) return Promise.resolve(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
       if (url.includes("/comments?"))
         return Promise.resolve(
@@ -171,6 +174,8 @@ describe("Kanban interactions", () => {
     const fetchMock = vi.fn(
       (input: string | URL | Request, options?: RequestInit) => {
         const url = String(input);
+    if (url.includes("/projects/") && url.includes("/members")) return Promise.resolve(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
+    if (url.includes("/participants")) return Promise.resolve(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
       if (url.includes("/organizations/") && url.includes("/members")) return Promise.resolve(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
         if (url.includes("/comments?"))
           return Promise.resolve(
@@ -204,9 +209,11 @@ describe("Kanban interactions", () => {
   });
 
   it("persists column width locally and disables restricted participant controls", async () => {
-    const assignedTask = { ...task, assignee_id: "owner-1" };
+    const assignedTask = { ...task, capabilities: { edit: false, comment: true }, assignee_id: "owner-1" };
     const fetchMock = vi.fn((input: string | URL | Request) => {
       const url = String(input);
+    if (url.includes("/projects/") && url.includes("/members")) return Promise.resolve(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
+    if (url.includes("/participants")) return Promise.resolve(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
       if (url.includes("/organizations/") && url.includes("/members")) return Promise.resolve(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
       if (url.includes("/comments?"))
         return Promise.resolve(

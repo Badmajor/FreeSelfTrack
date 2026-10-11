@@ -283,3 +283,39 @@ contextual strike-through/re-add. Resource creation tests cover descriptions and
 Participant/mention selectors consume paginated membership DTOs and allow loading more candidates.
 Use `--no-cache` for tests and `--outDir /tmp/fst033-frontend-build` for builds if local caches/output
 are read-only. No new dependencies are required.
+
+
+## Task read/write/chat access (TASK-034)
+
+`tests/test_task_access.py` covers SA/global OM/local PM/employee/org-only/outsider/revoked/
+archived-role active-resource scopes, task capabilities, protected ready/pending files, all-field
+editing independently of authorship, archive guard identity checks, candidate pagination and
+validation, cross-project status rejection, creation without reporter membership, watcher without
+autojoin, IDOR/search/link/history leaks, preserved assignments and notification revocation.
+Existing task/planning/chat/attachment expectations now follow the active role matrix.
+
+```sh
+# backend, disposable SQLite by default:
+uv run pytest -q
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy app
+# Disposable PostgreSQL 16 container; never uses the shared database:
+RUN_TASK_ACCESS_INTEGRATION=1 uv run pytest -q tests/test_task_access_integration.py
+# Existing private-storage and real ClamAV integrations:
+RUN_ATTACHMENT_INTEGRATION=1 RUN_ATTACHMENT_SCAN_INTEGRATION=1 \
+  uv run pytest -q tests/test_attachment_integration.py tests/test_attachment_scan_integration.py
+# frontend:
+npm test
+npm run lint
+npm run typecheck
+npm run build
+```
+
+The PostgreSQL test verifies a comment started after stale authorization waits for membership
+revocation and rejects the stale mention atomically; no message/notification leaks through.
+It also exercises JSON text extraction and link-history filtering on real PostgreSQL, not just
+SQLite. `TaskAccess.test.tsx` covers unrelated-member editing, reader-only chat, denied publication
+and explicit reporter selection by a manager without membership. Link deletion uses pair-specific
+backend permission. This stage has no schema migration; full HTTP scanner stack remains opt-in
+with RUN_ATTACHMENT_STACK/RUN_ATTACHMENT_SCAN_STACK as described above.

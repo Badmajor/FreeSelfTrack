@@ -15,7 +15,12 @@ from app.schemas.domain import ProfileResponse
 from app.services.attachment_files import MAX_FILE_SIZE, MAX_FILES, Uploaded, inspect_file
 from app.services.audit import record_event
 from app.services.domain import DomainService
-from app.services.errors import ConflictError, InvalidWorkflowError, NotFoundError
+from app.services.errors import (
+    AdministrativeError,
+    ConflictError,
+    InvalidWorkflowError,
+    NotFoundError,
+)
 
 
 class ChatService:
@@ -103,10 +108,18 @@ class ChatService:
                 raise ConflictError("Request ID already used for another message")
             return self.response(existing)
         project = await self.domain.get_project_for_read(user_id, task.project_id)
-        organization_members = await self.users.list_organization_members(project.organization_id)
-        allowed = {member.id for member in organization_members if member.is_active}
+        candidates = (
+            mention_ids | {task.reporter_id} | set(await self.users.list_task_watcher_ids(task_id))
+        )
+        if task.assignee_id is not None:
+            candidates.add(task.assignee_id)
+        allowed = await self.domain.access.reader_ids(task.project_id, candidates)
         if not mention_ids.issubset(allowed):
-            raise InvalidWorkflowError("Mentioned users must be active organization members")
+            raise AdministrativeError(
+                422,
+                "user_cannot_view_task",
+                "Mentioned user cannot view the task; add them to the project first",
+            )
         row = Comment(
             task_id=task_id,
             author_id=user_id,
@@ -149,11 +162,7 @@ class ChatService:
                 organization_id=project.organization_id,
                 state="pending",
             )
-        recipients = (
-            mention_ids
-            | {task.reporter_id, task.assignee_id}
-            | set(await self.users.list_task_watcher_ids(task_id))
-        ) & allowed
+        recipients = allowed
         for recipient in recipients - {user_id}:
             if recipient is None:
                 continue

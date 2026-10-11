@@ -1,4 +1,4 @@
-import { membershipPage } from "./test-utils";
+import { participantPage } from "./test-utils";
 import { QueryClientProvider } from "@tanstack/react-query";
 import {
   cleanup,
@@ -42,6 +42,8 @@ function createFetch(
 ) {
   return vi.fn((input: unknown, options?: RequestInit) => {
     const url = String(input);
+    if (url.includes("/projects/") && url.includes("/members")) return Promise.resolve(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
+    if (url.includes("kind=mention")) return Promise.resolve(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
       if (url.includes("/organizations/") && url.includes("/members")) return Promise.resolve(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
     if (url.includes("/comments?"))
       return jsonResponse({ comments: [], has_more: false });
@@ -49,7 +51,7 @@ function createFetch(
     if (url.includes("/history"))
       return jsonResponse({ entries: [], next_cursor: null });
     if (url.includes("/watchers")) return jsonResponse([]);
-    if (url.includes("/members")) return jsonResponse(membershipPage([]));
+    if (url.includes("/participants")) return jsonResponse(participantPage([]));
     if (url.endsWith("/tasks/task-1") && options?.method === "PATCH" && patch)
       return patch(options);
     if (url.endsWith("/tasks/task-1"))
@@ -109,8 +111,9 @@ describe("task planning", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("renders planning fields read-only for an unrelated project member", async () => {
+  it("renders planning fields read-only when the backend denies editing", async () => {
     const task = makeTask({
+      capabilities: { edit: false, comment: true },
       reporter_id: "owner-1",
       assignee_id: "owner-1",
       story_points: 5,
@@ -199,14 +202,16 @@ describe("task planning", () => {
     const board = makeBoard(task);
     const fetchMock = vi.fn((input: unknown) => {
       const url = String(input);
+    if (url.includes("/projects/") && url.includes("/members")) return Promise.resolve(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
+    if (url.includes("kind=mention")) return Promise.resolve(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
       if (url.includes("/organizations/") && url.includes("/members")) return Promise.resolve(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
       if (url.includes("/comments?"))
         return jsonResponse({ comments: [], has_more: false });
       if (url.includes("/board?")) return jsonResponse(board);
       if (url.endsWith("/tasks/task-1/watchers"))
         return jsonResponse([watcher]);
-      if (url.endsWith("/projects/project-1/members"))
-        return jsonResponse(membershipPage([
+      if (url.includes("/tasks/task-1/participants"))
+        return jsonResponse(participantPage([
           {
             id: "owner-1",
             email: "owner@example.com",
@@ -273,6 +278,8 @@ describe("task planning", () => {
     });
     const fetchMock = vi.fn((input: unknown, options?: RequestInit) => {
       const url = String(input);
+    if (url.includes("/projects/") && url.includes("/members")) return Promise.resolve(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
+    if (url.includes("kind=mention")) return Promise.resolve(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
       if (url.includes("/organizations/") && url.includes("/members")) return Promise.resolve(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
       if (url.includes("/board?")) return jsonResponse(board);
       if (

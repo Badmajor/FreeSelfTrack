@@ -19,7 +19,7 @@ import {
   getColumnTasks,
   getTask,
   getProject,
-  listProjectMembers,
+  listTaskParticipants,
   listMemberships,
   getTaskHistory,
   listTaskWatchers,
@@ -56,7 +56,7 @@ export function KanbanView({
   onClose,
   onOpenTask,
   onOpenLinkedTask = (_, taskId) => onOpenTask?.(taskId),
-  canWrite = true,
+  canWrite = project.capabilities?.create_task ?? false,
   linkSelection,
   onStartLinkSelection = () => undefined,
   onCancelLinkSelection = () => undefined,
@@ -211,6 +211,7 @@ export function KanbanView({
           <KanbanColumn
             key={column.status.id}
             column={column}
+            projectId={project.id}
             width={widths[column.status.id] ?? DEFAULT_WIDTH}
             onWidthChange={(width) =>
               setWidths((current) => ({
@@ -220,11 +221,12 @@ export function KanbanView({
             }
             canWrite={canWrite}
             selecting={Boolean(linkSelection)}
-            onCreate={async (title, storyPoints, dueDate, priority) => {
+            onCreate={async (title, storyPoints, dueDate, priority, reporterId) => {
               await createTask(project.id, {
                 title,
                 description: null,
                 status_id: column.status.id,
+                ...(reporterId ? { reporter_id: reporterId } : {}),
                 story_points: storyPoints,
                 due_date: dueDate,
                 priority,
@@ -261,9 +263,7 @@ export function KanbanView({
           columns={columns}
           projectId={project.id}
           organizationId={project.organization_id}
-          canManageProject={project.capabilities?.edit ?? false}
           currentUser={currentUser}
-          canWrite={canWrite}
           onOpenLinkedTask={onOpenLinkedTask}
           onStartLinkSelection={onStartLinkSelection}
           onClose={() => {
@@ -281,6 +281,7 @@ export function KanbanView({
 }
 
 type ColumnProps = {
+  projectId: string;
   column: ColumnState;
   width: number;
   onWidthChange: (width: number) => void;
@@ -289,6 +290,7 @@ type ColumnProps = {
     storyPoints: number | null,
     dueDate: string | null,
     priority: Priority | null,
+    reporterId: string,
   ) => Promise<void>;
   onTaskClick: (taskId: string, trigger: HTMLElement) => void;
   onDragStart: (task: Task) => void;
@@ -298,6 +300,7 @@ type ColumnProps = {
   selecting: boolean;
 };
 function KanbanColumn({
+  projectId,
   column,
   width,
   onWidthChange,
@@ -310,6 +313,14 @@ function KanbanColumn({
   selecting,
 }: ColumnProps) {
   const [creating, setCreating] = useState(false);
+  const [reporterId, setReporterId] = useState("");
+  const reporters = useInfiniteQuery({
+    queryKey: ["create-task-reporters", projectId],
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) => listMemberships("project", projectId, pageParam),
+    getNextPageParam: page => page.next_cursor ?? undefined,
+    enabled: creating,
+  });
   const [title, setTitle] = useState("");
   const [storyPoints, setStoryPoints] = useState("");
   const [dueDate, setDueDate] = useState("");
@@ -324,6 +335,7 @@ function KanbanColumn({
         storyPoints ? Number(storyPoints) : null,
         dueDate || null,
         priority || null,
+        reporterId,
       );
       setTitle("");
       setStoryPoints("");
@@ -410,7 +422,7 @@ function KanbanColumn({
             task={task}
             status={column.status}
             onClick={(trigger) => onTaskClick(task.id, trigger)}
-            onDragStart={() => { if (canWrite && !selecting) onDragStart(task); }}
+            onDragStart={() => { if (task.capabilities?.edit && !selecting) onDragStart(task); }}
             selecting={selecting}
           />
         ))}
@@ -443,6 +455,26 @@ function KanbanColumn({
             onChange={(event) => setTitle(event.target.value)}
             required
           />
+          <label htmlFor={`new-task-reporter-${column.status.id}`}>Reporter</label>
+          <select
+            id={`new-task-reporter-${column.status.id}`}
+            value={reporterId}
+            onChange={event => setReporterId(event.target.value)}
+          >
+            <option value="">Me</option>
+            {reporters.data?.pages.flatMap(page => page.items).map(item => (
+              <option key={item.user.id} value={item.user.id}>
+                {item.user.first_name} {item.user.last_name}
+              </option>
+            ))}
+          </select>
+          {reporters.isPending && <p role="status">Loading reporters...</p>}
+          {reporters.isError && <p role="alert">Unable to load reporters.</p>}
+          {reporters.hasNextPage && (
+            <button type="button" disabled={reporters.isFetchingNextPage} onClick={() => void reporters.fetchNextPage()}>
+              More reporters
+            </button>
+          )}
           <div className="create-task-planning">
             <label htmlFor={`new-task-points-${column.status.id}`}>
               Story points
@@ -514,7 +546,7 @@ function TaskCard({ task, status, onClick, onDragStart, selecting }: CardProps) 
   return (
     <article
       className={`task-card${overdue ? " overdue" : ""}${selecting ? " link-selectable" : ""}`}
-      draggable={!selecting}
+      draggable={!selecting && Boolean(task.capabilities?.edit)}
       onDragStart={onDragStart}
       onClick={(event) => onClick(event.currentTarget)}
       onKeyDown={(event) => {
@@ -566,9 +598,7 @@ type DrawerProps = {
   columns: ColumnState[];
   projectId: string;
   organizationId: string;
-  canManageProject: boolean;
   currentUser: UserSummary;
-  canWrite: boolean;
   focusCommentId?: string;
   initialActivity?: "chat" | "links" | "history";
   onOpenLinkedTask: (projectId: string, taskId: string) => void;
@@ -582,9 +612,7 @@ function TaskDrawer({
   columns,
   projectId,
   organizationId,
-  canManageProject,
   currentUser,
-  canWrite,
   focusCommentId,
   initialActivity = "chat",
   onOpenLinkedTask,
@@ -601,6 +629,8 @@ function TaskDrawer({
     queryKey: ["task", task.id],
     queryFn: () => getTask(task.id),
   });
+  const currentTask = details.data ?? task;
+  const canWrite = currentTask.capabilities?.edit ?? false;
   const history = useQuery({
     queryKey: ["task-history", task.id],
     queryFn: () => getTaskHistory(task.id),
@@ -609,16 +639,15 @@ function TaskDrawer({
   const watchers = useQuery({
     queryKey: ["task-watchers", task.id],
     queryFn: () => listTaskWatchers(task.id),
-    enabled: canWrite,
   });
   const members = useInfiniteQuery({
-    queryKey: ["project-member-options", projectId],
+    queryKey: ["task-participant-options", task.id],
     initialPageParam: undefined as string | undefined,
-    queryFn: ({ pageParam }) => listMemberships("project", projectId, pageParam),
+    queryFn: ({ pageParam }) => listTaskParticipants(task.id, "assignee", pageParam),
     getNextPageParam: page => page.next_cursor ?? undefined,
     enabled: canWrite,
   });
-  const memberOptions = members.data?.pages.flatMap(page => page.items.map(item => item.user));
+  const memberOptions = members.data?.pages.flatMap(page => page.items);
   const [title, setTitle] = useState(task.title);
   const [description, setDescription] = useState(task.description ?? "");
   const [reporterId, setReporterId] = useState(task.reporter_id);
@@ -632,12 +661,7 @@ function TaskDrawer({
     Record<string, boolean>
   >({});
   const [saveError, setSaveError] = useState("");
-  const currentTask = details.data ?? task;
-  const canManagePlanning =
-    canWrite &&
-    (canManageProject ||
-    currentUser.id === currentTask.reporter_id ||
-    currentUser.id === currentTask.assignee_id);
+  const canManagePlanning = canWrite;
   const save = useMutation({
     mutationFn: () =>
       updateTask(task.id, {
@@ -693,14 +717,8 @@ function TaskDrawer({
     onSuccess: () => void watchers.refetch(),
     onError: (error) => setSaveError(messageFor(error)),
   });
-  const canChangeReporter =
-    canWrite &&
-    (canManageProject || currentUser.id === task.reporter_id);
-  const canChangeAssignee =
-    canWrite &&
-    (canManageProject ||
-      currentUser.id === task.assignee_id ||
-      !task.assignee_id);
+  const canChangeReporter = canWrite;
+  const canChangeAssignee = canWrite;
 
   useEffect(() => {
     if (details.data) {
@@ -882,6 +900,9 @@ function TaskDrawer({
               participantUpdate.mutate({ reporter_id: event.target.value });
             }}
           >
+            {!memberOptions?.some(member => member.id === currentTask.reporter_id) && (
+              <option value={currentTask.reporter_id}>{participantName(currentTask.reporter)}</option>
+            )}
             {memberOptions?.map((member) => (
               <option key={member.id} value={member.id}>
                 {`${member.first_name} ${member.last_name}`}
@@ -945,7 +966,7 @@ function TaskDrawer({
             {!watchers.isPending &&
               !watchers.isError &&
               !watchers.data?.length && <p className="muted">No watchers.</p>}
-            {canWrite && <button
+            {currentTask.capabilities?.watch && <button
               className="icon-button drawer-watch"
               type="button"
               disabled={watcherMutation.isPending}
@@ -1023,9 +1044,9 @@ function TaskDrawer({
           hidden={activity !== "chat"}
         >
           <TaskChat
+            canComment={currentTask.capabilities?.comment ?? false}
             key={task.id}
             taskId={task.id}
-            organizationId={organizationId}
             focusCommentId={focusCommentId}
           />
         </div>
@@ -1040,7 +1061,8 @@ function TaskDrawer({
             taskSlug={task.slug}
             projectId={projectId}
             organizationId={organizationId}
-            canManage={canWrite}
+            canManage={currentTask.capabilities?.link ?? false}
+            canEditSource={canWrite}
             onOpenTask={onOpenLinkedTask}
             onStartSelection={onStartLinkSelection}
           />
@@ -1207,12 +1229,6 @@ export function NotificationTaskPanel({
     enabled: !!task.data,
     retry: false,
   });
-  const members = useQuery({
-    queryKey: ["project-members", task.data?.project_id],
-    queryFn: () => listProjectMembers(task.data!.project_id),
-    enabled: !!task.data,
-    retry: false,
-  });
   const update = useMutation({
     mutationFn: (statusId: string) =>
       updateTask(taskId, { status_id: statusId }),
@@ -1248,9 +1264,7 @@ export function NotificationTaskPanel({
         }))}
         projectId={project.data.id}
         organizationId={project.data.organization_id}
-        canManageProject={project.data.capabilities?.edit ?? false}
         currentUser={currentUser}
-        canWrite={members.isSuccess}
         focusCommentId={commentId}
         initialActivity={initialActivity}
         onOpenLinkedTask={onOpenLinkedTask}

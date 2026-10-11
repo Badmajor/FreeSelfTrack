@@ -43,7 +43,6 @@ import {
   listArchivedStatuses,
   listNotifications,
   listOrganizations,
-  listProjectMembers,
   listProjects,
   listStatuses,
   openNotification,
@@ -1134,11 +1133,6 @@ function KanbanPage({
     queryFn: () => getProject(projectId),
     retry: false,
   });
-  const members = useQuery({
-    queryKey: ["project-members", projectId],
-    queryFn: () => listProjectMembers(projectId),
-    retry: false,
-  });
   const createLink = useMutation({
     mutationFn: (targetTaskId: string) => {
       if (!linkSelection) throw new Error("Link selection is not active.");
@@ -1176,7 +1170,7 @@ function KanbanPage({
       <KanbanView
         project={project.data}
         currentUser={user}
-        canWrite={members.isSuccess}
+        canWrite={project.data.capabilities?.create_task ?? false}
         linkSelection={
           linkSelection?.organizationId === project.data.organization_id
             ? linkSelection

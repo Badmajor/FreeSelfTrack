@@ -34,12 +34,13 @@ export function renderWithQueryClient(
 export const testProject: Project = {
   id: "project-1",
   organization_id: "organization-1",
-  capabilities: { edit: true, manage_members: true, manage_workflow: true, archive: true },
+  capabilities: { create_task: true, edit: true, manage_members: true, manage_workflow: true, archive: true },
   name: "Product",
 };
 
 export function makeTask(overrides: Partial<Task> = {}): Task {
   return {
+    capabilities: { edit: true, comment: true, watch: true, manage_watchers: true },
     id: "task-1",
     project_id: testProject.id,
     status_id: "status-backlog",
@@ -99,4 +100,8 @@ export function jsonResponse(body: unknown, status = 200): Promise<Response> {
 
 export function membershipPage(users: { id: string; email?: string; profile?: { user_id?: string; first_name: string; last_name: string }; is_active?: boolean }[]) {
   return { items: users.map(user => ({ user: { id: user.id, first_name: user.profile?.first_name ?? "Test", last_name: user.profile?.last_name ?? "User", is_active: user.is_active ?? true }, role: "member", state: "active" })), next_cursor: null };
+}
+
+export function participantPage(users: Parameters<typeof membershipPage>[0]) {
+  return { items: membershipPage(users).items.map(item => item.user), next_cursor: null };
 }

@@ -1,3 +1,4 @@
+import base64
 import binascii
 import json
 import re
@@ -23,6 +24,7 @@ from app.repositories.administration import AdministrationRepository
 from app.repositories.domain import DomainRepository
 from app.repositories.memberships import MembershipRepository
 from app.repositories.sessions import SessionRepository
+from app.repositories.task_access import TaskAccessRepository
 from app.schemas.administrative_audit import (
     AdministrativeAuditWrite,
     AuditChange,
@@ -37,6 +39,7 @@ from app.schemas.domain import (
     OrganizationCreate,
     OrganizationResponse,
     OrganizationUpdate,
+    ParticipantPage,
     ParticipantSummary,
     ProfileResponse,
     ProjectCreate,
@@ -91,6 +94,9 @@ class DomainService:
         self.session = session
         self.repository = DomainRepository(session)
         self.administration = AdministrationService(session)
+        self.access = TaskAccessRepository(session)
+        self._editable_scopes: dict[tuple[UUID, UUID], set[UUID]] = {}
+        self._response_permissions: dict[tuple[UUID, UUID], tuple[bool, bool, bool]] = {}
 
     async def organization_responses(
         self, user_id: UUID, organizations: list[Organization]
@@ -150,6 +156,70 @@ class DomainService:
 
     async def project_response(self, user_id: UUID, project: Project) -> ProjectResponse:
         return (await self.project_responses(user_id, [project]))[0]
+
+    async def editable_projects(self, user_id: UUID, organization_id: UUID) -> set[UUID]:
+        key = (user_id, organization_id)
+        if key not in self._editable_scopes:
+            self._editable_scopes[key] = await self.access.editable_projects(
+                user_id, organization_id
+            )
+        return self._editable_scopes[key]
+
+    async def can_archive_task(self, user_id: UUID, task: Task) -> bool:
+        project = await self.repository.get_project(task.project_id)
+        if project is None or not await self.repository.has_project_access(project.id, user_id):
+            return False
+        return await self.administration.can_manage(
+            user_id, project.organization_id, project.id
+        ) or user_id in {task.created_by, task.reporter_id, task.assignee_id}
+
+    async def task_capabilities(self, user_id: UUID, task: Task) -> dict[str, bool]:
+        key = (user_id, task.project_id)
+        if key not in self._response_permissions:
+            edit = await self.repository.has_project_access(task.project_id, user_id)
+            project = await self.repository.get_project(task.project_id)
+            assert project is not None
+            manager = await self.administration.can_manage(
+                user_id, project.organization_id, project.id
+            )
+            comment = await self.access.can_read_project(user_id, task.project_id)
+            self._response_permissions[key] = edit, manager, comment
+        edit, manager, comment = self._response_permissions[key]
+        project = await self.repository.get_project(task.project_id)
+        assert project is not None
+        return {
+            "link": bool(await self.editable_projects(user_id, project.organization_id)),
+            "edit": edit,
+            "comment": comment,
+            "manage_watchers": edit and (manager or user_id == task.assignee_id),
+            "watch": edit,
+            "archive": False,
+            "restore": False,
+            "view_audit": False,
+        }
+
+    async def participants(
+        self, user_id: UUID, task_id: UUID, kind: str, query: str, cursor: str | None, limit: int
+    ) -> ParticipantPage:
+        task = await self.get_task(user_id, task_id)
+        prefix = [str(task_id), kind, query]
+        after = None
+        if cursor:
+            try:
+                payload = json.loads(base64.urlsafe_b64decode(cursor))
+                if not isinstance(payload, list) or len(payload) != 4 or payload[:3] != prefix:
+                    raise ValueError
+                after = UUID(payload[3])
+            except (ValueError, TypeError, AttributeError, binascii.Error) as exc:
+                raise AdministrativeError(422, "invalid_cursor", "Invalid cursor") from exc
+        rows = await self.access.candidates(task.project_id, kind, query, after, limit)
+        items = [self._participant_summary(user) for user in rows[:limit]]
+        next_cursor = (
+            base64.urlsafe_b64encode(json.dumps([*prefix, str(items[-1].id)]).encode()).decode()
+            if len(rows) > limit
+            else None
+        )
+        return ParticipantPage(items=items, next_cursor=next_cursor)
 
     async def _workflow_snapshot(self, project_id: UUID) -> tuple[WorkflowStatusSnapshot, ...]:
         statuses = await self.repository.list_statuses(project_id)
@@ -256,7 +326,7 @@ class DomainService:
 
     async def list_projects(self, user_id: UUID, organization_id: UUID) -> list[Project]:
         await self.get_organization(user_id, organization_id)
-        return await self.repository.list_projects_for_organization(organization_id)
+        return await self.repository.list_projects_for_user(organization_id, user_id)
 
     async def create_project(self, user_id: UUID, data: ProjectCreate) -> Project:
         memberships = MembershipService(self.session)
@@ -311,7 +381,7 @@ class DomainService:
         if (
             project is None
             or project.deleted_at is not None
-            or not await self.repository.has_organization_access(project.organization_id, user_id)
+            or not await self.access.can_read_project(user_id, project_id)
         ):
             raise NotFoundError("Project not found")
         return project
@@ -601,15 +671,6 @@ class DomainService:
         if data.assignee_id is not None:
             await self._require_organization_user(project.organization_id, data.assignee_id)
             await self._require_project_participant(project_id, data.assignee_id)
-        if (
-            data.story_points is not None or data.due_date is not None or data.priority is not None
-        ) and not (
-            await self.administration.can_manage(user_id, project.organization_id, project.id)
-            or user_id in {reporter_id, data.assignee_id}
-        ):
-            raise PermissionDeniedError(
-                "Only the scoped manager, reporter, or assignee can set planning fields"
-            )
         task = Task(
             project_id=project_id,
             status_id=project_status.id,
@@ -661,7 +722,7 @@ class DomainService:
         self, user_id: UUID, project_id: UUID, data: TaskCreate
     ) -> TaskResponse:
         task = await self.create_task(user_id, project_id, data)
-        return await self._task_response(task)
+        return await self._task_response(task, user_id=user_id)
 
     async def get_task(self, user_id: UUID, task_id: UUID) -> Task:
         task = await self.repository.get_task(task_id)
@@ -673,7 +734,7 @@ class DomainService:
         return task
 
     async def get_task_response(self, user_id: UUID, task_id: UUID) -> TaskResponse:
-        return await self._task_response(await self.get_task(user_id, task_id))
+        return await self._task_response(await self.get_task(user_id, task_id), user_id=user_id)
 
     async def update_task(self, user_id: UUID, task_id: UUID, data: TaskUpdate) -> Task:
         await self._lock_active_user(user_id, shared=True)
@@ -683,9 +744,6 @@ class DomainService:
         project = await self.repository.get_project(task.project_id)
         if project is None:
             raise NotFoundError("Task not found")
-        can_manage_planning = await self.administration.can_manage(
-            user_id, project.organization_id, project.id
-        ) or user_id in {task.reporter_id, task.assignee_id}
         events: list[tuple[str, str, dict[str, str]]] = []
         if data.title is not None and data.title != task.title:
             old_title = task.title
@@ -734,12 +792,11 @@ class DomainService:
                 ("status_changed", "Task status changed", {"status_id": str(project_status.id)})
             )
         if "reporter_id" in data.model_fields_set:
-            await self._require_reporter_permission(user_id, task, project)
             if data.reporter_id is None:
                 raise InvalidWorkflowError("A task must have a reporter")
-            await self._require_organization_user(project.organization_id, data.reporter_id)
-            await self._require_project_participant(task.project_id, data.reporter_id)
             if data.reporter_id != task.reporter_id:
+                await self._require_organization_user(project.organization_id, data.reporter_id)
+                await self._require_project_participant(task.project_id, data.reporter_id)
                 old_reporter = await self._display_name(task.reporter_id)
                 new_reporter = await self._display_name(data.reporter_id)
                 task.reporter_id = data.reporter_id
@@ -754,11 +811,10 @@ class DomainService:
                     )
                 )
         if "assignee_id" in data.model_fields_set:
-            await self._require_assignee_permission(user_id, task, project, data.assignee_id)
-            if data.assignee_id is not None:
-                await self._require_organization_user(project.organization_id, data.assignee_id)
-                await self._require_project_participant(task.project_id, data.assignee_id)
             if data.assignee_id != task.assignee_id:
+                if data.assignee_id is not None:
+                    await self._require_organization_user(project.organization_id, data.assignee_id)
+                    await self._require_project_participant(task.project_id, data.assignee_id)
                 old_assignee = (
                     await self._display_name(task.assignee_id) if task.assignee_id else None
                 )
@@ -777,10 +833,6 @@ class DomainService:
                     )
                 )
         if "story_points" in data.model_fields_set and data.story_points != task.story_points:
-            if not can_manage_planning:
-                raise PermissionDeniedError(
-                    "Only the scoped manager, reporter, or assignee can change story points"
-                )
             old_points = str(task.story_points) if task.story_points is not None else None
             new_points = str(data.story_points) if data.story_points is not None else None
             task.story_points = data.story_points
@@ -788,10 +840,6 @@ class DomainService:
                 task, user_id, "story_points_changed", "story_points", old_points, new_points
             )
         if "priority" in data.model_fields_set and data.priority != task.priority:
-            if not can_manage_planning:
-                raise PermissionDeniedError(
-                    "Only the scoped manager, reporter, or assignee can change priority"
-                )
             old_priority = task.priority
             task.priority = data.priority
             await self._record_history(
@@ -804,10 +852,6 @@ class DomainService:
             )
         deadline_changed = "due_date" in data.model_fields_set and data.due_date != task.due_date
         if deadline_changed:
-            if not can_manage_planning:
-                raise PermissionDeniedError(
-                    "Only the scoped manager, reporter, or assignee can change deadline"
-                )
             old_deadline = task.due_date.isoformat() if task.due_date is not None else None
             new_deadline = data.due_date.isoformat() if data.due_date is not None else None
             task.due_date = data.due_date
@@ -823,7 +867,9 @@ class DomainService:
     async def update_task_response(
         self, user_id: UUID, task_id: UUID, data: TaskUpdate
     ) -> TaskResponse:
-        return await self._task_response(await self.update_task(user_id, task_id, data))
+        return await self._task_response(
+            await self.update_task(user_id, task_id, data), user_id=user_id
+        )
 
     async def search_organization_tasks(
         self, user_id: UUID, organization_id: UUID, slug: str, limit: int
@@ -832,23 +878,26 @@ class DomainService:
         normalized = slug.strip()
         if not normalized:
             raise InvalidWorkflowError("Task slug is required")
-        rows = await self.repository.search_organization_tasks(organization_id, normalized, limit)
+        rows = await self.repository.search_organization_tasks(
+            organization_id, normalized, limit, user_id
+        )
         return TaskSearchResponse(
-            items=[self._task_link_summary(task, project, status) for task, project, status in rows]
+            items=[
+                self._task_link_summary(
+                    task,
+                    project,
+                    status,
+                    can_edit=project.id in await self.editable_projects(user_id, organization_id),
+                )
+                for task, project, status in rows
+            ]
         )
 
     async def list_task_links(self, user_id: UUID, task_id: UUID) -> list[TaskLinkResponse]:
         task = await self.get_task(user_id, task_id)
         responses: list[TaskLinkResponse] = []
-        for link in await self.repository.list_task_links(task_id):
-            other_id = link.task_b_id if task.id == link.task_a_id else link.task_a_id
-            other = await self.repository.get_task(other_id)
-            project = (
-                await self.repository.get_project(other.project_id) if other is not None else None
-            )
-            if project is None or project.deleted_at is not None:
-                continue
-            responses.append(await self._task_link_response(task, link))
+        for link in await self.repository.list_task_links(task_id, user_id):
+            responses.append(await self._task_link_response(task, link, user_id))
         return responses
 
     async def create_task_link(
@@ -856,7 +905,7 @@ class DomainService:
     ) -> tuple[TaskLinkResponse, bool]:
         await self._lock_active_user(user_id, shared=True)
         source = await self.get_task(user_id, task_id)
-        target = await self.repository.get_task(data.target_task_id)
+        target = await self.get_task(user_id, data.target_task_id)
         if target is None:
             raise NotFoundError("Task not found")
         source_project = await self.repository.get_project(source.project_id)
@@ -891,7 +940,7 @@ class DomainService:
                 existing.relation_type == relation_type
                 and existing.blocking_task_id == blocking_task_id
             ):
-                return await self._task_link_response(source, existing), False
+                return await self._task_link_response(source, existing, user_id), False
             raise ConflictError("Tasks are already linked with another relation")
         link = TaskLink(
             task_a_id=task_a_id,
@@ -913,13 +962,13 @@ class DomainService:
                 and existing.blocking_task_id == blocking_task_id
             ):
                 source_after_race = await self.get_task(user_id, task_id)
-                return await self._task_link_response(source_after_race, existing), False
+                return await self._task_link_response(source_after_race, existing, user_id), False
             raise ConflictError("Tasks are already linked with another relation") from error
         await self._record_link_change(source, target, user_id, link, "task_link_added")
         await self._record_link_change(target, source, user_id, link, "task_link_added")
         await self._queue_link_notifications(source, target, user_id, link, "task_link_added")
         await self.session.commit()
-        return await self._task_link_response(source, link), True
+        return await self._task_link_response(source, link, user_id), True
 
     async def delete_task_link(self, user_id: UUID, task_id: UUID, link_id: UUID) -> None:
         await self._lock_active_user(user_id, shared=True)
@@ -928,7 +977,7 @@ class DomainService:
         if link is None or source.id not in {link.task_a_id, link.task_b_id}:
             raise NotFoundError("Task link not found")
         other_id = link.task_b_id if source.id == link.task_a_id else link.task_a_id
-        target = await self.repository.get_task(other_id)
+        target = await self.get_task(user_id, other_id)
         if target is None:
             raise NotFoundError("Task link not found")
         if not (
@@ -962,9 +1011,13 @@ class DomainService:
         target_id = data.user_id or user_id
         if target_id != user_id:
             await self._require_watcher_manager(user_id, task, project)
-        await self._require_organization_user(project.organization_id, target_id)
+        if target_id not in await self.access.reader_ids(task.project_id, {target_id}):
+            raise AdministrativeError(
+                422,
+                "user_cannot_view_task",
+                "User cannot view the task; add them to the project first",
+            )
         existing = await self.repository.get_task_watcher(task.id, target_id)
-        await self._require_project_participant(task.project_id, target_id)
         await self.repository.add_task_watcher(task.id, target_id)
         if existing is None:
             await self._record_history(
@@ -1009,9 +1062,11 @@ class DomainService:
         return UnreadCountResponse(count=await self.repository.count_unread_notifications(user_id))
 
     async def open_notification(self, user_id: UUID, notification_id: UUID) -> NotificationResponse:
-        notification = await self.repository.get_notification(notification_id)
+        notification = await self.repository.get_notification(notification_id, user_id)
         if notification is None or notification.recipient_id != user_id:
             raise NotFoundError("Notification not found")
+        if notification.task_id is not None:
+            await self.get_task(user_id, notification.task_id)
         if notification.read_at is None:
             notification.read_at = datetime.now(UTC)
             await self.session.commit()
@@ -1032,7 +1087,9 @@ class DomainService:
             columns.append(
                 BoardColumnResponse(
                     status=StatusResponse.model_validate(project_status),
-                    tasks=[await self._task_response(task, reasons) for task in tasks],
+                    tasks=[
+                        await self._task_response(task, reasons, user_id=user_id) for task in tasks
+                    ],
                     next_cursor=next_cursor,
                 )
             )
@@ -1054,7 +1111,7 @@ class DomainService:
             next_cursor = encode_cursor(page[-1].updated_at, page[-1].id)
         reasons = await self._assignee_reasons([task.id for task in page])
         return TaskPageResponse(
-            tasks=[await self._task_response(task, reasons) for task in page],
+            tasks=[await self._task_response(task, reasons, user_id=user_id) for task in page],
             next_cursor=next_cursor,
         )
 
@@ -1063,7 +1120,7 @@ class DomainService:
     ) -> TaskHistoryPageResponse:
         await self.get_task(user_id, task_id)
         page = await self.repository.list_task_history(
-            task_id, limit, self._decode_cursor(cursor) if cursor else None
+            task_id, limit, self._decode_cursor(cursor) if cursor else None, user_id=user_id
         )
         next_cursor = None
         if len(page) > limit:
@@ -1117,7 +1174,7 @@ class DomainService:
         return result
 
     async def _task_response(
-        self, task: Task, reasons: dict[UUID, list[str]] | None = None
+        self, task: Task, reasons: dict[UUID, list[str]] | None = None, *, user_id: UUID
     ) -> TaskResponse:
         watchers = await self.repository.list_task_watchers(task.id)
         reporter = await self.repository.get_user(task.reporter_id)
@@ -1138,6 +1195,7 @@ class DomainService:
                 reasons = await self._assignee_reasons([task.id])
             assignee_summary.unavailable_reasons = reasons.get(task.id, [])
         return TaskResponse(
+            capabilities=await self.task_capabilities(user_id, task),
             id=task.id,
             project_id=task.project_id,
             status_id=task.status_id,
@@ -1159,9 +1217,10 @@ class DomainService:
 
     @staticmethod
     def _task_link_summary(
-        task: Task, project: Project, status: ProjectStatus
+        task: Task, project: Project, status: ProjectStatus, *, can_edit: bool = False
     ) -> TaskLinkTaskSummary:
         return TaskLinkTaskSummary(
+            can_edit=can_edit,
             id=task.id,
             slug=task.slug,
             title=task.title,
@@ -1171,7 +1230,9 @@ class DomainService:
             status_name=status.name,
         )
 
-    async def _task_link_response(self, source: Task, link: TaskLink) -> TaskLinkResponse:
+    async def _task_link_response(
+        self, source: Task, link: TaskLink, user_id: UUID
+    ) -> TaskLinkResponse:
         other_id = link.task_b_id if source.id == link.task_a_id else link.task_a_id
         other = await self.repository.get_task(other_id)
         if other is None:
@@ -1187,10 +1248,14 @@ class DomainService:
             relation_type = "blocks"
         else:
             relation_type = "depends_on"
+        editable = await self.editable_projects(user_id, project.organization_id)
         return TaskLinkResponse(
+            can_delete=source.project_id in editable or other.project_id in editable,
             id=link.id,
             relation_type=relation_type,
-            task=self._task_link_summary(other, project, status),
+            task=self._task_link_summary(
+                other, project, status, can_edit=other.project_id in editable
+            ),
             created_by=self._participant_summary(creator),
             created_at=link.created_at,
         )
@@ -1233,7 +1298,9 @@ class DomainService:
             separators=(",", ":"),
         )
         action = "linked" if event_type == "task_link_added" else "unlinked"
-        for recipient_id in recipients - {actor_id}:
+        allowed = await self.access.reader_ids(source.project_id, recipients)
+        allowed &= await self.access.reader_ids(target.project_id, recipients)
+        for recipient_id in (recipients & allowed) - {actor_id}:
             self.repository.add_notification(
                 recipient_id=recipient_id,
                 task_id=source.id,
@@ -1255,11 +1322,8 @@ class DomainService:
 
     async def _require_organization_user(self, organization_id: UUID, user_id: UUID) -> User:
         user = await self.repository.get_user(user_id)
-        if (
-            user is None
-            or not user.is_active
-            or not await self.repository.has_organization_access(organization_id, user_id)
-        ):
+        member = await self.repository.get_organization_member(organization_id, user_id)
+        if user is None or not user.is_active or member is None or member.state != "active":
             raise InvalidWorkflowError("User must belong to the task organization")
         return user
 
@@ -1299,7 +1363,8 @@ class DomainService:
     ) -> None:
         if not events:
             return
-        watcher_ids = await self.repository.list_task_watcher_ids(task.id)
+        watcher_ids = set(await self.repository.list_task_watcher_ids(task.id))
+        watcher_ids &= await self.access.reader_ids(task.project_id, watcher_ids)
         for event_type, message, event_data in events:
             payload = json.dumps(event_data, separators=(",", ":"))
             for watcher_id in watcher_ids:
@@ -1316,20 +1381,11 @@ class DomainService:
         project = await self.repository.get_project(task.project_id)
         if project is None:
             return
-        project_members = await self.repository.list_project_members(task.project_id)
-        organization_members = await self.repository.list_organization_members(
-            project.organization_id
-        )
-        organization_ids = {user.id for user in organization_members if user.is_active}
-        allowed_ids = {
-            user.id for user in project_members if user.is_active and user.id in organization_ids
-        }
         role_ids = {task.reporter_id}
         if task.assignee_id is not None:
             role_ids.add(task.assignee_id)
-        recipients = (
-            role_ids | set(await self.repository.list_task_watcher_ids(task.id))
-        ) & allowed_ids
+        candidates = role_ids | set(await self.repository.list_task_watcher_ids(task.id))
+        recipients = await self.access.reader_ids(task.project_id, candidates)
         due_date = task.due_date.isoformat() if task.due_date is not None else None
         if due_date is None:
             message = f"Deadline removed from {task.slug}"
@@ -1346,26 +1402,6 @@ class DomainService:
                 message=message,
                 event_data=payload,
             )
-
-    async def _require_assignee_permission(
-        self, user_id: UUID, task: Task, project: Project, new_assignee_id: UUID | None
-    ) -> None:
-        if task.assignee_id is None and new_assignee_id == user_id:
-            return
-        if user_id != task.assignee_id and not await self.administration.can_manage(
-            user_id, project.organization_id, project.id
-        ):
-            raise PermissionDeniedError(
-                "Only the scoped manager or current assignee can change assignee"
-            )
-
-    async def _require_reporter_permission(
-        self, user_id: UUID, task: Task, project: Project
-    ) -> None:
-        if user_id != task.reporter_id and not await self.administration.can_manage(
-            user_id, project.organization_id, project.id
-        ):
-            raise PermissionDeniedError("Only the scoped manager or reporter can change reporter")
 
     async def _require_watcher_manager(self, user_id: UUID, task: Task, project: Project) -> None:
         if user_id != task.assignee_id and not await self.administration.can_manage(

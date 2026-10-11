@@ -271,8 +271,15 @@ class AssigneeSummary(ParticipantSummary):
     unavailable_reasons: list[str] = Field(default_factory=list)
 
 
+class ParticipantPage(BaseModel):
+    items: list[ParticipantSummary]
+    next_cursor: str | None
+
+
 class TaskResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
+
+    capabilities: dict[str, bool] = Field(default_factory=dict)
 
     id: UUID
     project_id: UUID
@@ -299,6 +306,7 @@ class TaskLinkCreate(BaseModel):
 
 
 class TaskLinkTaskSummary(BaseModel):
+    can_edit: bool = False
     id: UUID
     slug: str
     title: str
@@ -309,6 +317,7 @@ class TaskLinkTaskSummary(BaseModel):
 
 
 class TaskLinkResponse(BaseModel):
+    can_delete: bool = False
     id: UUID
     relation_type: Literal["blocks", "depends_on", "related"]
     task: TaskLinkTaskSummary

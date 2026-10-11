@@ -10,6 +10,8 @@ it("submits from the header, blocks duplicate saves and retains edits on failure
   let finish: (response: Response) => void = () => {};
   const fetchMock = vi.fn((input: unknown, options?: RequestInit) => {
     const url = String(input);
+    if (url.includes("/projects/") && url.includes("/members")) return Promise.resolve(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
+    if (url.includes("/participants")) return Promise.resolve(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
       if (url.includes("/members")) return Promise.resolve(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
       if (url.includes("/comments?")) return Promise.resolve(new Response(JSON.stringify({ comments: [], has_more: false }), { status: 200 }));
     if (options?.method === "PATCH") return new Promise<Response>((resolve) => { finish = resolve; });

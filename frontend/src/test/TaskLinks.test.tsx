@@ -190,3 +190,12 @@ it("starts board selection from an accessible icon with the selected relation", 
   expect(start).toHaveBeenCalledWith({ sourceTaskId: "source", sourceSlug: "SRC-1",
     sourceProjectId: "source-project", organizationId: "organization", relationType: "depends_on" });
 });
+
+
+it("uses each link's backend deletion permission independently of the source task", async () => {
+  vi.spyOn(api, "listTaskLinks").mockResolvedValue([{ ...link("related"), can_delete: true }]);
+  const remove = vi.spyOn(api, "deleteTaskLink").mockResolvedValue(undefined);
+  renderWithQueryClient(<TaskLinks taskId="source" taskSlug="SRC-1" projectId="source-project" organizationId="organization" canManage={false} onOpenTask={vi.fn()} onStartSelection={vi.fn()} />);
+  await userEvent.click(await screen.findByRole("button", { name: "Remove link to TWI-1" }));
+  expect(remove).toHaveBeenCalledWith("source", "link-1");
+});

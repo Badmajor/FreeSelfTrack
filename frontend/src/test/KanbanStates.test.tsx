@@ -51,6 +51,8 @@ describe("Kanban async states", () => {
     const task = makeTask();
     const fetchMock = vi.fn((input: string | URL | Request) => {
       const url = String(input);
+    if (url.includes("/projects/") && url.includes("/members")) return Promise.resolve(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
+    if (url.includes("/participants")) return Promise.resolve(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
       if (url.includes("/organizations/") && url.includes("/members")) return Promise.resolve(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
       if (url.includes("/comments?")) return Promise.resolve(new Response(JSON.stringify({ comments: [], has_more: false }), { status: 200 }));
       if (url.includes("/board?")) return jsonResponse(makeBoard(task));

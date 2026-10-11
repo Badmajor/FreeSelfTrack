@@ -24,6 +24,7 @@ type Props = {
   projectId: string;
   organizationId: string;
   canManage: boolean;
+  canEditSource?: boolean;
   onOpenTask: (projectId: string, taskId: string) => void;
   onStartSelection: (selection: LinkSelection) => void;
 };
@@ -40,6 +41,7 @@ export function TaskLinks({
   projectId,
   organizationId,
   canManage,
+  canEditSource = canManage,
   onOpenTask,
   onStartSelection,
 }: Props) {
@@ -152,7 +154,7 @@ export function TaskLinks({
                 <li key={task.id}>
                   <button
                     type="button"
-                    disabled={create.isPending}
+                    disabled={create.isPending || (!canEditSource && !task.can_edit)}
                     onClick={() => create.mutate(task.id)}
                   >
                     <strong>{task.slug}</strong>
@@ -212,7 +214,7 @@ export function TaskLinks({
                 </small>
                 <ExternalLink aria-hidden="true" />
               </button>
-              {canManage && (
+              {link.can_delete && (
                 <button
                   className="icon-button danger-icon"
                   type="button"
