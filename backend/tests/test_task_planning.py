@@ -1,7 +1,7 @@
 from datetime import date
 from uuid import UUID, uuid4
 
-from auth_helpers import authenticated_id, seed_account
+from auth_helpers import authenticated_id, put_member, seed_account
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 from test_task_domain import create_organization, create_project
@@ -31,21 +31,29 @@ async def setup_project(
     organization = await create_organization(client, owner_headers, "Planning")
     member_ids: list[str] = []
     for login_id in (assignee_login, regular_login):
-        response = await client.post(
+        response = await put_member(
+            client,
             f"/api/organizations/{organization['id']}/members",
             json={"email": f"{login_id}@example.com"},
             headers=owner_headers,
         )
         assert response.status_code == 200
-        member_ids.append(response.json()["id"])
+        member_ids.append(response.json()["user"]["id"])
 
     project = await create_project(client, owner_headers, organization["id"], "Roadmap")
-    response = await client.post(
+    response = await put_member(
+        client,
         f"/api/projects/{project['id']}/members",
         json={"email": f"{regular_login}@example.com"},
         headers=owner_headers,
     )
     assert response.status_code == 200
+    await put_member(
+        client,
+        f"/api/projects/{project['id']}/members",
+        headers=owner_headers,
+        json={"email": f"{assignee_login}@example.com"},
+    )
     status = (
         await client.get(f"/api/projects/{project['id']}/statuses", headers=owner_headers)
     ).json()[0]
@@ -241,7 +249,7 @@ async def test_deadline_notifications_status_permissions_and_worker_idempotency(
         f"/api/projects/{project['id']}/members/{users['assignee']}",
         headers=owner,
     )
-    assert revoked.status_code == 200
+    assert revoked.status_code == 204
     assert await DeadlineService(db_session).process_due(date(2026, 10, 18)) == 0
 
     no_assignee = await client.post(
@@ -298,6 +306,7 @@ async def test_priority_permissions_history_profiles_and_no_notification(
         "last_name": "User",
     }
     assert task_body["assignee"] == {
+        "unavailable_reasons": [],
         "is_active": True,
         "id": users["assignee"],
         "first_name": "Planning",

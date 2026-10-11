@@ -1,6 +1,8 @@
 import pytest
+from auth_helpers import put_member
 from pydantic import SecretStr, ValidationError
 from sqlalchemy import func, select
+from sqlalchemy.orm import selectinload
 
 from app.core.config import Settings, get_settings
 from app.models import (
@@ -47,7 +49,7 @@ def test_missing_configuration_rejected(monkeypatch, name):
 async def test_bootstrap_login_idempotency_and_credentials_protection(client, db_session):
     config = settings(password="a" * 140)
     await bootstrap_administrator(db_session, config)
-    user = await db_session.scalar(select(User))
+    user = await db_session.scalar(select(User).options(selectinload(User.profile)))
     assert user.is_system_admin and user.is_active and not user.must_change_password
     assert user.profile.first_name == user.profile.last_name == ""
     response = await client.post(
@@ -239,14 +241,14 @@ async def test_admin_own_membership_and_non_email_identifier(client, db_session)
     for scope, identifier in (("organizations", org["id"]), ("projects", project["id"])):
         url = f"/api/{scope}/{identifier}/members"
         for _ in range(2):
-            response = await client.post(
-                url, headers=headers, json={"email": "local administrator"}
+            response = await put_member(
+                client, url, headers=headers, json={"email": "local administrator"}
             )
             assert response.status_code == 200
         for _ in range(2):
-            assert (await client.delete(f"{url}/{user_id}", headers=headers)).status_code == 200
+            assert (await client.delete(f"{url}/{user_id}", headers=headers)).status_code == 204
         assert (
-            await client.post(url, headers=headers, json={"email": "local administrator"})
+            await put_member(client, url, headers=headers, json={"email": "local administrator"})
         ).status_code == 200
     # Re-add reuses the pair, never duplicates it or strips the system role.
     assert await db_session.scalar(select(func.count()).select_from(OrganizationMember)) == 1

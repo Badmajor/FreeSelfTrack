@@ -1,3 +1,4 @@
+import { membershipPage } from "./test-utils";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -112,6 +113,7 @@ describe("KanbanView", () => {
     const fetchMock = vi.fn(
       (input: string | URL | Request, options?: RequestInit) => {
         const url = String(input);
+      if (url.includes("/organizations/") && url.includes("/members")) return Promise.resolve(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
         if (url.includes("/comments?"))
           return Promise.resolve(
             new Response(JSON.stringify({ comments: [], has_more: false }), {
@@ -144,7 +146,7 @@ describe("KanbanView", () => {
           );
         if (url.includes("/projects/project-1/members"))
           return Promise.resolve(
-            new Response(JSON.stringify([]), { status: 200 }),
+            new Response(JSON.stringify(membershipPage([])), { status: 200 }),
           );
         if (url === "/api/tasks/task-1")
           return Promise.resolve(

@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from app.models import OrganizationMember, SecurityEvent, TaskHistory, User, UserProfile
 from app.schemas.domain import OrganizationCreate, ProjectCreate, TaskCreate, TaskUpdate
 from app.services.domain import DomainService
+from app.services.memberships import MembershipService
 
 pytestmark = pytest.mark.skipif(
     os.getenv("RUN_AUDIT_INTEGRATION") != "1", reason="Opt-in disposable PostgreSQL audit tests"
@@ -100,6 +101,7 @@ async def test_append_only_application_role_and_transaction_rollback(audit_datab
             )
             session.add(OrganizationMember(organization_id=org.id, user_id=actor))
             await session.commit()
+            await MembershipService(session).put(actor, "project", project.id, actor, "member")
             statuses = await service.repository.list_statuses(project.id)
             task = await service.create_task(
                 actor, project.id, TaskCreate(title="Before", status_id=statuses[0].id)

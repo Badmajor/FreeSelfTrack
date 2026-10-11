@@ -71,6 +71,7 @@ class Organization(Base):
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     name: Mapped[str] = mapped_column(String(200))
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
 
     projects: Mapped[list["Project"]] = relationship(back_populates="organization")
@@ -110,6 +111,7 @@ class Project(Base):
         ForeignKey("organizations.id", ondelete="CASCADE"), index=True
     )
     name: Mapped[str] = mapped_column(String(200))
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
 
     organization: Mapped[Organization] = relationship(back_populates="projects")

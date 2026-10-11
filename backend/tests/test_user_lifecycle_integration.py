@@ -63,7 +63,7 @@ async def test_migration_and_concurrent_user_lifecycle(roles_database):  # noqa:
             )
             await session.commit()
             admin_id = admin.id
-        migrate("head")
+        migrate("0022_disable_public_auth")
         async with factory() as session:
             assert await session.scalar(select(PendingRegistration)) is None
             assert await session.scalar(select(PasswordReset)) is None
@@ -72,7 +72,7 @@ async def test_migration_and_concurrent_user_lifecycle(roles_database):  # noqa:
                 == "0022_disable_public_auth"
             )
         migrate("0021_remove_ownership", action="downgrade")
-        migrate("head")
+        migrate("0022_disable_public_auth")
 
         async def create():
             async with factory() as session:

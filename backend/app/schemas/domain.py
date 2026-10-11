@@ -86,7 +86,52 @@ class LoginResponse(BaseModel):
 
 
 class OrganizationCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     name: str = Field(min_length=1, max_length=200)
+    description: str | None = None
+
+    @field_validator("name")
+    @classmethod
+    def nonblank_name(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Name must not be blank")
+        return value.strip()
+
+
+class OrganizationUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    description: str | None = None
+
+    @field_validator("name")
+    @classmethod
+    def nonblank_name(cls, value: str | None) -> str:
+        if value is None or not value.strip():
+            raise ValueError("Name must not be null or blank")
+        return value.strip()
+
+
+class MembershipPut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    role: Literal["member", "manager"]
+
+
+class MemberUser(BaseModel):
+    id: UUID
+    first_name: str
+    last_name: str
+    is_active: bool
+
+
+class MembershipResponse(BaseModel):
+    user: MemberUser
+    role: Literal["member", "manager"]
+    state: Literal["active", "archived", "revoked"]
+
+
+class MembershipPage(BaseModel):
+    items: list[MembershipResponse]
+    next_cursor: str | None = None
 
 
 class OrganizationResponse(BaseModel):
@@ -94,26 +139,30 @@ class OrganizationResponse(BaseModel):
 
     id: UUID
     name: str
+    description: str | None = None
     deleted_at: datetime | None = None
 
     capabilities: dict[str, bool] = Field(default_factory=dict)
-
-
-class MembershipRequest(BaseModel):
-    email: str = Field(min_length=1)
 
 
 class ConfirmRequest(BaseModel):
     confirm: bool
 
 
-class ProjectCreate(BaseModel):
+class ProjectCreate(OrganizationCreate):
     organization_id: UUID
-    name: str = Field(min_length=1, max_length=200)
+    manager_ids: list[UUID] = Field(default_factory=list)
+
+    @field_validator("manager_ids")
+    @classmethod
+    def unique_managers(cls, value: list[UUID]) -> list[UUID]:
+        if len(value) != len(set(value)):
+            raise ValueError("Manager IDs must be unique")
+        return value
 
 
-class ProjectUpdate(BaseModel):
-    name: str | None = Field(default=None, min_length=1, max_length=200)
+class ProjectUpdate(OrganizationUpdate):
+    pass
 
 
 class ProjectResponse(BaseModel):
@@ -122,6 +171,7 @@ class ProjectResponse(BaseModel):
     id: UUID
     organization_id: UUID
     name: str
+    description: str | None = None
     deleted_at: datetime | None = None
 
     capabilities: dict[str, bool] = Field(default_factory=dict)
@@ -217,6 +267,10 @@ class TaskUpdate(BaseModel):
     _story_points = field_validator("story_points", mode="before")(valid_story_points)
 
 
+class AssigneeSummary(ParticipantSummary):
+    unavailable_reasons: list[str] = Field(default_factory=list)
+
+
 class TaskResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -230,7 +284,7 @@ class TaskResponse(BaseModel):
     reporter_id: UUID
     assignee_id: UUID | None
     reporter: ParticipantSummary
-    assignee: ParticipantSummary | None
+    assignee: AssigneeSummary | None
     story_points: int | None
     due_date: date | None
     priority: Literal["low", "normal", "major", "critical"] | None

@@ -1,3 +1,4 @@
+import { membershipPage } from "./test-utils";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -24,6 +25,7 @@ describe("Kanban task workflow", () => {
     const fetchMock = vi.fn(
       (input: string | URL | Request, options?: RequestInit) => {
         const url = String(input);
+      if (url.includes("/organizations/") && url.includes("/members")) return Promise.resolve(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
         if (url.includes("/comments?"))
           return Promise.resolve(
             new Response(JSON.stringify({ comments: [], has_more: false }), {
@@ -86,6 +88,7 @@ describe("Kanban task workflow", () => {
     const fetchMock = vi.fn(
       (input: string | URL | Request, options?: RequestInit) => {
         const url = String(input);
+      if (url.includes("/organizations/") && url.includes("/members")) return Promise.resolve(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
         if (url.includes("/comments?"))
           return Promise.resolve(
             new Response(JSON.stringify({ comments: [], has_more: false }), {
@@ -100,7 +103,7 @@ describe("Kanban task workflow", () => {
         if (url.includes("/tasks/task-1/watchers")) return jsonResponse([]);
         if (url.includes("/tasks/task-1")) return jsonResponse(task);
         if (url.includes("/projects/project-1/members"))
-          return jsonResponse([user]);
+          return jsonResponse(membershipPage([user]));
         return jsonResponse([]);
       },
     );
@@ -159,6 +162,7 @@ describe("Kanban task workflow", () => {
     const fetchMock = vi.fn(
       (input: string | URL | Request, options?: RequestInit) => {
         const url = String(input);
+      if (url.includes("/organizations/") && url.includes("/members")) return Promise.resolve(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
         if (url.includes("/comments?"))
           return Promise.resolve(
             new Response(JSON.stringify({ comments: [], has_more: false }), {

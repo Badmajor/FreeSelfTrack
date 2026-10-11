@@ -9,7 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Eye, EyeOff, Link2 } from "lucide-react";
 
 import {
@@ -20,6 +20,7 @@ import {
   getTask,
   getProject,
   listProjectMembers,
+  listMemberships,
   getTaskHistory,
   listTaskWatchers,
   removeTaskWatcher,
@@ -610,11 +611,14 @@ function TaskDrawer({
     queryFn: () => listTaskWatchers(task.id),
     enabled: canWrite,
   });
-  const members = useQuery({
-    queryKey: ["project-members", projectId],
-    queryFn: () => listProjectMembers(projectId),
+  const members = useInfiniteQuery({
+    queryKey: ["project-member-options", projectId],
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) => listMemberships("project", projectId, pageParam),
+    getNextPageParam: page => page.next_cursor ?? undefined,
     enabled: canWrite,
   });
+  const memberOptions = members.data?.pages.flatMap(page => page.items.map(item => item.user));
   const [title, setTitle] = useState(task.title);
   const [description, setDescription] = useState(task.description ?? "");
   const [reporterId, setReporterId] = useState(task.reporter_id);
@@ -878,9 +882,9 @@ function TaskDrawer({
               participantUpdate.mutate({ reporter_id: event.target.value });
             }}
           >
-            {members.data?.map((member) => (
+            {memberOptions?.map((member) => (
               <option key={member.id} value={member.id}>
-                {profileName(member.profile)}
+                {`${member.first_name} ${member.last_name}`}
               </option>
             ))}
           </select>
@@ -900,19 +904,25 @@ function TaskDrawer({
           >
             <option value="">Unassigned</option>
             {currentTask.assignee &&
-              !members.data?.some(member => member.id === currentTask.assignee?.id) && (
+              !memberOptions?.some(member => member.id === currentTask.assignee?.id) && (
                 <option value={currentTask.assignee.id}>
                   {participantName(currentTask.assignee)}
                   {currentTask.assignee.is_active === false ? " (Blocked)" : ""}
                 </option>
               )}
-            {members.data?.map((member) => (
+            {memberOptions?.map((member) => (
               <option key={member.id} value={member.id}>
-                {profileName(member.profile)}
+                {`${member.first_name} ${member.last_name}`}
               </option>
             ))}
           </select>
         </div>
+        {members.hasNextPage && (
+          <button type="button" disabled={members.isFetchingNextPage} onClick={() => void members.fetchNextPage()}>
+            More participant candidates
+          </button>
+        )}
+        {members.isError && <p role="alert">{members.error.message}</p>}
         <div className="participant-row watcher-row">
           <span className="task-field-label">Watchers</span>
           <div className="watcher-control">
@@ -1116,13 +1126,7 @@ function formatHistoryEntry(entry: TaskHistoryEntry) {
 function priorityLabel(priority: Priority) {
   return priority.charAt(0).toUpperCase() + priority.slice(1);
 }
-function profileName(
-  profile: { first_name: string; last_name: string } | undefined,
-) {
-  return profile
-    ? `${profile.first_name} ${profile.last_name}`
-    : "Unknown user";
-}
+
 function participantName(participant: {
   first_name: string;
   last_name: string;
@@ -1268,12 +1272,19 @@ export function NotificationTaskPanel({
 export function AssigneeName({
   participant,
 }: {
-  participant: { first_name: string; last_name: string; is_active?: boolean };
+  participant: { first_name: string; last_name: string; is_active?: boolean; unavailable_reasons?: string[] };
 }) {
   const name = `${participant.first_name} ${participant.last_name}`;
-  return participant.is_active === false ? (
+  const reasons = participant.unavailable_reasons?.length
+    ? participant.unavailable_reasons
+    : participant.is_active === false ? ["blocked"] : [];
+  const labels: Record<string, string> = {
+    blocked: "Blocked", organization_membership_revoked: "Removed from organization",
+    project_membership_revoked: "Removed from project",
+  };
+  return reasons.length ? (
     <span>
-      <s>{name}</s> <span>(Blocked)</span>
+      <s>{name}</s> <span>({reasons.map(reason => labels[reason] ?? reason).join(", ")})</span>
     </span>
   ) : (
     <span>{name}</span>

@@ -246,3 +246,40 @@ Frontend: `npm test`, `npm run lint`, `npm run typecheck`, `npm run build`.
 Auth/UsersPage tests cover disabled fragments, forced change before workspace requests, password
 visibility/dismissal without storage, capability-controlled actions, block confirmation and readable
 assignee strike-through. Use `npm test -- --no-cache` and build under /tmp for read-only caches.
+
+
+## TASK-033 membership administration
+
+Backend: `uv run pytest -q`, `uv run ruff check .`, `uv run ruff format --check .`,
+`uv run mypy app`. Focused: `uv run pytest -q tests/test_membership_administration.py`.
+API coverage includes strict UUID/role schemas, SA/OM/PM scope and global hierarchy including
+peer roles elsewhere, SA self-management, last-manager demotion, no duplicates on re-add,
+all-or-nothing initial managers, paired/no-op audit, audit-failure rollback, parent/archive guards,
+filter-bound keyset pagination, preserved participant IDs/history and contextual assignee reasons.
+Additional regressions prove participant/watcher requests cannot implicitly create membership.
+Existing workflow, attachment, task and audit tests use the new membership DTO and 204 DELETE.
+
+```sh
+# backend/: every enabled suite creates and removes its own disposable PostgreSQL container.
+RUN_MEMBERSHIP_INTEGRATION=1 uv run pytest -q tests/test_membership_administration_integration.py
+RUN_ROLES_INTEGRATION=1 RUN_USER_LIFECYCLE_INTEGRATION=1 \
+RUN_ADMINISTRATIVE_AUDIT_INTEGRATION=1 RUN_AUDIT_INTEGRATION=1 \
+uv run pytest -q tests/test_administration_roles_integration.py \
+  tests/test_user_lifecycle_integration.py tests/test_administrative_audit_integration.py \
+  tests/test_audit_integration.py
+```
+
+The new suite verifies 0023 upgrade/downgrade/upgrade, null legacy descriptions, preserved
+resource data and five concurrent upserts per scope with one unique membership and one audit
+pair. Old migration-specific tests pin their own revision when checking its downgrade contract;
+clean-role/bootstrap and runtime audit checks still run against current head. No shared database
+is used or migrated. Opt-in suites skip without flags. Restricted environments may require
+running SQLite/asyncio tests outside the sandbox; retain synthetic isolated fixtures.
+
+Frontend: `npm test`, `npm run lint`, `npm run typecheck`, `npm run build`.
+Membership tests cover UUID manager assignment, demotion, organization removal, hierarchy errors,
+duplicate-submit prevention, capability controls, direct project route, retry/pagination and
+contextual strike-through/re-add. Resource creation tests cover descriptions and optional managers.
+Participant/mention selectors consume paginated membership DTOs and allow loading more candidates.
+Use `--no-cache` for tests and `--outDir /tmp/fst033-frontend-build` for builds if local caches/output
+are read-only. No new dependencies are required.

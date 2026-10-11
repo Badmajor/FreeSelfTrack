@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import delete, select, text, update
+from sqlalchemy import delete, select, text, true, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -77,7 +77,9 @@ class AdministrationRepository:
                 query = query.where(Organization.id == organization_id)
         return await self.session.scalar(query.limit(1)) is not None
 
-    async def has_project_manager_role(self, user_id: UUID) -> bool:
+    async def has_project_manager_role(
+        self, user_id: UUID, organization_id: UUID | None = None
+    ) -> bool:
         return (
             await self.session.scalar(
                 select(ProjectMember.user_id)
@@ -90,6 +92,7 @@ class AdministrationRepository:
                 )
                 .where(
                     ProjectMember.user_id == user_id,
+                    Organization.id == organization_id if organization_id is not None else true(),
                     ProjectMember.state == "active",
                     ProjectMember.role == "manager",
                     OrganizationMember.state == "active",

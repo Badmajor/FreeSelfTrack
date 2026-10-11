@@ -74,7 +74,7 @@ async def test_attachment_organization_revocation_and_soft_delete(
     removed = await client.delete(
         f"/api/organizations/{organization_id}/members/{member_id}", headers=owner
     )
-    assert removed.status_code == 200
+    assert removed.status_code == 204
     assert (await client.get(url, headers=member)).status_code == 404
     assert (
         await client.request(

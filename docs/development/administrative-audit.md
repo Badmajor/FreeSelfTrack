@@ -148,3 +148,18 @@ produces one user event only on actual state change. Cascade membership revocati
 produce member_removed events or task history. Reset/password change produces no administrative
 event; every actually revoked session gets a technical session_revoked with the initiating actor.
 No generated password, hash, email or token is included in either journal.
+
+
+## TASK-033 membership producers
+
+UUID membership upsert emits member_added for first/reactivated participation and
+member_role_changed for an active role change; DELETE emits member_removed only for actual
+revocation. Each explicit change writes a user and resource event with one operation_id.
+Project creation reuses that operation ID for the project and all requested managers even
+outside an HTTP request. Scope IDs whose old/new values are unchanged are dropped by the
+writer as before; the paired resource event with the same operation_id identifies the scope
+of a user role-change event. Consumers must preserve this association when rendering it.
+
+Description/name PATCH aggregates changed fields, omits no-op events and shares the domain
+transaction. Organization removal cascades project revocation without synthetic extra events
+or task history. Task participant/watcher paths no longer produce membership events.

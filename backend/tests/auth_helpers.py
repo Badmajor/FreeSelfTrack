@@ -64,3 +64,22 @@ async def seed_manager(headers, scope, identifier):
         await session.commit()
     finally:
         await generator.aclose()
+
+
+async def put_member(client, url, *, json, headers=None):
+    """Resolve fixture email to UUID, then exercise the public role upsert."""
+    from uuid import uuid4
+
+    from sqlalchemy import select
+
+    generator = app.dependency_overrides[get_session]()
+    session = await anext(generator)
+    try:
+        identifier = await session.scalar(
+            select(User.id).where(User.email == json["email"].strip().casefold())
+        )
+    finally:
+        await generator.aclose()
+    return await client.put(
+        f"{url}/{identifier or uuid4()}", json={"role": "member"}, headers=headers
+    )

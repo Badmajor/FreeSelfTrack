@@ -1,3 +1,4 @@
+import { membershipPage } from "./test-utils";
 import { cleanup, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -50,12 +51,13 @@ describe("Kanban async states", () => {
     const task = makeTask();
     const fetchMock = vi.fn((input: string | URL | Request) => {
       const url = String(input);
+      if (url.includes("/organizations/") && url.includes("/members")) return Promise.resolve(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
       if (url.includes("/comments?")) return Promise.resolve(new Response(JSON.stringify({ comments: [], has_more: false }), { status: 200 }));
       if (url.includes("/board?")) return jsonResponse(makeBoard(task));
       if (url.includes("/tasks/task-1/history")) return jsonResponse({ entries: [], next_cursor: null });
       if (url.includes("/tasks/task-1/watchers")) return Promise.reject(new Error("Watchers unavailable"));
       if (url.includes("/tasks/task-1")) return jsonResponse(task);
-      if (url.includes("/projects/project-1/members")) return jsonResponse([{ id: "owner-1", email: "owner@example.com" }]);
+      if (url.includes("/projects/project-1/members")) return jsonResponse(membershipPage([{ id: "owner-1", email: "owner@example.com" }]));
       return jsonResponse([]);
     });
     vi.stubGlobal("fetch", fetchMock);

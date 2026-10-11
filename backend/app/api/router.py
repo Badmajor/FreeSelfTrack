@@ -1,5 +1,5 @@
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -14,10 +14,13 @@ from app.schemas.domain import (
     ConfirmRequest,
     LoginRequest,
     LoginResponse,
-    MembershipRequest,
+    MembershipPage,
+    MembershipPut,
+    MembershipResponse,
     NotificationResponse,
     OrganizationCreate,
     OrganizationResponse,
+    OrganizationUpdate,
     ParticipantSummary,
     ProfileResponse,
     ProfileUpdate,
@@ -37,13 +40,13 @@ from app.schemas.domain import (
     TaskSearchResponse,
     TaskUpdate,
     UnreadCountResponse,
-    UserResponse,
     WatcherRequest,
 )
 from app.services.auth import AuthService
 from app.services.auth_protection import AuthLimiter, normalize_email
 from app.services.domain import DomainService
 from app.services.errors import AdministrativeError, DomainError
+from app.services.memberships import MembershipService
 
 router = APIRouter()
 
@@ -108,6 +111,17 @@ async def create_organization(
     return await service(session).organization_response(user_id, result)
 
 
+@router.patch("/organizations/{organization_id}", response_model=OrganizationResponse)
+async def update_organization(
+    organization_id: UUID,
+    data: OrganizationUpdate,
+    user_id: UUID = Depends(current_user_id),
+    session: AsyncSession = Depends(get_session),
+) -> OrganizationResponse:
+    result = await service(session).update_organization(user_id, organization_id, data)
+    return await service(session).organization_response(user_id, result)
+
+
 @router.get("/organizations", response_model=list[OrganizationResponse])
 async def list_organizations(
     user_id: UUID = Depends(current_user_id), session: AsyncSession = Depends(get_session)
@@ -136,39 +150,50 @@ async def list_organization_projects(
     return await service(session).project_responses(user_id, result)
 
 
-@router.get("/organizations/{organization_id}/members", response_model=list[UserResponse])
+@router.post("/organizations/{organization_id}/members", include_in_schema=False)
+@router.post("/projects/{project_id}/members", include_in_schema=False)
+async def removed_email_membership() -> None:
+    raise HTTPException(status_code=404, detail="Not found")
+
+
+@router.get("/organizations/{organization_id}/members", response_model=MembershipPage)
 async def list_organization_members(
     organization_id: UUID,
+    state: Literal["active", "archived"] | None = None,
+    cursor: str | None = None,
+    limit: int = Query(default=50, ge=1, le=100),
     user_id: UUID = Depends(current_user_id),
     session: AsyncSession = Depends(get_session),
-) -> Any:
-    return await translate_errors(service(session).list_organization_members)(
-        user_id, organization_id
+) -> MembershipPage:
+    return await MembershipService(session).page(
+        user_id, "organization", organization_id, state, cursor, limit
     )
 
 
-@router.post("/organizations/{organization_id}/members", response_model=UserResponse)
-async def add_organization_member(
+@router.put(
+    "/organizations/{organization_id}/members/{member_id}", response_model=MembershipResponse
+)
+async def put_organization_member(
     organization_id: UUID,
-    data: MembershipRequest,
+    member_id: UUID,
+    data: MembershipPut,
     user_id: UUID = Depends(current_user_id),
     session: AsyncSession = Depends(get_session),
-) -> Any:
-    return await translate_errors(service(session).add_organization_member)(
-        user_id, organization_id, data
+) -> MembershipResponse:
+    return await MembershipService(session).put(
+        user_id, "organization", organization_id, member_id, data.role
     )
 
 
-@router.delete("/organizations/{organization_id}/members/{member_id}", response_model=UserResponse)
+@router.delete("/organizations/{organization_id}/members/{member_id}", status_code=204)
 async def remove_organization_member(
     organization_id: UUID,
     member_id: UUID,
     user_id: UUID = Depends(current_user_id),
     session: AsyncSession = Depends(get_session),
-) -> Any:
-    return await translate_errors(service(session).remove_organization_member)(
-        user_id, organization_id, member_id
-    )
+) -> Response:
+    await MembershipService(session).remove(user_id, "organization", organization_id, member_id)
+    return Response(status_code=204)
 
 
 @router.delete("/organizations/{organization_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -223,35 +248,42 @@ async def update_project(
     return await service(session).project_response(user_id, result)
 
 
-@router.get("/projects/{project_id}/members", response_model=list[UserResponse])
+@router.get("/projects/{project_id}/members", response_model=MembershipPage)
 async def list_project_members(
     project_id: UUID,
+    state: Literal["active", "archived"] | None = None,
+    cursor: str | None = None,
+    limit: int = Query(default=50, ge=1, le=100),
     user_id: UUID = Depends(current_user_id),
     session: AsyncSession = Depends(get_session),
-) -> Any:
-    return await translate_errors(service(session).list_project_members)(user_id, project_id)
+) -> MembershipPage:
+    return await MembershipService(session).page(
+        user_id, "project", project_id, state, cursor, limit
+    )
 
 
-@router.post("/projects/{project_id}/members", response_model=UserResponse)
-async def add_project_member(
+@router.put("/projects/{project_id}/members/{member_id}", response_model=MembershipResponse)
+async def put_project_member(
     project_id: UUID,
-    data: MembershipRequest,
+    member_id: UUID,
+    data: MembershipPut,
     user_id: UUID = Depends(current_user_id),
     session: AsyncSession = Depends(get_session),
-) -> Any:
-    return await translate_errors(service(session).add_project_member)(user_id, project_id, data)
+) -> MembershipResponse:
+    return await MembershipService(session).put(
+        user_id, "project", project_id, member_id, data.role
+    )
 
 
-@router.delete("/projects/{project_id}/members/{member_id}", response_model=UserResponse)
+@router.delete("/projects/{project_id}/members/{member_id}", status_code=204)
 async def remove_project_member(
     project_id: UUID,
     member_id: UUID,
     user_id: UUID = Depends(current_user_id),
     session: AsyncSession = Depends(get_session),
-) -> Any:
-    return await translate_errors(service(session).remove_project_member)(
-        user_id, project_id, member_id
-    )
+) -> Response:
+    await MembershipService(session).remove(user_id, "project", project_id, member_id)
+    return Response(status_code=204)
 
 
 @router.delete("/projects/{project_id}", status_code=status.HTTP_204_NO_CONTENT)

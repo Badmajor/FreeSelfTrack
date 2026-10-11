@@ -1,6 +1,6 @@
 from uuid import UUID, uuid4
 
-from auth_helpers import authenticated_id, seed_account, seed_manager, set_system_admin
+from auth_helpers import authenticated_id, put_member, seed_account, seed_manager, set_system_admin
 from httpx import AsyncClient
 
 
@@ -80,14 +80,16 @@ async def test_status_creation_requires_project_owner_and_valid_name(
     organization = await create_organization(client, owner_headers, "Acme")
     project = await create_project(client, owner_headers, organization["id"], "Tracker")
 
-    add_org_member = await client.post(
+    add_org_member = await put_member(
+        client,
         f"/api/organizations/{organization['id']}/members",
         json={"email": f"{user_ids[1]}@example.com"},
         headers=owner_headers,
     )
     assert add_org_member.status_code == 200
 
-    add_member = await client.post(
+    add_member = await put_member(
+        client,
         f"/api/projects/{project['id']}/members",
         json={"email": f"{user_ids[1]}@example.com"},
         headers=owner_headers,
@@ -152,12 +154,14 @@ async def test_status_reorder_permissions_validation_and_task_integrity(
     outsider_headers = await authenticate(client, UUID(int=3))
     organization = await create_organization(client, owner_headers, "Acme")
     project = await create_project(client, owner_headers, organization["id"], "Tracker")
-    await client.post(
+    await put_member(
+        client,
         f"/api/organizations/{organization['id']}/members",
         json={"email": f"{user_ids[1]}@example.com"},
         headers=owner_headers,
     )
-    await client.post(
+    await put_member(
+        client,
         f"/api/projects/{project['id']}/members",
         json={"email": f"{user_ids[1]}@example.com"},
         headers=owner_headers,
@@ -241,7 +245,7 @@ async def test_cross_organization_project_is_hidden(
         json={"organization_id": second_org["id"], "name": "Intrusion"},
         headers=first_headers,
     )
-    assert response.status_code == 404
+    assert response.status_code == 403  # OM can read globally but cannot create here.
 
 
 async def test_protected_endpoint_requires_bearer_token(client: AsyncClient) -> None:
@@ -268,22 +272,25 @@ async def test_membership_authorization_ownership_and_soft_delete_lifecycle(
 
     organization = await create_organization(client, owner_headers, "Acme")
     organization_id = organization["id"]
-    add_member = await client.post(
+    add_member = await put_member(
+        client,
         f"/api/organizations/{organization_id}/members",
         json={"email": member_email},
         headers=owner_headers,
     )
     assert add_member.status_code == 200
-    assert add_member.json()["email"] == member_email
+    assert add_member.json()["user"]["id"] == str(authenticated_id(member_headers))
 
-    duplicate_member = await client.post(
+    duplicate_member = await put_member(
+        client,
         f"/api/organizations/{organization_id}/members",
         json={"email": member_email.upper()},
         headers=owner_headers,
     )
     assert duplicate_member.status_code == 200
 
-    denied_add = await client.post(
+    denied_add = await put_member(
+        client,
         f"/api/organizations/{organization_id}/members",
         json={"email": outsider_email},
         headers=member_headers,
@@ -297,7 +304,8 @@ async def test_membership_authorization_ownership_and_soft_delete_lifecycle(
 
     project = await create_project(client, owner_headers, organization_id, "Private project")
     project_id = project["id"]
-    project_member = await client.post(
+    project_member = await put_member(
+        client,
         f"/api/projects/{project_id}/members",
         json={"email": member_email},
         headers=owner_headers,
@@ -306,7 +314,8 @@ async def test_membership_authorization_ownership_and_soft_delete_lifecycle(
 
     member_project_view = await client.get(f"/api/projects/{project_id}", headers=member_headers)
     assert member_project_view.status_code == 200
-    non_owner_manage = await client.post(
+    non_owner_manage = await put_member(
+        client,
         f"/api/projects/{project_id}/members",
         json={"email": outsider_email},
         headers=member_headers,
@@ -328,13 +337,15 @@ async def test_membership_authorization_ownership_and_soft_delete_lifecycle(
     assert transfer_organization.status_code == 404
     await set_system_admin(member_headers)
 
-    add_outsider_to_org = await client.post(
+    add_outsider_to_org = await put_member(
+        client,
         f"/api/organizations/{organization_id}/members",
         json={"email": outsider_email},
         headers=member_headers,
     )
     assert add_outsider_to_org.status_code == 200
-    add_outsider_to_project = await client.post(
+    add_outsider_to_project = await put_member(
+        client,
         f"/api/projects/{project_id}/members",
         json={"email": outsider_email},
         headers=member_headers,
@@ -345,7 +356,7 @@ async def test_membership_authorization_ownership_and_soft_delete_lifecycle(
         f"/api/projects/{project_id}/members/{authenticated_id(owner_headers)}",
         headers=member_headers,
     )
-    assert remove_old_owner.status_code == 200
+    assert remove_old_owner.status_code == 204
     removed_owner_view = await client.get(f"/api/projects/{project_id}", headers=owner_headers)
     assert removed_owner_view.status_code == 200
 
@@ -413,12 +424,14 @@ async def test_board_move_history_and_independent_cursor_page(
     ).json()
     backlog, in_progress, done = statuses
 
-    await client.post(
+    await put_member(
+        client,
         f"/api/organizations/{organization['id']}/members",
         json={"email": f"{user_ids[1]}@example.com"},
         headers=owner_headers,
     )
-    add_member = await client.post(
+    add_member = await put_member(
+        client,
         f"/api/projects/{project['id']}/members",
         json={"email": f"{user_ids[1]}@example.com"},
         headers=owner_headers,
@@ -472,12 +485,14 @@ async def test_status_archive_is_owner_only_and_requires_empty_non_last_status(
     member_headers = await authenticate(client, user_ids[1])
     organization = await create_organization(client, owner_headers, "Acme")
     project = await create_project(client, owner_headers, organization["id"], "Tracker")
-    await client.post(
+    await put_member(
+        client,
         f"/api/organizations/{organization['id']}/members",
         json={"email": f"{user_ids[1]}@example.com"},
         headers=owner_headers,
     )
-    member = await client.post(
+    member = await put_member(
+        client,
         f"/api/projects/{project['id']}/members",
         json={"email": f"{user_ids[1]}@example.com"},
         headers=owner_headers,
@@ -607,13 +622,20 @@ async def test_task_participants_watchers_and_notifications(
     ).json()
     backlog, in_progress, _ = statuses
 
-    added_to_org = await client.post(
+    added_to_org = await put_member(
+        client,
         f"/api/organizations/{organization['id']}/members",
         json={"email": f"{organization_login_id}@example.com"},
         headers=owner_headers,
     )
     assert added_to_org.status_code == 200
-    organization_user_id = UUID(added_to_org.json()["id"])
+    organization_user_id = UUID(added_to_org.json()["user"]["id"])
+    await put_member(
+        client,
+        f"/api/projects/{project['id']}/members",
+        headers=owner_headers,
+        json={"email": f"{organization_login_id}@example.com"},
+    )
 
     task = await client.post(
         f"/api/projects/{project['id']}/tasks",
@@ -651,7 +673,9 @@ async def test_task_participants_watchers_and_notifications(
     project_members = await client.get(
         f"/api/projects/{project['id']}/members", headers=owner_headers
     )
-    assert organization_user_id in {UUID(item["id"]) for item in project_members.json()}
+    assert organization_user_id in {
+        UUID(item["user"]["id"]) for item in project_members.json()["items"]
+    }
 
     self_assigned = await client.patch(
         f"/api/tasks/{task_id}",
@@ -661,6 +685,7 @@ async def test_task_participants_watchers_and_notifications(
     assert self_assigned.status_code == 200
     assert self_assigned.json()["assignee_id"] == str(organization_user_id)
     assert self_assigned.json()["assignee"] == {
+        "unavailable_reasons": [],
         "is_active": True,
         "id": str(organization_user_id),
         "first_name": "Test",
@@ -728,7 +753,9 @@ async def test_task_participants_watchers_and_notifications(
     remaining_members = await client.get(
         f"/api/projects/{project['id']}/members", headers=owner_headers
     )
-    assert organization_user_id in {UUID(item["id"]) for item in remaining_members.json()}
+    assert organization_user_id in {
+        UUID(item["user"]["id"]) for item in remaining_members.json()["items"]
+    }
 
 
 async def test_task_participant_permission_matrix_and_organization_isolation(
@@ -747,21 +774,23 @@ async def test_task_participant_permission_matrix_and_organization_isolation(
     member_user_id = UUID(int=0)
     regular_user_id = UUID(int=0)
     for login_id in (member_login_id, regular_login_id):
-        response = await client.post(
+        response = await put_member(
+            client,
             f"/api/organizations/{organization_id}/members",
             json={"email": f"{login_id}@example.com"},
             headers=owner_headers,
         )
         assert response.status_code == 200
         if login_id == member_login_id:
-            member_user_id = UUID(response.json()["id"])
+            member_user_id = UUID(response.json()["user"]["id"])
         else:
-            regular_user_id = UUID(response.json()["id"])
+            regular_user_id = UUID(response.json()["user"]["id"])
 
     project = await create_project(client, owner_headers, organization_id, "Tracker")
     project_id = project["id"]
     for login_id in (member_login_id, regular_login_id):
-        response = await client.post(
+        response = await put_member(
+            client,
             f"/api/projects/{project_id}/members",
             json={"email": f"{login_id}@example.com"},
             headers=owner_headers,
@@ -845,31 +874,33 @@ async def test_member_addition_validation_profiles_and_project_idempotency(
     for url in (org_url, project_url):
         denied = await client.get(url, headers=outsider_headers)
         assert denied.status_code == 404
-        anonymous = await client.post(url, json={"email": email})
+        anonymous = await put_member(client, url, json={"email": email})
         assert anonymous.status_code == 401
-        invalid = await client.post(url, json={"email": ""}, headers=headers)
+        invalid = await put_member(client, url, json={"email": ""}, headers=headers)
         assert invalid.status_code == 422
-        missing = await client.post(url, json={"email": "missing@example.com"}, headers=headers)
-        assert missing.status_code == 404
+        missing = await put_member(
+            client, url, json={"email": "missing@example.com"}, headers=headers
+        )
+        assert missing.status_code == 422
 
-    foreign = await client.post(project_url, json={"email": email}, headers=headers)
-    assert foreign.status_code == 409
-    added = await client.post(org_url, json={"email": email}, headers=headers)
+    foreign = await put_member(client, project_url, json={"email": email}, headers=headers)
+    assert foreign.status_code == 422
+    added = await put_member(client, org_url, json={"email": email}, headers=headers)
     assert added.status_code == 200
-    assert added.json()["profile"]["first_name"] == "Test"
-    assert added.json()["profile"]["last_name"] == "User"
+    assert added.json()["user"]["first_name"] == "Test"
+    assert added.json()["user"]["last_name"] == "User"
     assert "password_hash" not in added.json()
-    member_id = added.json()["id"]
+    member_id = added.json()["user"]["id"]
     before = await client.get(project_url, headers=headers)
-    assert member_id not in {item["id"] for item in before.json()}
+    assert member_id not in {item["user"]["id"] for item in before.json()["items"]}
     for _ in range(2):
-        result = await client.post(project_url, json={"email": email}, headers=headers)
+        result = await put_member(client, project_url, json={"email": email}, headers=headers)
         assert result.status_code == 200
-        assert result.json()["id"] == member_id
+        assert result.json()["user"]["id"] == member_id
     for url in (org_url, project_url):
         result = await client.get(url, headers=headers)
-        assert sum(item["id"] == member_id for item in result.json()) == 1
-        assert all(item["profile"]["first_name"] == "Test" for item in result.json())
+        assert sum(item["user"]["id"] == member_id for item in result.json()["items"]) == 1
+        assert all(item["user"]["first_name"] == "Test" for item in result.json()["items"])
 
 
 async def test_project_list_matches_membership_and_board_access(
@@ -885,18 +916,20 @@ async def test_project_list_matches_membership_and_board_access(
     board_url = f"/api/projects/{project_id}/board"
     assert (await client.get(listing)).status_code == 401
     assert (await client.get(listing, headers=member)).status_code == 404
-    added = await client.post(
+    added = await put_member(
+        client,
         f"/api/organizations/{org_id}/members",
         headers=owner,
         json={"email": f"{user_ids[1]}@example.com"},
     )
     assert added.status_code == 200
-    member_id = added.json()["id"]
+    member_id = added.json()["user"]["id"]
     response = await client.get(listing, headers=member)
     assert response.status_code == 200
     assert [item["id"] for item in response.json()] == [project_id]
     assert (await client.get(board_url, headers=member)).status_code == 200
-    added = await client.post(
+    added = await put_member(
+        client,
         f"/api/projects/{project_id}/members",
         headers=owner,
         json={"email": f"{user_ids[1]}@example.com"},
@@ -912,7 +945,7 @@ async def test_project_list_matches_membership_and_board_access(
         member_project["id"],
     }
     removed = await client.delete(f"/api/projects/{project_id}/members/{member_id}", headers=owner)
-    assert removed.status_code == 200
+    assert removed.status_code == 204
     assert {item["id"] for item in (await client.get(listing, headers=member)).json()} == {
         project_id,
         member_project["id"],
@@ -942,7 +975,8 @@ async def test_task_links_and_organization_read_only_access(
     organization = await create_organization(client, owner, "Linked work")
     org_id = organization["id"]
     assert (
-        await client.post(
+        await put_member(
+            client,
             f"/api/organizations/{org_id}/members",
             headers=owner,
             json={"email": f"{user_ids[1]}@example.com"},
@@ -997,7 +1031,8 @@ async def test_task_links_and_organization_read_only_access(
     )
     assert denied.status_code == 403
     assert (
-        await client.post(
+        await put_member(
+            client,
             f"/api/projects/{second_project['id']}/members",
             headers=owner,
             json={"email": f"{user_ids[1]}@example.com"},

@@ -7,12 +7,12 @@ import { afterEach, expect, it, vi } from "vitest";
 import { App } from "../App";
 import { createTestQueryClient, jsonResponse } from "./test-utils";
 
-const user = { id: "owner-1", email: "owner@example.com", is_active: true };
-const organization = { id: "organization-1", capabilities: { edit: true, manage_members: true, manage_workflow: true, archive: true }, name: "Acme" };
+const user = { id: "owner-1", email: "owner@example.com", is_active: true, is_system_admin: true };
+const organization = { id: "organization-1", capabilities: { create_project: true, edit: true, manage_members: true, manage_workflow: true, archive: true }, name: "Acme" };
 const project = {
   id: "project-1",
   organization_id: organization.id,
-  capabilities: { edit: true, manage_members: true, manage_workflow: true, archive: true },
+  capabilities: { create_project: true, edit: true, manage_members: true, manage_workflow: true, archive: true },
   name: "Tracker",
 };
 
@@ -28,6 +28,7 @@ it("creates organizations and projects on separate management pages", async () =
   const fetchMock = vi.fn(
     (input: string | URL | Request, options?: RequestInit) => {
       const url = String(input);
+      if (url.includes("/members")) return jsonResponse({ items: [{ user: { id: "candidate", first_name: "Alex", last_name: "Jones", is_active: true }, role: "member", state: "active" }], next_cursor: null });
       if (url.endsWith("/auth/refresh")) return jsonResponse({ access_token: "token", token_type: "bearer", user });
       if (url.endsWith("/organizations") && options?.method === "POST") {
         organizations = [organization];
@@ -62,6 +63,7 @@ it("creates organizations and projects on separate management pages", async () =
     await screen.findByRole("heading", { name: "Organizations" }),
   ).toBeInTheDocument();
   await actor.type(screen.getByLabelText("Name"), "Acme");
+  await actor.type(screen.getByLabelText("Description"), "Organization details");
   await actor.click(
     screen.getByRole("button", { name: /Create organization/ }),
   );
@@ -74,6 +76,8 @@ it("creates organizations and projects on separate management pages", async () =
     await screen.findByRole("heading", { name: "Projects", level: 1 }),
   ).toBeInTheDocument();
   await actor.type(screen.getByLabelText("Name"), "Tracker");
+  await actor.type(screen.getByLabelText("Description"), "Project details");
+  await actor.click(await screen.findByRole("checkbox", { name: "Alex Jones" }));
   await actor.click(screen.getByRole("button", { name: /Create project/ }));
   expect(
     await screen.findByRole("heading", { name: "Tracker" }),
@@ -85,6 +89,8 @@ it("creates organizations and projects on separate management pages", async () =
       body: JSON.stringify({
         organization_id: organization.id,
         name: "Tracker",
+        description: "Project details",
+        manager_ids: ["candidate"],
       }),
     }),
   );

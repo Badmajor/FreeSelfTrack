@@ -51,6 +51,8 @@ import {
   restoreStatus,
   updateMyProfile,
   updateStatus,
+  updateResource,
+  listMemberships,
   type AuthUser,
   type Organization,
   type Profile,
@@ -84,11 +86,11 @@ export function AuthenticatedApp(props: Props) {
         <Route path="management/users" element={<UsersPage user={props.user} />} />
         <Route
           path="management/organizations"
-          element={<OrganizationManagementPage />}
+          element={<OrganizationManagementPage user={props.user} />}
         />
         <Route
           path="management/organizations/:organizationId"
-          element={<OrganizationManagementPage />}
+          element={<OrganizationManagementPage user={props.user} />}
         />
         <Route
           path="management/projects"
@@ -501,7 +503,7 @@ function RootRedirect() {
   );
 }
 
-function OrganizationManagementPage() {
+function OrganizationManagementPage({ user }: { user: AuthUser }) {
   const { organizationId } = useParams();
   const navigate = useNavigate();
   const client = useQueryClient();
@@ -513,8 +515,9 @@ function OrganizationManagementPage() {
     (item) => item.id === organizationId,
   );
   const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
   const create = useMutation({
-    mutationFn: () => createOrganization(name.trim()),
+    mutationFn: () => createOrganization(name.trim(), description || null),
     onSuccess: async (organization) => {
       setName("");
       await client.invalidateQueries({ queryKey: ["organizations"] });
@@ -575,6 +578,7 @@ function OrganizationManagementPage() {
                 <dt>Identifier</dt>
                 <dd>{selected.id}</dd>
               </dl>
+              <ResourceEditor key={selected.id} scope="organization" resource={selected} />
               <Link
                 className="text-link"
                 to={`/organizations/${selected.id}/members`}
@@ -608,7 +612,7 @@ function OrganizationManagementPage() {
           )}
         </section>
       </div>
-      <form
+      {user.is_system_admin && <form
         className="management-form"
         onSubmit={(event) => {
           event.preventDefault();
@@ -623,11 +627,13 @@ function OrganizationManagementPage() {
           onChange={(event) => setName(event.target.value)}
           required
         />
+        <label htmlFor="organization-description">Description</label>
+        <textarea id="organization-description" value={description} onChange={event => setDescription(event.target.value)} />
         <button className="button compact" disabled={create.isPending}>
           <Plus size={16} /> Create organization
         </button>
         {create.isError && <InlineError error={create.error} />}
-      </form>
+      </form>}
     </Page>
   );
 }
@@ -658,8 +664,10 @@ function ProjectManagementPage() {
     enabled: Boolean(organizationId),
   });
   const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [managerIds, setManagerIds] = useState<string[]>([]);
   const create = useMutation({
-    mutationFn: () => createProject(organizationId, name.trim()),
+    mutationFn: () => createProject(organizationId, name.trim(), description || null, managerIds),
     onSuccess: async (saved) => {
       setName("");
       await client.invalidateQueries({
@@ -685,7 +693,7 @@ function ProjectManagementPage() {
           id="project-organization"
           value={organizationId}
           onChange={(event) =>
-            setSearchParams({ organization: event.target.value })
+            { setManagerIds([]); setSearchParams({ organization: event.target.value }); }
           }
         >
           {organizations.data?.map((organization) => (
@@ -734,6 +742,7 @@ function ProjectManagementPage() {
                 <dt>Identifier</dt>
                 <dd>{project.data.id}</dd>
               </dl>
+              <ResourceEditor key={project.data.id} scope="project" resource={project.data} />
               <div className="inline-actions">
                 <Link
                   className="button-link"
@@ -777,7 +786,7 @@ function ProjectManagementPage() {
           )}
         </section>
       </div>
-      {organizationId && (
+      {organizationId && organizations.data?.find(item => item.id === organizationId)?.capabilities?.create_project && (
         <form
           className="management-form"
           onSubmit={(event) => {
@@ -793,6 +802,9 @@ function ProjectManagementPage() {
             onChange={(event) => setName(event.target.value)}
             required
           />
+          <label htmlFor="project-description">Description</label>
+          <textarea id="project-description" value={description} onChange={event => setDescription(event.target.value)} />
+          <ManagerPicker key={organizationId} organizationId={organizationId} onChange={setManagerIds} />
           <button className="button compact" disabled={create.isPending}>
             <Plus size={16} /> Create project
           </button>
@@ -801,6 +813,42 @@ function ProjectManagementPage() {
       )}
     </Page>
   );
+}
+
+function ResourceEditor({ scope, resource }: { scope: "organization" | "project"; resource: Organization }) {
+  const client = useQueryClient();
+  const [name, setName] = useState(resource.name);
+  const [description, setDescription] = useState(resource.description ?? "");
+  const save = useMutation({
+    mutationFn: () => updateResource(scope, resource.id, name.trim(), description || null),
+    onSuccess: () => client.invalidateQueries(),
+  });
+  if (!resource.capabilities?.edit) return <p>{resource.description}</p>;
+  return <form onSubmit={event => { event.preventDefault(); save.mutate(); }}>
+    <label htmlFor="resource-name">Edit name</label>
+    <input id="resource-name" required maxLength={200} value={name} onChange={event => setName(event.target.value)} />
+    <label htmlFor="resource-description">Edit description</label>
+    <textarea id="resource-description" value={description} onChange={event => setDescription(event.target.value)} />
+    <button disabled={save.isPending}>Save details</button>
+    {save.isError && <InlineError error={save.error} />}
+    {save.isSuccess && <p role="status">Details saved.</p>}
+  </form>;
+}
+
+function ManagerPicker({ organizationId, onChange }: { organizationId: string; onChange: (ids: string[]) => void }) {
+  const [cursor, setCursor] = useState<string>();
+  const [selected, setSelected] = useState<string[]>([]);
+  const members = useQuery({ queryKey: ["manager-candidates", organizationId, cursor],
+    queryFn: () => listMemberships("organization", organizationId, cursor), enabled: Boolean(organizationId) });
+  return <fieldset><legend>Project managers (optional)</legend>
+    {members.isPending && <p>Loading candidates...</p>}
+    {members.isError && <InlineError error={members.error} />}
+    {members.data?.items.map(({ user }) => <label key={user.id}><input type="checkbox" checked={selected.includes(user.id)} onChange={event => {
+      const next = event.target.checked ? [...selected, user.id] : selected.filter(id => id !== user.id);
+      setSelected(next); onChange(next);
+    }} />{user.first_name} {user.last_name}</label>)}
+    {members.data?.next_cursor && <button type="button" onClick={() => setCursor(members.data!.next_cursor!)}>More candidates</button>}
+  </fieldset>;
 }
 
 function WorkflowManagementPage() {

@@ -96,3 +96,7 @@ export function makeBoard(task = makeTask()): Board {
 export function jsonResponse(body: unknown, status = 200): Promise<Response> {
   return Promise.resolve(new Response(JSON.stringify(body), { status }));
 }
+
+export function membershipPage(users: { id: string; email?: string; profile?: { user_id?: string; first_name: string; last_name: string }; is_active?: boolean }[]) {
+  return { items: users.map(user => ({ user: { id: user.id, first_name: user.profile?.first_name ?? "Test", last_name: user.profile?.last_name ?? "User", is_active: user.is_active ?? true }, role: "member", state: "active" })), next_cursor: null };
+}

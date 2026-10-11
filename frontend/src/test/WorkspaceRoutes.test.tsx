@@ -1,3 +1,4 @@
+import { membershipPage } from "./test-utils";
 import { QueryClientProvider } from "@tanstack/react-query";
 import {
   cleanup,
@@ -60,6 +61,7 @@ function mount(currentUser = user, currentProject = project) {
   const fetchMock = vi.fn(
     (input: string | URL | Request, options?: RequestInit) => {
       const url = String(input);
+      if (url.includes("/organizations/") && url.includes("/members")) return Promise.resolve(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
       if (url.endsWith("/organizations")) return jsonResponse([organization]);
       if (url.endsWith("/organizations/organization-1/projects"))
         return jsonResponse([currentProject]);
@@ -167,6 +169,7 @@ it("opens a notification on the addressable task route", async () => {
     "fetch",
     vi.fn((input: string | URL | Request) => {
       const url = String(input);
+      if (url.includes("/organizations/") && url.includes("/members")) return Promise.resolve(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
       if (url.endsWith("/organizations")) return jsonResponse([organization]);
       if (url.endsWith("/notifications/unread-count"))
         return jsonResponse({ count: 1 });
@@ -181,7 +184,7 @@ it("opens a notification on the addressable task route", async () => {
       if (url.includes("/projects/project-1/board?"))
         return jsonResponse(makeBoard(task));
       if (url.endsWith("/projects/project-1/members"))
-        return jsonResponse([user]);
+        return jsonResponse(membershipPage([user]));
       if (url.includes("/history?"))
         return jsonResponse({ entries: [], next_cursor: null });
       if (url.includes("/comments?"))

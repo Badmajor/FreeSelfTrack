@@ -1,8 +1,8 @@
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import { Paperclip, Send, X } from "lucide-react";
-import { ApiError, getAttachment, getComment, getComments, listOrganizationMembers, sendComment, type ChatAttachment, type ChatMessage } from "./api";
+import { ApiError, getAttachment, getComment, getComments, listMemberships, sendComment, type ChatAttachment, type ChatMessage } from "./api";
 
 function forbidden(error: unknown) { return error instanceof ApiError && [401, 403, 404].includes(error.status); }
 function message(error: unknown) { return error instanceof Error ? error.message : "Request failed"; }
@@ -34,9 +34,15 @@ export function TaskChat({ taskId, organizationId, focusCommentId }: { taskId: s
     const displayed = focusedMessage ? [...messages, focusedMessage] : messages;
     pendingComments.current = [...new Set(displayed.filter((item) => item.attachments.some((file) => file.state === "pending")).map((item) => item.id))];
   }, [messages, focusedMessage]);
-  const members = useQuery({ queryKey: ["organization-members", organizationId], queryFn: () => listOrganizationMembers(organizationId), enabled: !denied });
+  const members = useInfiniteQuery({
+    queryKey: ["organization-mention-members", organizationId],
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) => listMemberships("organization", organizationId, pageParam),
+    getNextPageParam: page => page.next_cursor ?? undefined, enabled: !denied,
+  });
+  const memberOptions = members.data?.pages.flatMap(page => page.items.map(item => item.user));
   const mentionSearch = text.match(/@([^@\n]*)$/)?.[1];
-  const candidates = mentionSearch === undefined ? [] : (members.data ?? []).filter((member) => member.profile && !mentionIds.includes(member.id) && (member.profile.first_name + " " + member.profile.last_name).toLowerCase().includes(mentionSearch.toLowerCase()));
+  const candidates = mentionSearch === undefined ? [] : (memberOptions ?? []).filter((member) => !mentionIds.includes(member.id) && (member.first_name + " " + member.last_name).toLowerCase().includes(mentionSearch.toLowerCase()));
   function toBottom() { const node = scroll.current; if (node) node.scrollTop = node.scrollHeight; bottom.current = true; setNewMessages(false); }
   function rejectAccess() { setDenied(true); setMessages([]); setFocusedMessage(null); }
 
@@ -161,9 +167,10 @@ export function TaskChat({ taskId, organizationId, focusCommentId }: { taskId: s
           <textarea id="chat-text" aria-label="Message" placeholder="Write a message" rows={1} value={text} maxLength={10000} disabled={sending} onKeyDown={messageKeyDown} onChange={(event) => { setText(event.target.value); changed(); }} />
           <button className="chat-icon-button chat-send" type="submit" title="Send message" aria-label={sending ? "Sending message" : "Send message"} disabled={sending || (!text.trim() && !files.length)}>{sending ? <span className="chat-sending" aria-hidden="true" /> : <Send aria-hidden="true" />}</button>
         </div>
-        {candidates.length > 0 && <ul className="mention-options" aria-label="Mention an organization member">{candidates.map((member) => <li key={member.id}><button type="button" disabled={sending} onClick={() => { setMentionIds((ids) => [...ids, member.id]); setText(text.replace(/@([^@\n]*)$/, "")); changed(); document.getElementById("chat-text")?.focus(); }}>@{member.profile?.first_name} {member.profile?.last_name}</button></li>)}</ul>}
+        {candidates.length > 0 && <ul className="mention-options" aria-label="Mention an organization member">{candidates.map((member) => <li key={member.id}><button type="button" disabled={sending} onClick={() => { setMentionIds((ids) => [...ids, member.id]); setText(text.replace(/@([^@\n]*)$/, "")); changed(); document.getElementById("chat-text")?.focus(); }}>@{member.first_name} {member.last_name}</button></li>)}</ul>}
+        {mentionSearch !== undefined && members.hasNextPage && <button type="button" disabled={members.isFetchingNextPage} onClick={() => void members.fetchNextPage()}>More mention candidates</button>}
         {members.isError && <p className="error">Unable to load mention candidates.</p>}
-        <div className="chat-mentions">{mentionIds.map((id) => { const person = members.data?.find((member) => member.id === id)?.profile; return <button type="button" disabled={sending} key={id} onClick={() => { setMentionIds(mentionIds.filter((item) => item !== id)); changed(); }} aria-label={"Remove mention " + (person?.first_name ?? "member")}>@{person?.first_name} {person?.last_name} ×</button>; })}</div>
+        <div className="chat-mentions">{mentionIds.map((id) => { const person = memberOptions?.find((member) => member.id === id); return <button type="button" disabled={sending} key={id} onClick={() => { setMentionIds(mentionIds.filter((item) => item !== id)); changed(); }} aria-label={"Remove mention " + (person?.first_name ?? "member")}>@{person?.first_name} {person?.last_name} ×</button>; })}</div>
         <input key={uploadKey} id="chat-files" className="visually-hidden" aria-label="Attachments" type="file" multiple disabled={sending} onChange={(event) => { const selected = Array.from(event.target.files ?? []); if (selected.length > 5 || selected.some((file) => file.size > 25 * 1024 * 1024)) { setSendError("Up to 5 files, 25 MB each."); setFiles([]); requestId.current = crypto.randomUUID(); event.target.value = ""; return; } setFiles(selected); changed(); }} />
         {sendError && <p className="error" role="alert">{sendError}</p>}
       </form>

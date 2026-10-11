@@ -2,6 +2,7 @@ import io
 import json
 from uuid import uuid4
 
+from auth_helpers import put_member
 from httpx import AsyncClient
 from PIL import Image
 from test_task_domain import authenticate, create_organization, create_project
@@ -13,13 +14,15 @@ async def setup_chat(client):
     member = await authenticate(client, member_key)
     organization = await create_organization(client, owner, "Chat")
     project = await create_project(client, owner, organization["id"], "Chat project")
-    joined = await client.post(
+    joined = await put_member(
+        client,
         f"/api/organizations/{organization['id']}/members",
         headers=owner,
         json={"email": f"{member_key}@example.com"},
     )
-    member_id = joined.json()["id"]
-    await client.post(
+    member_id = joined.json()["user"]["id"]
+    await put_member(
+        client,
         f"/api/projects/{project['id']}/members",
         headers=owner,
         json={"email": f"{member_key}@example.com"},

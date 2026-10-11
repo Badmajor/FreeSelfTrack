@@ -3,7 +3,7 @@
 from uuid import UUID, uuid4
 
 import pytest
-from auth_helpers import authenticated_id, set_system_admin
+from auth_helpers import authenticated_id, put_member, set_system_admin
 from sqlalchemy import func, select
 from test_chat import post, setup_chat
 from test_task_domain import authenticate, create_organization, create_project
@@ -59,7 +59,8 @@ async def test_membership_ownership_lifecycle_and_idempotency(client, db_session
     project = await create_project(client, owner, org["id"], "Audit")
     for scope, identifier in [("organizations", org["id"]), ("projects", project["id"])]:
         for _ in range(2):
-            response = await client.post(
+            response = await put_member(
+                client,
                 f"/api/{scope}/{identifier}/members",
                 headers=owner,
                 json={"email": f"{member_email_id}@example.com"},
@@ -98,11 +99,11 @@ async def test_membership_ownership_lifecycle_and_idempotency(client, db_session
     response = await client.delete(
         f"/api/projects/{project['id']}/members/{authenticated_id(owner)}", headers=owner
     )
-    assert response.status_code == 200
+    assert response.status_code == 204
     response = await client.delete(
         f"/api/organizations/{org['id']}/members/{member_id}", headers=owner
     )
-    assert response.status_code == 200
+    assert response.status_code == 204
     removed = await events(db_session, "membership_removed")
     assert len(removed) == 2
     assert all(e.organization_id == UUID(org["id"]) for e in removed)
@@ -215,7 +216,7 @@ async def test_organization_deletion_and_revoked_membership_hide_history(client)
     response = await client.delete(
         f"/api/organizations/{org_id}/members/{member_id}", headers=owner
     )
-    assert response.status_code == 200
+    assert response.status_code == 204
     assert (await client.get(url, headers=member)).status_code == 404
     await set_system_admin(owner)
     response = await client.request(

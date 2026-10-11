@@ -1,3 +1,4 @@
+import { membershipPage } from "./test-utils";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   cleanup,
@@ -100,6 +101,7 @@ describe("Kanban interactions", () => {
   it("loads the next page independently for each column", async () => {
     const fetchMock = vi.fn((input: string | URL | Request) => {
       const url = String(input);
+      if (url.includes("/organizations/") && url.includes("/members")) return Promise.resolve(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
       if (url.includes("/comments?"))
         return Promise.resolve(
           new Response(JSON.stringify({ comments: [], has_more: false }), {
@@ -169,6 +171,7 @@ describe("Kanban interactions", () => {
     const fetchMock = vi.fn(
       (input: string | URL | Request, options?: RequestInit) => {
         const url = String(input);
+      if (url.includes("/organizations/") && url.includes("/members")) return Promise.resolve(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
         if (url.includes("/comments?"))
           return Promise.resolve(
             new Response(JSON.stringify({ comments: [], has_more: false }), {
@@ -181,7 +184,7 @@ describe("Kanban interactions", () => {
         if (url.includes("/tasks/task-1/history"))
           return response({ entries: [], next_cursor: null });
         if (url.includes("/tasks/task-1/watchers")) return response([]);
-        if (url.includes("/projects/project-1/members")) return response([]);
+        if (url.includes("/projects/project-1/members")) return response(membershipPage([]));
         if (url === "/api/tasks/task-1") return response(task);
         return response([]);
       },
@@ -204,6 +207,7 @@ describe("Kanban interactions", () => {
     const assignedTask = { ...task, assignee_id: "owner-1" };
     const fetchMock = vi.fn((input: string | URL | Request) => {
       const url = String(input);
+      if (url.includes("/organizations/") && url.includes("/members")) return Promise.resolve(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
       if (url.includes("/comments?"))
         return Promise.resolve(
           new Response(JSON.stringify({ comments: [], has_more: false }), {
@@ -223,10 +227,10 @@ describe("Kanban interactions", () => {
       if (url.includes("/tasks/task-1/watchers")) return response([]);
       if (url.includes("/tasks/task-1")) return response(assignedTask);
       if (url.includes("/projects/project-1/members"))
-        return response([
+        return response(membershipPage([
           { id: "owner-1", email: "owner@example.com" },
           { id: "member-1", email: "member@example.com" },
-        ]);
+        ]));
       return response([]);
     });
     vi.stubGlobal("fetch", fetchMock);

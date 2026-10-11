@@ -29,6 +29,7 @@ export type Organization = {
   id: string;
   capabilities?: Record<string, boolean>;
   name: string;
+  description?: string | null;
   deleted_at?: string | null;
 };
 
@@ -37,6 +38,7 @@ export type Project = {
   organization_id: string;
   capabilities?: Record<string, boolean>;
   name: string;
+  description?: string | null;
   deleted_at?: string | null;
 };
 
@@ -225,10 +227,10 @@ export async function login(
   });
 }
 
-export async function createOrganization(name: string): Promise<Organization> {
+export async function createOrganization(name: string, description?: string | null): Promise<Organization> {
   return request<Organization>("/organizations", {
     method: "POST",
-    body: JSON.stringify({ name }),
+    body: JSON.stringify({ name, description }),
   });
 }
 
@@ -248,10 +250,12 @@ export async function deleteOrganization(
 export async function createProject(
   organizationId: string,
   name: string,
+  description?: string | null,
+  managerIds: string[] = [],
 ): Promise<Project> {
   return request<Project>("/projects", {
     method: "POST",
-    body: JSON.stringify({ organization_id: organizationId, name }),
+    body: JSON.stringify({ organization_id: organizationId, name, description, manager_ids: managerIds }),
   });
 }
 
@@ -259,31 +263,28 @@ export async function listProjects(organizationId: string): Promise<Project[]> {
   return request<Project[]>(`/organizations/${organizationId}/projects`);
 }
 
-export async function listProjectMembers(
-  projectId: string,
-): Promise<AuthUser[]> {
-  return request<AuthUser[]>(`/projects/${projectId}/members`);
+export type Membership = {
+  user: { id: string; first_name: string; last_name: string; is_active: boolean };
+  role: "member" | "manager";
+  state: "active" | "archived" | "revoked";
+};
+export type MembershipPage = { items: Membership[]; next_cursor: string | null };
+export function listMemberships(scope: "organization" | "project", id: string, cursor?: string) {
+  return request<MembershipPage>(`/${scope}s/${id}/members${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`);
 }
-
-export async function addProjectMember(
-  projectId: string,
-  email: string,
-): Promise<AuthUser> {
-  return request<AuthUser>(`/projects/${projectId}/members`, {
-    method: "POST",
-    body: JSON.stringify({ email }),
-  });
+export function putMembership(scope: "organization" | "project", id: string, userId: string, role: Membership["role"]) {
+  return request<Membership>(`/${scope}s/${id}/members/${userId}`, { method: "PUT", body: JSON.stringify({ role }) });
 }
-
-export async function removeProjectMember(
-  projectId: string,
-  memberId: string,
-): Promise<AuthUser> {
-  return request<AuthUser>(`/projects/${projectId}/members/${memberId}`, {
-    method: "DELETE",
-  });
+export function removeMembership(scope: "organization" | "project", id: string, userId: string) {
+  return request<void>(`/${scope}s/${id}/members/${userId}`, { method: "DELETE" });
 }
-
+export async function listProjectMembers(projectId: string): Promise<Membership["user"][]> {
+  const page = await listMemberships("project", projectId);
+  return page.items.map(item => item.user);
+}
+export function updateResource(scope: "organization" | "project", id: string, name: string, description: string | null) {
+  return request<Organization | Project>(`/${scope}s/${id}`, { method: "PATCH", body: JSON.stringify({ name, description }) });
+}
 
 export async function deleteProject(projectId: string): Promise<void> {
   await request<unknown>(`/projects/${projectId}`, {
@@ -302,6 +303,7 @@ export type Participant = {
   first_name: string;
   last_name: string;
   is_active?: boolean;
+  unavailable_reasons?: string[];
 };
 export type Priority = "low" | "normal" | "major" | "critical";
 export type Task = {
@@ -599,22 +601,6 @@ export async function openNotification(
 ): Promise<Notification> {
   return request<Notification>(`/notifications/${notificationId}/open`, {
     method: "POST",
-  });
-}
-
-export function listOrganizationMembers(
-  organizationId: string,
-): Promise<AuthUser[]> {
-  return request<AuthUser[]>(`/organizations/${organizationId}/members`);
-}
-
-export function addOrganizationMember(
-  organizationId: string,
-  email: string,
-): Promise<AuthUser> {
-  return request<AuthUser>(`/organizations/${organizationId}/members`, {
-    method: "POST",
-    body: JSON.stringify({ email }),
   });
 }
 

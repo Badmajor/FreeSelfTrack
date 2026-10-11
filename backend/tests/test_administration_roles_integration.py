@@ -157,7 +157,7 @@ async def test_legacy_backfill_and_concurrent_bootstrap(roles_database):
             == "archived"
         )
     await engine.dispose()
-    migrate("head")
+    migrate("0021_remove_ownership")
 
     async def bootstrap():
         async with AsyncSession(engine, expire_on_commit=False) as session:
