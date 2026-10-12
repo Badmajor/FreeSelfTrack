@@ -1,3 +1,4 @@
+import { EntityAudit } from "./EntityAudit";
 import { UserCardPage, EmailChangeForm } from "./UserCardPage";
 import { ArchivePage } from "./ArchivePage";
 import { useEffect, useRef, useState } from "react";
@@ -589,6 +590,7 @@ function OrganizationManagementPage({ user }: { user: AuthUser }) {
                 <dt>Identifier</dt>
                 <dd>{selected.id}</dd>
               </dl>
+              {selected.capabilities?.view_audit && <EntityAudit scope="organizations" id={selected.id} />}
               <ResourceEditor key={selected.id} scope="organization" resource={selected} />
               <Link
                 className="text-link"
@@ -757,6 +759,7 @@ function ProjectManagementPage() {
                 <dt>Identifier</dt>
                 <dd>{project.data.id}</dd>
               </dl>
+              {project.data.capabilities?.view_audit && <EntityAudit scope="projects" id={project.data.id} />}
               <ResourceEditor key={project.data.id} scope="project" resource={project.data} />
               <div className="inline-actions">
                 <Link

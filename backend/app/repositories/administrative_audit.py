@@ -6,6 +6,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.administrative_audit import AdministrativeAuditEvent
+from app.models.domain import UserProfile
 from app.schemas.administrative_audit import EntityType
 
 PAGE_SIZE = 20
@@ -22,6 +23,15 @@ class AdministrativeAuditRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
+    async def actor_names(self, ids: set[UUID]) -> dict[UUID, str]:
+        if not ids:
+            return {}
+        rows = await self.session.scalars(select(UserProfile).where(UserProfile.user_id.in_(ids)))
+        return {
+            row.user_id: f"{row.first_name} {row.last_name}".strip() or str(row.user_id)
+            for row in rows
+        }
+
     def add(self, event: AdministrativeAuditEvent) -> None:
         """Join the originating transaction; never flush or commit independently."""
         self.session.add(event)
@@ -33,7 +43,7 @@ class AdministrativeAuditRepository:
         *,
         after: AuditPosition | None = None,
     ) -> AdministrativeAuditPage:
-        """Internal query; the future read service must authorize each page before calling."""
+        """Internal query; the read service authorizes each page before calling."""
         query = select(AdministrativeAuditEvent).where(
             AdministrativeAuditEvent.entity_type == entity_type,
             AdministrativeAuditEvent.entity_id == entity_id,

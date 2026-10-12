@@ -800,3 +800,25 @@ export function changeUserEmail(id: string, email: string) {
 export function confirmEmailChange(token: string) {
   return request<void>("/users/me/email-change/confirm", { method: "POST", body: JSON.stringify({ token }) });
 }
+
+export type AuditScope = "users" | "organizations" | "projects" | "tasks";
+type AuditValue = string | number | boolean | null | { id: string; name: string; position: number; is_active: boolean; is_completed: boolean }[];
+export type AdministrativeAuditEntry = {
+  id: string;
+  occurred_at: string;
+  operation_id: string;
+  actor: { kind: "user" | "bootstrap"; id: string | null; display_name: string };
+  entity: { type: "user" | "organization" | "project" | "task"; id: string };
+  action: string;
+  subject_user_id: string | null;
+  changes: { field: string; old: AuditValue; new: AuditValue }[];
+};
+export type AdministrativeAuditPage = {
+  items: AdministrativeAuditEntry[];
+  page_size: 20;
+  next_cursor: string | null;
+};
+export function getEntityAudit(scope: AuditScope, id: string, cursor?: string) {
+  const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+  return request<AdministrativeAuditPage>(`/${scope}/${id}/audit${query}`);
+}

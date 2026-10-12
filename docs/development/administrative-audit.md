@@ -4,8 +4,7 @@ Implemented: model, strict internal write schema, transaction-bound writer/repos
 fixed-size internal query and PostgreSQL migration `0019_administrative_audit`.
 TASK-031 adds producers for bootstrap, current resources/memberships/workflow and guards.
 TASK-032 adds user_created, user_blocked/user_unblocked and real session revocations.
-TASK-033–036 add membership, archive and profile producers. Authorized audit HTTP reads/UI
-remain TASK-037. Existing TaskHistory/SecurityEvent rows remain unchanged.
+TASK-033–036 add membership, archive and profile producers. Authorized audit HTTP reads/UI are implemented in TASK-037. Existing TaskHistory/SecurityEvent rows remain unchanged.
 
 See [ADR-014](../architecture/decisions/014-administration-membership-and-archive.md),
 [target API](../architecture/api.md#administration-target),
@@ -88,10 +87,13 @@ last returned (timestamp, UUID) when more rows exist. The next query uses a stri
 so equal timestamps and new insertions do not cause duplicates in an existing cursor walk.
 A refresh is needed for newly inserted records above the current position; this is a live feed.
 
-This is an **internal repository query, not an authorized read service**. TASK-037 must authorize
-the entity on every page, validate an opaque entity-bound cursor, resolve actor display names
-without N+1 and build API schemas. Do not expose this repository through a generic audit route.
-No HTTP/API contract has been activated by TASK-030.
+This remains an internal repository query. TASK-037's `AuditViewService` authorizes each
+entity before calling it, validates an opaque entity-bound cursor and batches actor profile
+names. Explicit read-only routes exist for users, organizations, projects and tasks. User
+audit is restricted to self/SA; other entities follow current object/archive reading rights.
+The API always returns page_size=20 and rejects configurable limits. See the
+[current API contract](../architecture/api.md#task-037-current). Technical logs and working
+task history remain separate; no global log or public export is introduced.
 
 ## Migration, immutability and downgrade
 
@@ -177,3 +179,20 @@ SecurityEvent producers remain separate. Audit insertion failure rolls back the 
 TASK-036: self/SA first_name/last_name changes write a single profile_updated event in the
 same transaction, excluding unchanged fields/no-ops. Email requests, confirmation and direct
 admin email changes emit no administrative event and place no email/token in security metadata.
+
+
+## TASK-037 producer coverage review
+
+Existing producers were checked against ADR-014: bootstrap creation/system-role changes;
+user creation/block/unblock; organization/project creation and name/description updates;
+workflow mutations; explicit paired membership changes; profile names; archive/restore and
+cascaded descendants. Password/email, failed/read operations and automatic membership
+revocation intentionally add no administrative events. No missing producer was found and
+no producer, stored event, migration or old journal was rewritten.
+
+HTTP regression tests compare membership operation/subject IDs across permitted cards and
+archive cascade operation IDs across organization/project/task cards. They check current
+access again after revocation, self/SA user restrictions, missing profile fallback, stable
+20-row timestamp/UUID ordering, live insertion, foreign/malformed cursors and empty pages.
+UI exposes operation_id for correlating paired membership events without fetching private
+user events through a resource card. These identifiers do not grant access.

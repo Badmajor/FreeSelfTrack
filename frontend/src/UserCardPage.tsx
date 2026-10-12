@@ -1,3 +1,4 @@
+import { EntityAudit } from "./EntityAudit";
 import { useState, type FormEvent } from "react";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
@@ -42,6 +43,7 @@ export function UserCardPage({ user, onSaved }: {
       {card.data.capabilities.change_email && (
         <EmailChangeForm key={`email-${userId}`} targetId={userId} self={user.id === userId} />
       )}
+      {card.data.capabilities.view_audit && <EntityAudit scope="users" id={userId} />}
       <p>All active memberships are shown. Membership names do not grant access to these resources.</p>
       <UserMemberships key={`org-${userId}`} id={userId} scope="organizations" />
       <UserMemberships key={`project-${userId}`} id={userId} scope="projects" />

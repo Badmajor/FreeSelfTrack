@@ -124,7 +124,7 @@ class DomainService:
                 "restore": not active and admin,
                 "create_project": active and manager,
                 "create_user": active and manager,
-                "view_audit": False,
+                "view_audit": True,
             }
             responses.append(result)
         return responses
@@ -161,7 +161,7 @@ class DomainService:
                 "restore": project.archived_at is not None and parent_active and parent_manager,
                 "manage_workflow": active and manager,
                 "create_task": active and (parent_manager or project.id in project_roles),
-                "view_audit": False,
+                "view_audit": True,
             }
             responses.append(result)
         return responses
@@ -211,7 +211,7 @@ class DomainService:
             "watch": active and edit,
             "archive": active and lifecycle,
             "restore": task.archived_at is not None and lifecycle,
-            "view_audit": False,
+            "view_audit": True,
         }
 
     async def participants(

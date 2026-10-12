@@ -389,3 +389,22 @@ Full result on 2026-10-12: 230 backend passed / 17 unrelated opt-in skips; 85 fr
 all lint/type/format/build checks passed. Use UV_PROJECT_ENVIRONMENT and UV_CACHE_DIR in /tmp
 if the supplied environment is read-only; asyncio/SMTP may require execution outside sandbox.
 See [operations](user-cards-and-email.md) for delivery/rollback limitations.
+
+
+## TASK-037 entity audit views
+
+From backend/: `uv run pytest -q tests/test_audit_views.py` covers entity/self/SA access,
+archive preservation and revocation, full-session requirements, fixed 20-row keyset pages,
+tied timestamps, concurrent insertion, empty pages, cursor/query validation, actor fallback,
+paired membership events and cascade correlation through actual HTTP endpoints.
+Run the full backend suite and Ruff/format/mypy commands above. Preserve the PostgreSQL
+regression: `RUN_ADMINISTRATIVE_AUDIT_INTEGRATION=1 RUN_AUDIT_INTEGRATION=1 uv run pytest -q
+tests/test_administrative_audit_integration.py tests/test_audit_integration.py` (single command).
+It creates disposable PostgreSQL containers and checks old data and append-only protections.
+No TASK-037 migration or shared database changes are required.
+
+From frontend/: `npm test -- --no-cache src/test/EntityAudit.test.tsx` checks aggregation,
+loading/error/retry/empty states, previous/next/refresh and entity-switch pagination reset.
+Run `npm test`, `npm run lint`, `npm run typecheck`, `npm run build` for regression.
+If the repository's environment is unusable, use a temporary UV_PROJECT_ENVIRONMENT;
+`uv run --no-sync` is appropriate for an already provisioned matching environment.

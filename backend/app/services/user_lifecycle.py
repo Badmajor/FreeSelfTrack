@@ -230,7 +230,7 @@ class UserLifecycleService:
                 "edit_profile": actor.is_system_admin or actor.id == user.id,
                 "change_email": not user.is_system_admin
                 and (actor.is_system_admin or actor.id == user.id),
-                "view_audit": False,
+                "view_audit": actor.is_system_admin or actor.id == user.id,
             },
         )
 

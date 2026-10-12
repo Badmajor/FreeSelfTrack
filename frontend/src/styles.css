@@ -1624,3 +1624,15 @@ select {
 }
 .task-link-target { position: relative; padding-right: 34px; }
 .task-link-target svg { position: absolute; right: 10px; top: 10px; }
+
+.entity-audit {
+  margin-block: 1rem;
+  padding: 1rem;
+  border: 1px solid #d4e0e5;
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+}
+
+.entity-audit li + li { margin-top: 1rem; }
+.entity-audit dd { white-space: pre-wrap; }
+.entity-audit nav { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }

@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from app.api.audit_views import router as audit_views_router
 from app.api.chat import router as chat_router
 from app.api.router import router
 from app.api.sessions import router as session_router
@@ -65,6 +66,7 @@ app.include_router(router, prefix=settings.api_prefix)
 app.include_router(user_lifecycle_router, prefix=settings.api_prefix)
 app.include_router(session_router, prefix=settings.api_prefix)
 app.include_router(chat_router, prefix=settings.api_prefix)
+app.include_router(audit_views_router, prefix=settings.api_prefix)
 
 
 @app.get("/health", include_in_schema=False)

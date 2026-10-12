@@ -1,3 +1,4 @@
+import { EntityAudit } from "./EntityAudit";
 import { TaskChat } from "./TaskChat";
 import { TaskLinks, type LinkSelection } from "./TaskLinks";
 import {
@@ -996,6 +997,7 @@ function TaskDrawer({
           </div>
         </div>
       </div>
+      {currentTask.capabilities?.view_audit && <EntityAudit scope="tasks" id={task.id} />}
       <div className="drawer-section activity-section">
         <div
           role="tablist"
