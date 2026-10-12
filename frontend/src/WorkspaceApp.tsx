@@ -1,3 +1,4 @@
+import { UserCardPage, EmailChangeForm } from "./UserCardPage";
 import { ArchivePage } from "./ArchivePage";
 import { useEffect, useRef, useState } from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -86,6 +87,7 @@ export function AuthenticatedApp(props: Props) {
     <Routes>
       <Route element={<AuthenticatedLayout {...props} />}>
         <Route index element={<RootRedirect />} />
+        <Route path="users/:userId" element={<UserCardPage user={props.user} onSaved={props.onUserSaved} />} />
         <Route path="management/users" element={<UsersPage user={props.user} />} />
         <Route
           path="management/organizations"
@@ -1360,6 +1362,8 @@ function ProfilePage({
         {save.isError && <InlineError error={save.error} />}
         {save.isSuccess && <p className="notice">Profile saved.</p>}
       </form>
+      <Link to={`/users/${user.id}`}>View my user card</Link>
+      {!user.is_system_admin && <EmailChangeForm targetId={user.id} self />}
       <AccountSecurity isSystemAdmin={user.is_system_admin ?? false} />
     </Page>
   );

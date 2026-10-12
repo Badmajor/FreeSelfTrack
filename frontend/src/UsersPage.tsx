@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import {
   useEffect,
   useRef,
@@ -167,9 +168,9 @@ export function UsersPage({ user }: { user: AuthUser }) {
       <ul>
         {users.data?.items.map((target) => (
           <li key={target.id}>
-            <span>
+            <Link to={`/users/${target.id}`}>
               {target.first_name} {target.last_name}
-            </span>{" "}
+            </Link>{" "}
             {!target.is_active && <span>(Blocked)</span>}
             {target.capabilities.reset_password && (
               <button

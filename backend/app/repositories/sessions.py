@@ -7,6 +7,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models import User
 from app.models.auth_session import AuthSession, PasswordReset, RefreshCredential
+from app.repositories.email_change import EmailChangeRepository
 
 
 class SessionRepository:
@@ -36,6 +37,7 @@ class SessionRepository:
             .returning(AuthSession.id)
         )
         await self.session.execute(delete(PasswordReset).where(PasswordReset.user_id == user_id))
+        await EmailChangeRepository(self.session).cancel(user_id)
         return list(revoked)
 
     async def get_reset(self, reset_id: UUID) -> PasswordReset | None:

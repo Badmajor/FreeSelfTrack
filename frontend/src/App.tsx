@@ -1,3 +1,4 @@
+import { EmailChangeConfirmation } from "./EmailChangeConfirmation";
 import { FormEvent, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -23,13 +24,17 @@ export function App() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [emailToken, setEmailToken] = useState(
+    () => new URLSearchParams(window.location.hash.slice(1)).get("email-change") ?? "",
+  );
+  const [emailChanged, setEmailChanged] = useState(false);
   const [legacyLink] = useState(() => {
     const params = new URLSearchParams(window.location.hash.slice(1));
     return params.has("verify") || params.has("reset");
   });
   useEffect(() => {
     let active = true;
-    if (legacyLink)
+    if (legacyLink || new URLSearchParams(window.location.hash.slice(1)).has("email-change"))
       window.history.replaceState(
         null,
         "",
@@ -104,10 +109,34 @@ export function App() {
         {error && <p role="alert">{error}</p>}
       </main>
     );
+  if (user && emailToken) {
+    return (
+      <>
+        {error && <p role="alert">{error}</p>}
+        <EmailChangeConfirmation
+          token={emailToken}
+          email={user.email}
+          onSignOut={() => void signOut()}
+          onClose={() => setEmailToken("")}
+          onDone={() => {
+            setEmailToken("");
+            setEmailChanged(true);
+            void restoreSession()
+              .then(result => setUser(result.user))
+              .catch(() => {
+                setUser(null);
+                setRestoreError("Email changed. Sign in again with your new address.");
+              });
+          }}
+        />
+      </>
+    );
+  }
   if (user)
     return (
       <>
         {error && <p role="alert">{error}</p>}
+        {emailChanged && <p role="status">Email changed. Use the new address for your next sign-in.</p>}
         <AuthenticatedApp
           user={user}
           onSignOut={() => void signOut()}
@@ -124,6 +153,7 @@ export function App() {
           Sign in to continue to your workspace. Contact your administrator to
           create an account or reset your password.
         </p>
+        {emailToken && <p role="status">Sign in to the account that requested the email change, then confirm the new address.</p>}
         {legacyLink && (
           <p role="status">
             Registration and password reset links are no longer supported.

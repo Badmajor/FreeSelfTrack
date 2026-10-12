@@ -78,12 +78,12 @@ async def test_bootstrap_login_idempotency_and_credentials_protection(client, db
     ]:
         response = await client.post("/api/auth/" + path, headers=headers, json=data)
         assert response.status_code == (404 if path == "deactivate" else 403)
-    # No public system-role mutation or ownership-transfer alias exists.
+    # User cards expose GET only; system-role mutation remains unavailable.
     assert (
         await client.patch(
             f"/api/users/{user.id}", headers=headers, json={"is_system_admin": False}
         )
-    ).status_code == 404
+    ).status_code == 405
     await db_session.rollback()
     await bootstrap_administrator(db_session, settings(password="changed"))
     assert (await client.get("/api/organizations", headers=headers)).status_code == 401

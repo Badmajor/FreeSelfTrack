@@ -159,6 +159,28 @@ async def test_legacy_backfill_and_concurrent_bootstrap(roles_database):
     await engine.dispose()
     migrate("0021_remove_ownership")
 
+    # Verify the historical migration at its own revision, then run current services at head.
+    async with AsyncSession(engine) as session:
+        for table, rows in preserved.items():
+            assert (
+                list(
+                    await session.scalars(
+                        text(f"SELECT row_to_json(t)::text FROM {table} t ORDER BY id")
+                    )
+                )
+                == rows
+            )
+    await engine.dispose()
+    failed = migrate("0020_administration_roles", action="downgrade", success=False)
+    assert "Ownership cannot be reconstructed" in failed.stderr
+    async with engine.connect() as connection:
+        assert (
+            await connection.scalar(text("SELECT version_num FROM alembic_version"))
+            == "0021_remove_ownership"
+        )
+    await engine.dispose()
+    migrate("head")
+
     async def bootstrap():
         async with AsyncSession(engine, expire_on_commit=False) as session:
             await bootstrap_administrator(session, settings())
@@ -171,15 +193,6 @@ async def test_legacy_backfill_and_concurrent_bootstrap(roles_database):
             events = list(await session.scalars(select(AdministrativeAuditEvent)))
             assert [event.action for event in events].count("user_created") == 1
             assert [event.action for event in events].count("system_role_changed") == 1
-            for table, rows in preserved.items():
-                assert (
-                    list(
-                        await session.scalars(
-                            text(f"SELECT row_to_json(t)::text FROM {table} t ORDER BY id")
-                        )
-                    )
-                    == rows
-                )
             assert (
                 await session.scalar(
                     text(
@@ -215,13 +228,6 @@ async def test_legacy_backfill_and_concurrent_bootstrap(roles_database):
                 == 3
             )
         await engine.dispose()
-        failed = migrate("0020_administration_roles", action="downgrade", success=False)
-        assert "Ownership cannot be reconstructed" in failed.stderr
-        async with engine.connect() as connection:
-            assert (
-                await connection.scalar(text("SELECT version_num FROM alembic_version"))
-                == "0021_remove_ownership"
-            )
     finally:
         await engine.dispose()
 

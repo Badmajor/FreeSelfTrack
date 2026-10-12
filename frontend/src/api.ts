@@ -771,3 +771,32 @@ export function listOrganizationPage(cursor?: string) {
 export function listProjectPage(organizationId: string, cursor?: string) {
   return request<{ items: Project[]; next_cursor: string | null }>(`/organizations/${organizationId}/projects${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`);
 }
+
+export type UserMembershipSummary = {
+  id: string;
+  name: string;
+  role: "member" | "manager";
+  can_open: boolean;
+  organization_id: string | null;
+  organization_name: string | null;
+};
+export function getUserCard(id: string) {
+  return request<UserCard>(`/users/${id}`);
+}
+export function listUserMemberships(id: string, scope: "organizations" | "projects", cursor?: string) {
+  const params = new URLSearchParams();
+  if (cursor) params.set("cursor", cursor);
+  return request<{ items: UserMembershipSummary[]; next_cursor: string | null }>(`/users/${id}/${scope}?${params}`);
+}
+export function updateUserProfile(id: string, first_name: string, last_name: string) {
+  return request<Profile>(`/users/${id}/profile`, { method: "PATCH", body: JSON.stringify({ first_name, last_name }) });
+}
+export function requestEmailChange(email: string) {
+  return request<{ message: string; expires_at: string }>("/users/me/email-change", { method: "POST", body: JSON.stringify({ email }) });
+}
+export function changeUserEmail(id: string, email: string) {
+  return request<AuthUser>(`/users/${id}/email`, { method: "PATCH", body: JSON.stringify({ email }) });
+}
+export function confirmEmailChange(token: string) {
+  return request<void>("/users/me/email-change/confirm", { method: "POST", body: JSON.stringify({ token }) });
+}

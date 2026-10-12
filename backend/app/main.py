@@ -61,8 +61,8 @@ app.add_middleware(
 )
 app.add_middleware(AuditCorrelation)
 
-app.include_router(user_lifecycle_router, prefix=settings.api_prefix)
 app.include_router(router, prefix=settings.api_prefix)
+app.include_router(user_lifecycle_router, prefix=settings.api_prefix)
 app.include_router(session_router, prefix=settings.api_prefix)
 app.include_router(chat_router, prefix=settings.api_prefix)
 
@@ -80,6 +80,7 @@ async def validation_error(request: Request, exc: RequestValidationError) -> JSO
         or path == "/users"
         or path.endswith("/users")
         or path.endswith("/temporary-password")
+        or path.startswith("/users/me/email-change")
     ):
         return await request_validation_exception_handler(request, exc)
     return JSONResponse(

@@ -19,6 +19,7 @@ from app.models.domain import (
     User,
     UserProfile,
 )
+from app.models.email_change import EmailChangeRequest as EmailChangeRequest
 from app.models.registration import PendingRegistration as PendingRegistration
 
 __all__ = [

@@ -11,11 +11,13 @@ from app.models import User
 from app.repositories.administration import AdministrationRepository
 from app.repositories.domain import DomainRepository
 from app.repositories.sessions import SessionRepository
+from app.schemas.administrative_audit import AdministrativeAuditWrite, AuditChange
 from app.schemas.domain import (
     LoginRequest,
     ProfileResponse,
     ProfileUpdate,
 )
+from app.services.administrative_audit import AdministrativeAuditService
 from app.services.audit import record_event
 from app.services.auth_protection import normalize_email, validate_password
 from app.services.errors import InvalidCredentialsError, NotFoundError, PermissionDeniedError
@@ -63,16 +65,39 @@ class AuthService:
             raise NotFoundError("User profile not found")
         return ProfileResponse.model_validate(user.profile)
 
-    async def update_profile(self, user_id: UUID, data: ProfileUpdate) -> ProfileResponse:
+    async def update_profile(
+        self, user_id: UUID, data: ProfileUpdate, target_id: UUID | None = None
+    ) -> ProfileResponse:
         await AdministrationRepository(self.session).lock_lifecycle()
-        user = await SessionRepository(self.session).lock_user(user_id)
+        administrative = target_id is not None
+        target_id = target_id or user_id
+        for identifier in sorted({user_id, target_id}):
+            await SessionRepository(self.session).lock_user(identifier)
+        user = await self.repository.get_user(user_id)
         await SessionService(self.session).recheck_request_session(user_id)
         if user is None or not user.is_active:
             raise InvalidCredentialsError("Authentication required")
         if user.must_change_password:
             raise PermissionDeniedError("Password change required")
-        if user.profile is None:
+        if administrative and not user.is_system_admin:
+            raise PermissionDeniedError("System administrator required")
+        user = await self.repository.get_user(target_id)
+        if user is None or user.profile is None:
             raise NotFoundError("User profile not found")
+        AdministrativeAuditService(self.session).record(
+            AdministrativeAuditWrite(
+                actor_id=user_id,
+                entity_type="user",
+                entity_id=target_id,
+                action="profile_updated",
+                changes=(
+                    AuditChange(
+                        field="first_name", old=user.profile.first_name, new=data.first_name
+                    ),
+                    AuditChange(field="last_name", old=user.profile.last_name, new=data.last_name),
+                ),
+            )
+        )
         user.profile.first_name = data.first_name
         user.profile.last_name = data.last_name
         await self.session.commit()

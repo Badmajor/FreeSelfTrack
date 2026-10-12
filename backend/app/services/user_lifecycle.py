@@ -3,6 +3,7 @@ import binascii
 import json
 import secrets
 from datetime import UTC, datetime
+from typing import Literal
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,8 +13,10 @@ from app.models import OrganizationMember, User, UserProfile
 from app.repositories.administration import AdministrationRepository
 from app.repositories.domain import DomainRepository
 from app.repositories.sessions import SessionRepository
+from app.repositories.user_cards import UserCardRepository
 from app.schemas.administrative_audit import AdministrativeAuditWrite, AuditChange
 from app.schemas.domain import UserResponse
+from app.schemas.user_cards import UserMembershipPage
 from app.schemas.user_lifecycle import (
     AdministrativeUserCreate,
     TemporaryPasswordResponse,
@@ -204,27 +207,70 @@ class UserLifecycleService:
             raise invalid_session()
         can_block = actor.is_system_admin or await self.administration.active_manager(actor_id)
         users = await self.administration.users_page(query, state, after, limit)
-        items = [
-            UserCard(
-                id=user.id,
-                first_name=user.profile.first_name,
-                last_name=user.profile.last_name,
-                is_active=user.is_active,
-                created_at=user.created_at,
-                capabilities={
-                    "block": can_block and user.is_active and not user.is_system_admin,
-                    "unblock": can_block and not user.is_active,
-                    "reset_password": actor.is_system_admin and not user.is_system_admin,
-                    "edit_profile": False,
-                    "change_email": False,
-                    "view_audit": False,
-                },
-            )
-            for user in users[:limit]
-        ]
+        items = [self.card(actor, user, can_block) for user in users[:limit]]
         next_cursor = None
         if len(users) > limit:
             next_cursor = base64.urlsafe_b64encode(
                 json.dumps(["users", query, state, str(items[-1].id)]).encode()
             ).decode()
         return UserPage(items=items, next_cursor=next_cursor)
+
+    @staticmethod
+    def card(actor: User, user: User, can_block: bool) -> UserCard:
+        return UserCard(
+            id=user.id,
+            first_name=user.profile.first_name,
+            last_name=user.profile.last_name,
+            is_active=user.is_active,
+            created_at=user.created_at,
+            capabilities={
+                "block": can_block and user.is_active and not user.is_system_admin,
+                "unblock": can_block and not user.is_active,
+                "reset_password": actor.is_system_admin and not user.is_system_admin,
+                "edit_profile": actor.is_system_admin or actor.id == user.id,
+                "change_email": not user.is_system_admin
+                and (actor.is_system_admin or actor.id == user.id),
+                "view_audit": False,
+            },
+        )
+
+    async def get_card(self, actor_id: UUID, target_id: UUID) -> UserCard:
+        actor = await self.domain.get_user(actor_id)
+        if actor is None or not actor.is_active:
+            raise AdministrativeError(401, "authentication_required", "Authentication required")
+        if actor.must_change_password:
+            raise AdministrativeError(403, "password_change_required", "Password change required")
+        target = await self.domain.get_user(target_id)
+        if target is None:
+            raise AdministrativeError(404, "not_found", "User not found")
+        can_block = actor.is_system_admin or await self.administration.active_manager(actor_id)
+        return self.card(actor, target, can_block)
+
+    async def user_memberships(
+        self,
+        actor_id: UUID,
+        target_id: UUID,
+        scope: Literal["organizations", "projects"],
+        cursor: str | None,
+        limit: int,
+    ) -> UserMembershipPage:
+        await self.get_card(actor_id, target_id)
+        after = None
+        binding = ["user-memberships", str(target_id), scope]
+        if cursor:
+            try:
+                payload = json.loads(base64.urlsafe_b64decode(cursor))
+                if not isinstance(payload, list) or len(payload) != 4 or payload[:3] != binding:
+                    raise ValueError
+                after = UUID(payload[3])
+            except (ValueError, TypeError, AttributeError, binascii.Error) as exc:
+                raise AdministrativeError(422, "invalid_cursor", "Invalid cursor") from exc
+        rows = await UserCardRepository(self.session).memberships(
+            actor_id, target_id, scope, after, limit
+        )
+        next_cursor = None
+        if len(rows) > limit:
+            next_cursor = base64.urlsafe_b64encode(
+                json.dumps([*binding, str(rows[limit - 1].id)]).encode()
+            ).decode()
+        return UserMembershipPage(items=rows[:limit], next_cursor=next_cursor)

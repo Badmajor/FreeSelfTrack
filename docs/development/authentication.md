@@ -1,11 +1,13 @@
 # Authentication operations (TASK-021)
 
-> TASK-029 defines a future administrative release; it has not been implemented.
-> The instructions below describe the current deployment. For the planned removal of
-> registration/reset/deactivation and required ADMIN_* bootstrap, see the
-> [migration plan](../architecture/administration-migration.md).
+> Current behavior: administrative provisioning/reset and restricted sessions (TASK-032),
+> user cards/profile and SMTP email-change confirmation (TASK-036). Public registration,
+> verification, password recovery and self-deactivation are disabled. The historical
+> TASK-021/022 deployment/auth sections below are retained as background, not current routes.
+> Use [profile/email operations](user-cards-and-email.md), [current API](../architecture/api.md#task-036-current)
+> and the [release plan](../architecture/administration-migration.md).
 
-## Deployment and compatibility
+## Historical TASK-021 deployment and compatibility
 
 Apply `uv run alembic upgrade head` and deploy API and frontend together. Migration
 `0013_pending_registrations` adds pending signup and mail state; existing users and hashes are
@@ -19,7 +21,7 @@ The form requires the password chosen for that registration, then directs the us
 If delivery is delayed or a link expires, submit registration again (subject to the same limits).
 Do not activate requests you did not initiate. Existing accounts are never changed by confirmation.
 
-## SMTP
+## Current SMTP: email changes only
 
 Set these Compose variables in `.env` (examples are in `.env.example`):
 
@@ -40,9 +42,9 @@ SMTP socket timeout (`TRACKER_SMTP_TIMEOUT_SECONDS`, maximum 60). Retries wait 1
 80, 160, then 300 seconds until expiry. A failure after SMTP acceptance but before DB commit
 may deliver the same link twice. The database consumes that link at most once.
 
-`TRACKER_VERIFICATION_LIFETIME_SECONDS` defaults to 3600 on the API. Expiry is persisted, so the
-worker does not need the same setting. Expired pending records are cleaned in batches of 500
-when no mail is due. Monitor `confirmation_delivery_retry`, `mail_database_unavailable`, worker
+Email-change expiry is fixed at six hours; the legacy verification lifetime setting does not
+control it. Expired requests are cleaned in batches of 500 when no mail is due.
+Monitor `email_change_delivery_retry`, `mail_database_unavailable`, worker
 liveness, and oldest unsent `next_attempt_at`/queue length. Do not log or export request bodies,
 SMTP message contents, database parameters, password hashes, or confirmation tokens.
 

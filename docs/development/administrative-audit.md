@@ -4,8 +4,8 @@ Implemented: model, strict internal write schema, transaction-bound writer/repos
 fixed-size internal query and PostgreSQL migration `0019_administrative_audit`.
 TASK-031 adds producers for bootstrap, current resources/memberships/workflow and guards.
 TASK-032 adds user_created, user_blocked/user_unblocked and real session revocations.
-Not implemented: the remaining TASK-033–036 mutations and authorized audit HTTP reads/UI
-(TASK-037). Existing TaskHistory/SecurityEvent rows remain unchanged.
+TASK-033–036 add membership, archive and profile producers. Authorized audit HTTP reads/UI
+remain TASK-037. Existing TaskHistory/SecurityEvent rows remain unchanged.
 
 See [ADR-014](../architecture/decisions/014-administration-membership-and-archive.md),
 [target API](../architecture/api.md#administration-target),
@@ -172,3 +172,8 @@ operation ID and transaction even outside HTTP. Restore writes only the restored
 Same-state retries and automatic archived/revoked membership transitions emit no additional
 administrative events or task working history. Existing organization/project technical lifecycle
 SecurityEvent producers remain separate. Audit insertion failure rolls back the complete cascade.
+
+
+TASK-036: self/SA first_name/last_name changes write a single profile_updated event in the
+same transaction, excluding unchanged fields/no-ops. Email requests, confirmation and direct
+admin email changes emit no administrative event and place no email/token in security metadata.

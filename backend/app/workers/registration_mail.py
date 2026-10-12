@@ -7,6 +7,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.core.config import get_settings
 from app.db.session import SessionFactory
 from app.repositories.sessions import SessionRepository
+from app.services.email_change_mail import EmailChangeMailService
 
 logger = logging.getLogger("security.auth")
 
@@ -15,6 +16,7 @@ async def run() -> None:
     while True:
         try:
             async with SessionFactory() as session:
+                await EmailChangeMailService(session).process_one()
                 await SessionRepository(session).clean_expired(datetime.now(UTC))
                 await session.commit()
         except SQLAlchemyError:

@@ -249,7 +249,7 @@ nginx. For local use, open exactly `http://localhost:5173`.
 
 ## Connect an SMTP Server
 
-SMTP is not used for account creation or password recovery. The settings below are reserved for email-change delivery (TASK-036); that flow is not implemented yet.
+SMTP is not used for account creation or password recovery. Configure the settings below to deliver confirmation links for self-service email changes.
 
 | Variable | Value |
 | --- | --- |
@@ -262,7 +262,7 @@ SMTP is not used for account creation or password recovery. The settings below a
 
 Replace the example values in `.env` with your settings. Both `starttls` and `tls` verify the server certificate. Do not publish `.env` containing mail credentials.
 
-Compose retains the `registration-mail-worker` service for expired-session cleanup. It no longer sends registration or password-reset messages.
+Compose uses `registration-mail-worker` for email-change delivery and expired-session cleanup. Registration and password-reset messages remain disabled.
 
 ## Important
 
@@ -452,7 +452,7 @@ A background worker that periodically checks task deadlines and creates correspo
 
 ### Registration Mail Worker
 
-The `registration-mail-worker` container now cleans expired sessions. Registration/reset mail is disabled.
+The `registration-mail-worker` container delivers email-change confirmations and cleans expired sessions/requests. Registration/reset mail is disabled.
 
 ---
 
@@ -1335,5 +1335,28 @@ cannot be blocked or have their password reset through the API/UI.
 Migration `0022_disable_public_auth` invalidates old registration/reset outboxes, preserving
 existing users, passwords and audit records. Deploy API, SPA and cleanup worker together with
 writers stopped; use the [release plan](docs/architecture/administration-migration.md).
-New user mutations and the paginated user directory are implemented; full user cards, profile/email
-administration, membership administration and audit views remain in later tasks.
+User lifecycle, cards, profile/email and membership administration are implemented.
+Administrative audit views remain TASK-037.
+
+
+## User cards and email changes (TASK-036)
+
+Open a name in **Users**, or **View my user card** in your profile. Any signed-in user with a
+normal session can view cards, including blocked users. Cards show every active organization
+and project membership, even names of resources the visitor cannot access. Only authorized
+resources have links; backend access checks still apply. Inactive memberships are hidden.
+
+Users edit their own first/last name; system administrators can edit others in their cards.
+Organization/project managers cannot edit another user's profile. Name changes are audited.
+In **Profile → Change email**, request a link at the new address. The old email remains valid
+until you sign in to the requesting account and explicitly confirm the link. Links last six
+hours; a new accepted request replaces the previous one. Conflicts do not change the account.
+System administrators change another user's email directly from the card, without confirmation.
+The current configuration administrator's email is managed only by `ADMIN_EMAIL` and bootstrap.
+Email changes are excluded from administrative audit and do not themselves end the session.
+
+Deploy migration `0025_email_change`, API, frontend and `registration-mail-worker` together.
+SMTP failure keeps the request queued until expiry; request another link after expiry.
+Block, password reset/change, relevant bootstrap changes and direct email changes cancel pending
+requests. Downgrading 0025 removes pending confirmations, preserving users and audit records.
+See [profile/email operations](docs/development/user-cards-and-email.md).

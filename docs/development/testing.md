@@ -351,3 +351,41 @@ restoration errors, page loading, list invalidation, task editing after restorat
 active/archived board cache keys. Existing board/chat/session/management tests remain.
 Use writable temporary UV_PROJECT_ENVIRONMENT/UV_CACHE_DIR and frontend --no-cache/--outDir
 when local environment, caches or build output are read-only.
+
+
+## User cards and email (TASK-036)
+
+Focused API/SMTP: `uv run pytest -q tests/test_user_cards.py tests/test_email_change_mail.py
+ tests/test_user_lifecycle.py` (one line, from backend/). Tests cover full-session-only cards,
+blocked targets, cross-resource names without grants, inactive membership filtering and bound
+pagination; self/SA profile and rejected manager/extra fields, atomic/no-op audit; six-hour
+expiry, replacement, ownership, replay, uniqueness, direct changes, protected config admin,
+block/reset cancellation, sanitized token validation, real local TCP SMTP delivery and retries.
+
+```sh
+# backend: isolated PostgreSQL containers for new email and affected lifecycle/bootstrap suites
+RUN_USER_CARDS_INTEGRATION=1 RUN_USER_LIFECYCLE_INTEGRATION=1 RUN_ROLES_INTEGRATION=1 uv run pytest -q
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy app
+# frontend
+npm test -- --no-cache
+npm run lint
+npm run typecheck
+npm run build -- --outDir /tmp/fst036-frontend-build
+```
+
+The email suite tests 0025 upgrade/downgrade/upgrade, preserved users, CASCADE FK, serialized
+replacement/single-use confirmations, concurrent claims on one address, direct-vs-self changes,
+bootstrap cancellation and SKIP LOCKED SMTP selection. It never accesses the workspace database.
+Older migration checks stay pinned for historical assertions, then upgrade to head before
+running current bootstrap/lifecycle services. PATCH on the new GET-only card URL returns 405;
+the system-role mutation regression still ensures there is no write route.
+
+Frontend UserCardPage/EmailChangeConfirmation tests cover names vs links, pagination, backend
+errors, editing controls, direct/self API selection, explicit confirmation after login,
+fragment removal, absence of token storage, success/cancel and duplicate-submit prevention.
+Full result on 2026-10-12: 230 backend passed / 17 unrelated opt-in skips; 85 frontend passed;
+all lint/type/format/build checks passed. Use UV_PROJECT_ENVIRONMENT and UV_CACHE_DIR in /tmp
+if the supplied environment is read-only; asyncio/SMTP may require execution outside sandbox.
+See [operations](user-cards-and-email.md) for delivery/rollback limitations.
