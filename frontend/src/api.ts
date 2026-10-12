@@ -30,7 +30,7 @@ export type Organization = {
   capabilities?: Record<string, boolean>;
   name: string;
   description?: string | null;
-  deleted_at?: string | null;
+  archived_at?: string | null;
 };
 
 export type Project = {
@@ -39,7 +39,7 @@ export type Project = {
   capabilities?: Record<string, boolean>;
   name: string;
   description?: string | null;
-  deleted_at?: string | null;
+  archived_at?: string | null;
 };
 
 type LoginResponse = {
@@ -235,14 +235,14 @@ export async function createOrganization(name: string, description?: string | nu
 }
 
 export async function listOrganizations(): Promise<Organization[]> {
-  return request<Organization[]>("/organizations");
+  return (await listOrganizationPage()).items;
 }
 
 export async function deleteOrganization(
   organizationId: string,
 ): Promise<void> {
-  await request<unknown>(`/organizations/${organizationId}`, {
-    method: "DELETE",
+  await request<unknown>(`/organizations/${organizationId}/archive`, {
+    method: "POST",
     body: JSON.stringify({ confirm: true }),
   });
 }
@@ -260,7 +260,7 @@ export async function createProject(
 }
 
 export async function listProjects(organizationId: string): Promise<Project[]> {
-  return request<Project[]>(`/organizations/${organizationId}/projects`);
+  return (await listProjectPage(organizationId)).items;
 }
 
 export type Membership = {
@@ -287,8 +287,8 @@ export function updateResource(scope: "organization" | "project", id: string, na
 }
 
 export async function deleteProject(projectId: string): Promise<void> {
-  await request<unknown>(`/projects/${projectId}`, {
-    method: "DELETE",
+  await request<unknown>(`/projects/${projectId}/archive`, {
+    method: "POST",
     body: JSON.stringify({ confirm: true }),
   });
 }
@@ -307,6 +307,7 @@ export type Participant = {
 };
 export type Priority = "low" | "normal" | "major" | "critical";
 export type Task = {
+  archived_at?: string | null;
   capabilities?: Record<string, boolean>;
   id: string;
   project_id: string;
@@ -494,8 +495,8 @@ export async function getTask(taskId: string): Promise<Task> {
   return request<Task>(`/tasks/${taskId}`);
 }
 
-export async function getBoard(projectId: string, limit = 500): Promise<Board> {
-  return request<Board>("/projects/" + projectId + "/board?limit=" + limit);
+export async function getBoard(projectId: string, limit = 500, state = "active"): Promise<Board> {
+  return request<Board>("/projects/" + projectId + "/board?limit=" + limit + "&state=" + state);
 }
 
 export async function getColumnTasks(
@@ -503,6 +504,7 @@ export async function getColumnTasks(
   statusId: string,
   cursor: string,
   limit = 500,
+  state = "active",
 ): Promise<TaskPage> {
   return request<TaskPage>(
     "/projects/" +
@@ -512,7 +514,7 @@ export async function getColumnTasks(
       "/tasks?limit=" +
       limit +
       "&cursor=" +
-      encodeURIComponent(cursor),
+      encodeURIComponent(cursor) + "&state=" + state,
   );
 }
 
@@ -743,4 +745,29 @@ export function listTaskParticipants(
   const params = new URLSearchParams({ kind });
   if (cursor) params.set("cursor", cursor);
   return request<{items: Participant[]; next_cursor: string | null}>(`/tasks/${taskId}/participants?${params}`);
+}
+
+
+export type ArchiveResource = { id: string; name?: string; title?: string; capabilities?: Record<string, boolean> };
+export function archivePage(scope: "organization" | "project" | "task", parent?: string, cursor?: string) {
+  const path = scope === "organization" ? "/organizations" : scope === "project" ? `/organizations/${parent}/projects` : `/projects/${parent}/tasks`;
+  const query = new URLSearchParams({ state: "archived", limit: "50" });
+  if (cursor) query.set("cursor", cursor);
+  return request<{ items: ArchiveResource[]; next_cursor: string | null }>(`${path}?${query}`);
+}
+export function restoreResource(scope: "organization" | "project" | "task", id: string) {
+  return request<ArchiveResource>(`/${scope}s/${id}/restore`, { method: "POST" });
+}
+export function archiveTask(id: string) {
+  return request<Task>(`/tasks/${id}/archive`, { method: "POST", body: JSON.stringify({ confirm: true }) });
+}
+
+export function getOrganization(id: string) { return request<Organization>(`/organizations/${id}`); }
+
+
+export function listOrganizationPage(cursor?: string) {
+  return request<{ items: Organization[]; next_cursor: string | null }>(`/organizations${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`);
+}
+export function listProjectPage(organizationId: string, cursor?: string) {
+  return request<{ items: Project[]; next_cursor: string | null }>(`/organizations/${organizationId}/projects${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`);
 }

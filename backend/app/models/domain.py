@@ -72,7 +72,7 @@ class Organization(Base):
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     name: Mapped[str] = mapped_column(String(200))
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
 
     projects: Mapped[list["Project"]] = relationship(back_populates="organization")
 
@@ -112,7 +112,7 @@ class Project(Base):
     )
     name: Mapped[str] = mapped_column(String(200))
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
 
     organization: Mapped[Organization] = relationship(back_populates="projects")
     statuses: Mapped[list["ProjectStatus"]] = relationship(
@@ -181,6 +181,7 @@ class ProjectStatus(Base):
 
 class Task(Base):
     __tablename__ = "tasks"
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     project_id: Mapped[UUID] = mapped_column(

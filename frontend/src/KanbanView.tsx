@@ -13,6 +13,8 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 import { Eye, EyeOff, Link2 } from "lucide-react";
 
 import {
+  archiveTask,
+  restoreResource,
   addTaskWatcher,
   createTask,
   getBoard,
@@ -64,8 +66,8 @@ export function KanbanView({
 }: Props) {
   const queryClient = useQueryClient();
   const board = useQuery({
-    queryKey: ["board", project.id],
-    queryFn: () => getBoard(project.id),
+    queryKey: ["board", project.id, project.archived_at ? "archived" : "active"],
+    queryFn: () => getBoard(project.id, 500, project.archived_at ? "archived" : "active"),
   });
   const [columns, setColumns] = useState<ColumnState[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
@@ -117,6 +119,8 @@ export function KanbanView({
         project.id,
         column.status.id,
         column.next_cursor,
+        500,
+        project.archived_at ? "archived" : "active",
       );
       setColumns((current) =>
         current.map((item) =>
@@ -631,6 +635,12 @@ function TaskDrawer({
   });
   const currentTask = details.data ?? task;
   const canWrite = currentTask.capabilities?.edit ?? false;
+  const lifecycleClient = useQueryClient();
+  const lifecycle = useMutation({
+    mutationFn: async () => { if (currentTask.archived_at) await restoreResource("task", task.id); else await archiveTask(task.id); },
+    onSuccess: async () => { await lifecycleClient.invalidateQueries(); },
+  });
+
   const history = useQuery({
     queryKey: ["task-history", task.id],
     queryFn: () => getTaskHistory(task.id),
@@ -887,6 +897,9 @@ function TaskDrawer({
           </p>
         )}
       </form>
+      {currentTask.archived_at && <p>Archived task — read only.</p>}
+      {(currentTask.capabilities?.archive || currentTask.capabilities?.restore) && <button disabled={lifecycle.isPending} onClick={() => { if (window.confirm(currentTask.archived_at ? "Restore this task?" : "Archive this task?")) lifecycle.mutate(); }}>{currentTask.archived_at ? "Restore task" : "Archive task"}</button>}
+      {lifecycle.isError && <p role="alert">{lifecycle.error.message}</p>}
       <div className="drawer-section drawer-participants">
         <h3>Participants</h3>
         <div className="participant-row">
@@ -1224,9 +1237,9 @@ export function NotificationTaskPanel({
     retry: false,
   });
   const board = useQuery({
-    queryKey: ["board", task.data?.project_id],
-    queryFn: () => getBoard(task.data!.project_id),
-    enabled: !!task.data,
+    queryKey: ["board", task.data?.project_id, project.data?.archived_at ? "archived" : "active"],
+    queryFn: () => getBoard(task.data!.project_id, 500, project.data?.archived_at ? "archived" : "active"),
+    enabled: !!task.data && !!project.data,
     retry: false,
   });
   const update = useMutation({
@@ -1234,7 +1247,7 @@ export function NotificationTaskPanel({
       updateTask(taskId, { status_id: statusId }),
     onSuccess: (saved) => client.setQueryData(["task", taskId], saved),
   });
-  if (task.isError || project.isError || board.isError)
+  if (task.isError || (!task.data?.archived_at && (project.isError || board.isError)))
     return (
       <aside className="task-drawer">
         <button type="button" onClick={onClose}>
@@ -1243,7 +1256,7 @@ export function NotificationTaskPanel({
         <p role="alert">Task is unavailable.</p>
       </aside>
     );
-  if (!task.data || !project.data || !board.data)
+  if (!task.data || (!task.data.archived_at && (!project.data || !board.data)))
     return (
       <aside className="task-drawer">
         <button type="button" onClick={onClose}>
@@ -1257,13 +1270,13 @@ export function NotificationTaskPanel({
       <TaskDrawer
         key={taskId + (commentId ?? "")}
         task={task.data}
-        columns={board.data.columns.map((column) => ({
+        columns={(board.data?.columns ?? []).map((column) => ({
           ...column,
           loadingMore: false,
           error: "",
         }))}
-        projectId={project.data.id}
-        organizationId={project.data.organization_id}
+        projectId={task.data.project_id}
+        organizationId={project.data?.organization_id ?? ""}
         currentUser={currentUser}
         focusCommentId={commentId}
         initialActivity={initialActivity}

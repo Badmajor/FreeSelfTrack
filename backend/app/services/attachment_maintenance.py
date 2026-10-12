@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
 from app.core.object_storage import CHUNK_SIZE, PREFIX, ObjectStorage
+from app.repositories.administration import AdministrationRepository
 from app.repositories.attachment_storage import AttachmentStorageRepository
 from app.repositories.chat import ChatRepository
 from app.services.attachment_files import MAX_FILE_SIZE, inspect_file, normalized_filename
@@ -63,11 +64,14 @@ class AttachmentMaintenance:
             return True
 
     async def review(self, attachment_id: UUID, sha256: str, state: str) -> None:
+        await AdministrationRepository(self.session).lock_lifecycle(shared=True)
         if state not in {"ready", "failed", "infected"}:
             raise InvalidWorkflowError("Invalid review state")
         row = await self.repository.locked(attachment_id)
         if row is None or row.object_key is None:
             raise NotFoundError("Attachment not found or not migrated")
+        if not await self.repository.active(attachment_id):
+            raise ConflictError("Restore the task and parents before reviewing attachments")
         if row.sha256 != sha256:
             raise ConflictError("Review checksum does not match attachment")
         if state == "ready":

@@ -57,8 +57,8 @@ class AdministrationRepository:
                     ProjectMember.role == "manager",
                     ProjectMember.state == "active",
                     OrganizationMember.state == "active",
-                    Project.deleted_at.is_(None),
-                    Organization.deleted_at.is_(None),
+                    Project.archived_at.is_(None),
+                    Organization.archived_at.is_(None),
                 )
             )
             query = query.where(Project.id == project_id)
@@ -70,7 +70,7 @@ class AdministrationRepository:
                     OrganizationMember.user_id == user_id,
                     OrganizationMember.role == "manager",
                     OrganizationMember.state == "active",
-                    Organization.deleted_at.is_(None),
+                    Organization.archived_at.is_(None),
                 )
             )
             if organization_id is not None:
@@ -96,8 +96,8 @@ class AdministrationRepository:
                     ProjectMember.state == "active",
                     ProjectMember.role == "manager",
                     OrganizationMember.state == "active",
-                    Organization.deleted_at.is_(None),
-                    Project.deleted_at.is_(None),
+                    Organization.archived_at.is_(None),
+                    Project.archived_at.is_(None),
                 )
                 .limit(1)
             )
@@ -111,7 +111,7 @@ class AdministrationRepository:
             .where(
                 OrganizationMember.user_id == user_id,
                 OrganizationMember.state == "active",
-                Organization.deleted_at.is_(None),
+                Organization.archived_at.is_(None),
             )
         )
         projects = await self.session.execute(
@@ -127,8 +127,8 @@ class AdministrationRepository:
                 ProjectMember.user_id == user_id,
                 ProjectMember.state == "active",
                 OrganizationMember.state == "active",
-                Project.deleted_at.is_(None),
-                Organization.deleted_at.is_(None),
+                Project.archived_at.is_(None),
+                Organization.archived_at.is_(None),
             )
         )
         return (

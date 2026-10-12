@@ -163,3 +163,12 @@ of a user role-change event. Consumers must preserve this association when rende
 Description/name PATCH aggregates changed fields, omits no-op events and shares the domain
 transaction. Organization removal cascades project revocation without synthetic extra events
 or task history. Task participant/watcher paths no longer produce membership events.
+
+
+## TASK-035 lifecycle producers
+
+Archive writes one event for the object and each actually archived descendant, sharing one
+operation ID and transaction even outside HTTP. Restore writes only the restored object.
+Same-state retries and automatic archived/revoked membership transitions emit no additional
+administrative events or task working history. Existing organization/project technical lifecycle
+SecurityEvent producers remain separate. Audit insertion failure rolls back the complete cascade.

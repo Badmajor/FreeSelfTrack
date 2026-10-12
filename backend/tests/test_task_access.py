@@ -229,7 +229,7 @@ async def test_search_links_and_creation_do_not_bypass_scopes(client, db_session
     employee = actors["employee"]
     org = projects[0]["organization_id"]
     listed = (await client.get(f"/api/organizations/{org}/projects", headers=employee)).json()
-    assert [row["id"] for row in listed] == [projects[0]["id"]]
+    assert [row["id"] for row in listed["items"]] == [projects[0]["id"]]
     found = await client.get(
         f"/api/organizations/{org}/tasks/search", params={"slug": "A"}, headers=employee
     )

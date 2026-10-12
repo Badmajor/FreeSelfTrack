@@ -148,7 +148,7 @@ describe("Kanban interactions", () => {
     fireEvent.scroll(backlogList);
     await screen.findByText("Loaded later");
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/projects/project-1/board/columns/status-backlog/tasks?limit=500&cursor=cursor-backlog",
+      "/api/projects/project-1/board/columns/status-backlog/tasks?limit=500&cursor=cursor-backlog&state=active",
       expect.anything(),
     );
 
@@ -165,7 +165,7 @@ describe("Kanban interactions", () => {
     fireEvent.scroll(doneList);
     await screen.findByText("Done later");
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/projects/project-1/board/columns/status-done/tasks?limit=500&cursor=cursor-done",
+      "/api/projects/project-1/board/columns/status-done/tasks?limit=500&cursor=cursor-done&state=active",
       expect.anything(),
     );
   });

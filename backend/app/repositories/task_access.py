@@ -26,44 +26,58 @@ def organization_visibility(user_id: UUID) -> ColumnElement[bool]:
         .join(grant_org, grant_org.id == OrganizationMember.organization_id)
         .where(
             OrganizationMember.user_id == user_id,
-            OrganizationMember.state == "active",
             OrganizationMember.role == "manager",
-            grant_org.deleted_at.is_(None),
+            or_(
+                and_(OrganizationMember.state == "active", grant_org.archived_at.is_(None)),
+                and_(OrganizationMember.state == "archived", Organization.archived_at.is_not(None)),
+            ),
         )
         .exists()
     )
-    user = exists().where(User.id == user_id, User.is_active.is_(True))
-    admin = exists().where(User.id == user_id, User.is_system_admin.is_(True))
     member = exists().where(
         OrganizationMember.organization_id == Organization.id,
         OrganizationMember.user_id == user_id,
-        OrganizationMember.state == "active",
+        or_(
+            OrganizationMember.state == "active",
+            and_(OrganizationMember.state == "archived", Organization.archived_at.is_not(None)),
+        ),
     )
-    return and_(user, Organization.deleted_at.is_(None), or_(admin, managers, member))
+    return and_(
+        exists().where(User.id == user_id, User.is_active.is_(True)),
+        or_(exists().where(User.id == user_id, User.is_system_admin.is_(True)), managers, member),
+    )
 
 
-def project_visibility(user_id: UUID | InstrumentedAttribute[UUID | None]) -> ColumnElement[bool]:
-    """Active-resource policy; no assignment or watcher is an access grant."""
-    org = aliased(Organization)
+def project_visibility(
+    user_id: UUID | InstrumentedAttribute[UUID | None],
+    *,
+    archived: ColumnElement[bool] | None = None,
+) -> ColumnElement[bool]:
+    """Independent active grants plus retained grants restricted to archived objects."""
+    archived = Project.archived_at.is_not(None) if archived is None else archived
     actor = aliased(User)
-    grant_project = aliased(Project)
     grant_org = aliased(Organization)
-    member = (
-        exists()
-        .correlate(Project, Task)
-        .where(
-            ProjectMember.project_id == Project.id,
-            ProjectMember.user_id == user_id,
-            ProjectMember.state == "active",
-        )
-    )
+    grant_project = aliased(Project)
+    grant_member = aliased(OrganizationMember)
     org_member = (
         exists()
-        .correlate(Project, Task)
+        .correlate_except(OrganizationMember)
         .where(
             OrganizationMember.organization_id == Project.organization_id,
             OrganizationMember.user_id == user_id,
-            OrganizationMember.state == "active",
+            or_(
+                OrganizationMember.state == "active",
+                and_(archived, OrganizationMember.state == "archived"),
+            ),
+        )
+    )
+    member = (
+        exists()
+        .correlate_except(ProjectMember)
+        .where(
+            ProjectMember.project_id == Project.id,
+            ProjectMember.user_id == user_id,
+            or_(ProjectMember.state == "active", and_(archived, ProjectMember.state == "archived")),
         )
     )
     managers = (
@@ -71,38 +85,59 @@ def project_visibility(user_id: UUID | InstrumentedAttribute[UUID | None]) -> Co
         .join(grant_org, grant_org.id == OrganizationMember.organization_id)
         .where(
             OrganizationMember.user_id == user_id,
-            OrganizationMember.state == "active",
             OrganizationMember.role == "manager",
-            grant_org.deleted_at.is_(None),
+            or_(
+                and_(OrganizationMember.state == "active", grant_org.archived_at.is_(None)),
+                and_(archived, OrganizationMember.state == "archived"),
+            ),
         )
-        .correlate(Project, Task)
+        .correlate_except(OrganizationMember, grant_org)
         .exists()
     )
     project_manager = (
         select(ProjectMember.user_id)
         .join(grant_project, grant_project.id == ProjectMember.project_id)
+        .join(
+            grant_member,
+            and_(
+                grant_member.organization_id == grant_project.organization_id,
+                grant_member.user_id == ProjectMember.user_id,
+            ),
+        )
         .where(
             ProjectMember.user_id == user_id,
-            ProjectMember.state == "active",
             ProjectMember.role == "manager",
             grant_project.organization_id == Project.organization_id,
-            grant_project.deleted_at.is_(None),
+            or_(
+                and_(
+                    ProjectMember.state == "active",
+                    grant_member.state == "active",
+                    grant_project.archived_at.is_(None),
+                ),
+                and_(
+                    archived,
+                    ProjectMember.state == "archived",
+                    grant_member.state.in_(("active", "archived")),
+                ),
+            ),
         )
-        .correlate(Project, Task)
+        .correlate_except(ProjectMember, grant_project, grant_member)
         .exists()
     )
     return and_(
-        exists().correlate(Project, Task).where(actor.id == user_id, actor.is_active.is_(True)),
-        Project.deleted_at.is_(None),
-        exists().where(org.id == Project.organization_id, org.deleted_at.is_(None)),
+        exists().correlate_except(actor).where(actor.id == user_id, actor.is_active.is_(True)),
         or_(
             exists()
-            .correlate(Project, Task)
+            .correlate_except(actor)
             .where(actor.id == user_id, actor.is_system_admin.is_(True)),
             managers,
             and_(org_member, or_(member, project_manager)),
         ),
     )
+
+
+def task_visibility(user_id: UUID) -> ColumnElement[bool]:
+    return project_visibility(user_id, archived=Task.archived_at.is_not(None))
 
 
 def project_editability(user_id: UUID) -> ColumnElement[bool]:
@@ -126,9 +161,9 @@ def project_editability(user_id: UUID) -> ColumnElement[bool]:
     )
     return and_(
         exists().where(actor.id == user_id, actor.is_active.is_(True)),
-        Project.deleted_at.is_(None),
+        Project.archived_at.is_(None),
         exists().where(
-            organization.id == Project.organization_id, organization.deleted_at.is_(None)
+            organization.id == Project.organization_id, organization.archived_at.is_(None)
         ),
         or_(
             exists().where(actor.id == user_id, actor.is_system_admin.is_(True)),
@@ -159,6 +194,14 @@ class TaskAccessRepository:
             is not None
         )
 
+    async def can_read_task(self, user_id: UUID, task_id: UUID) -> bool:
+        return (
+            await self.session.scalar(
+                select(Task.id).join(Project).where(Task.id == task_id, task_visibility(user_id))
+            )
+            is not None
+        )
+
     @staticmethod
     def readers(project_id: UUID) -> Select[UUID]:
         organization_id = (
@@ -169,8 +212,8 @@ class TaskAccessRepository:
             .join(Organization)
             .where(
                 Project.id == project_id,
-                Project.deleted_at.is_(None),
-                Organization.deleted_at.is_(None),
+                Project.archived_at.is_(None),
+                Organization.archived_at.is_(None),
             )
             .exists()
         )
@@ -187,7 +230,7 @@ class TaskAccessRepository:
             .where(
                 OrganizationMember.state == "active",
                 OrganizationMember.role == "manager",
-                Organization.deleted_at.is_(None),
+                Organization.archived_at.is_(None),
             )
         )
         project_managers = (
@@ -195,7 +238,7 @@ class TaskAccessRepository:
             .join(Project)
             .where(
                 Project.organization_id == organization_id,
-                Project.deleted_at.is_(None),
+                Project.archived_at.is_(None),
                 ProjectMember.state == "active",
                 ProjectMember.role == "manager",
             )

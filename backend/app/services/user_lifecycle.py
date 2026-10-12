@@ -68,7 +68,7 @@ class UserLifecycleService:
             organization = await self.domain.get_organization(organization_id)
             if organization is None:
                 raise AdministrativeError(404, "not_found", "Organization not found")
-            if organization.deleted_at is not None:
+            if organization.archived_at is not None:
                 raise AdministrativeError(409, "object_archived", "Organization is archived")
         email = normalize_email(str(data.email))
         if await self.domain.get_user_by_email(email) is not None:

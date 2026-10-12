@@ -177,3 +177,8 @@ Revoked project access cannot be recovered through a saved assignment, watcher o
 Mention targets are rechecked under the shared administrative lifecycle lock before publishing
 metadata/objects. The quarantine, checksum, image inspection, limits and scanner contracts above
 are unchanged. Archived retained reading and scanner archive lifecycle are TASK-035.
+
+
+TASK-035: archived tasks and parents pause pending scans and reject manual review. Ready files
+remain available to authorized archive readers. Restore parents and task before scanning resumes;
+see [archive lifecycle](archive-lifecycle.md).

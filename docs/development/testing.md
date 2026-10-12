@@ -319,3 +319,35 @@ SQLite. `TaskAccess.test.tsx` covers unrelated-member editing, reader-only chat,
 and explicit reporter selection by a manager without membership. Link deletion uses pair-specific
 backend permission. This stage has no schema migration; full HTTP scanner stack remains opt-in
 with RUN_ATTACHMENT_STACK/RUN_ATTACHMENT_SCAN_STACK as described above.
+
+
+## Archive lifecycle (TASK-035)
+
+```sh
+# backend/
+uv run pytest -q
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy app
+RUN_ARCHIVE_INTEGRATION=1 uv run pytest -q tests/test_archive_lifecycle_integration.py
+# frontend/
+npm test
+npm run lint
+npm run typecheck
+npm run build
+```
+
+`test_archive_lifecycle.py` verifies scoped cascade/no-op audit, preserved participants/status/order,
+archived-only retained roles, membership revocation after parent restoration, all three employee
+identity guards, role denial, state pagination, deadline suppression, ready-file reading, scanner
+pause/resume, manual-review rejection, assignee reasons/re-add, link/history filtering and rollback.
+Existing lifecycle tests now use POST archive and page envelopes while retaining audit/storage guards.
+`test_archive_lifecycle_integration.py` provisions/removes disposable PostgreSQL 16 containers,
+checks legacy normalization and unchanged history/task data, explicit unsafe-downgrade refusal,
+audit-failure rollback and archive versus creation/comment/deadline races after stale authorization.
+It never migrates the shared database; without RUN_ARCHIVE_INTEGRATION it explicitly skips.
+Frontend archive regressions verify backend capabilities, confirmation of membership revocation,
+restoration errors, page loading, list invalidation, task editing after restoration and separate
+active/archived board cache keys. Existing board/chat/session/management tests remain.
+Use writable temporary UV_PROJECT_ENVIRONMENT/UV_CACHE_DIR and frontend --no-cache/--outDir
+when local environment, caches or build output are read-only.

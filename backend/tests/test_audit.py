@@ -79,9 +79,9 @@ async def test_membership_ownership_lifecycle_and_idempotency(client, db_session
     assert len(await events(db_session, "ownership_transferred")) == 0
     await set_system_admin(owner)
     response = await client.request(
-        "DELETE", f"/api/organizations/{org['id']}", headers=owner, json={"confirm": True}
+        "POST", f"/api/organizations/{org['id']}/archive", headers=owner, json={"confirm": True}
     )
-    assert response.status_code == 204
+    assert response.status_code == 200
     deleted = await events(db_session, "resource_deleted")
     assert {e.target_id for e in deleted} == {UUID(org["id"]), UUID(project["id"])}
     assert len({e.request_id for e in deleted}) == 1
@@ -105,7 +105,7 @@ async def test_membership_ownership_lifecycle_and_idempotency(client, db_session
     )
     assert response.status_code == 204
     removed = await events(db_session, "membership_removed")
-    assert len(removed) == 2
+    assert len(removed) == 0  # Restore already revoked the former composition.
     assert all(e.organization_id == UUID(org["id"]) for e in removed)
 
 
@@ -169,11 +169,11 @@ async def test_history_authorization_no_mutation_and_atomicity(client, db_sessio
     assert response.status_code == 200
     assert len((await client.get(url, headers=owner)).json()["entries"]) == count + 1
     response = await client.request(
-        "DELETE", f"/api/projects/{task.project_id}", headers=owner, json={"confirm": True}
+        "POST", f"/api/projects/{task.project_id}/archive", headers=owner, json={"confirm": True}
     )
-    assert response.status_code == 204
-    assert (await client.get(url, headers=owner)).status_code == 404
-    assert (await client.get(url, headers=member)).status_code == 404
+    assert response.status_code == 200
+    assert (await client.get(url, headers=owner)).status_code == 200
+    assert (await client.get(url, headers=member)).status_code == 200
 
 
 async def test_attachment_audit_no_content_and_no_duplicate_review(
@@ -220,10 +220,10 @@ async def test_organization_deletion_and_revoked_membership_hide_history(client)
     assert (await client.get(url, headers=member)).status_code == 404
     await set_system_admin(owner)
     response = await client.request(
-        "DELETE", f"/api/organizations/{org_id}", headers=owner, json={"confirm": True}
+        "POST", f"/api/organizations/{org_id}/archive", headers=owner, json={"confirm": True}
     )
-    assert response.status_code == 204
-    assert (await client.get(url, headers=owner)).status_code == 404
+    assert response.status_code == 200
+    assert (await client.get(url, headers=owner)).status_code == 200
 
 
 async def test_password_change_audits_every_revoked_session(client, db_session):

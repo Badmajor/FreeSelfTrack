@@ -8,6 +8,7 @@ from uuid import UUID
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.cursor import decode_cursor, encode_cursor
 from app.models import (
@@ -21,6 +22,7 @@ from app.models import (
     User,
 )
 from app.repositories.administration import AdministrationRepository
+from app.repositories.archive import ArchiveRepository
 from app.repositories.domain import DomainRepository
 from app.repositories.memberships import MembershipRepository
 from app.repositories.sessions import SessionRepository
@@ -37,12 +39,14 @@ from app.schemas.domain import (
     ConfirmRequest,
     NotificationResponse,
     OrganizationCreate,
+    OrganizationPage,
     OrganizationResponse,
     OrganizationUpdate,
     ParticipantPage,
     ParticipantSummary,
     ProfileResponse,
     ProjectCreate,
+    ProjectPage,
     ProjectResponse,
     ProjectUpdate,
     StatusCreate,
@@ -55,6 +59,7 @@ from app.schemas.domain import (
     TaskLinkCreate,
     TaskLinkResponse,
     TaskLinkTaskSummary,
+    TaskListPage,
     TaskPageResponse,
     TaskResponse,
     TaskSearchResponse,
@@ -95,6 +100,8 @@ class DomainService:
         self.repository = DomainRepository(session)
         self.administration = AdministrationService(session)
         self.access = TaskAccessRepository(session)
+        self.lifecycle_audit = AdministrativeAuditService(session)
+        self._response_projects: dict[UUID, Project] = {}
         self._editable_scopes: dict[tuple[UUID, UUID], set[UUID]] = {}
         self._response_permissions: dict[tuple[UUID, UUID], tuple[bool, bool, bool]] = {}
 
@@ -106,7 +113,7 @@ class DomainService:
         org_roles, _ = await AdministrationRepository(self.session).active_memberships(user_id)
         responses = []
         for organization in organizations:
-            active = organization.deleted_at is None
+            active = organization.archived_at is None
             manager = admin or org_roles.get(organization.id) == "manager"
             result = OrganizationResponse.model_validate(organization)
             result.capabilities = {
@@ -136,8 +143,13 @@ class DomainService:
             user_id
         )
         responses = []
+        parents = await self.repository.organizations_by_ids(
+            {project.organization_id for project in projects}
+        )
         for project in projects:
-            active = project.deleted_at is None
+            parent = parents.get(project.organization_id)
+            parent_active = parent is not None and parent.archived_at is None
+            active = project.archived_at is None and parent_active
             parent_manager = admin or org_roles.get(project.organization_id) == "manager"
             manager = parent_manager or project_roles.get(project.id) == "manager"
             result = ProjectResponse.model_validate(project)
@@ -146,7 +158,7 @@ class DomainService:
                 "manage_members": active and manager,
                 "manage_managers": active and parent_manager,
                 "archive": active and parent_manager,
-                "restore": not active and parent_manager,
+                "restore": project.archived_at is not None and parent_active and parent_manager,
                 "manage_workflow": active and manager,
                 "create_task": active and (parent_manager or project.id in project_roles),
                 "view_audit": False,
@@ -179,22 +191,26 @@ class DomainService:
             edit = await self.repository.has_project_access(task.project_id, user_id)
             project = await self.repository.get_project(task.project_id)
             assert project is not None
+            self._response_projects[task.project_id] = project
             manager = await self.administration.can_manage(
                 user_id, project.organization_id, project.id
             )
             comment = await self.access.can_read_project(user_id, task.project_id)
             self._response_permissions[key] = edit, manager, comment
         edit, manager, comment = self._response_permissions[key]
-        project = await self.repository.get_project(task.project_id)
-        assert project is not None
+        project = self._response_projects[task.project_id]
+        active = task.archived_at is None and project.archived_at is None
+        lifecycle = edit and (
+            manager or user_id in {task.created_by, task.reporter_id, task.assignee_id}
+        )
         return {
-            "link": bool(await self.editable_projects(user_id, project.organization_id)),
-            "edit": edit,
-            "comment": comment,
-            "manage_watchers": edit and (manager or user_id == task.assignee_id),
-            "watch": edit,
-            "archive": False,
-            "restore": False,
+            "link": active and bool(await self.editable_projects(user_id, project.organization_id)),
+            "edit": active and edit,
+            "comment": active and comment,
+            "manage_watchers": active and edit and (manager or user_id == task.assignee_id),
+            "watch": active and edit,
+            "archive": active and lifecycle,
+            "restore": task.archived_at is not None and lifecycle,
             "view_audit": False,
         }
 
@@ -266,15 +282,15 @@ class DomainService:
     def _audit_lifecycle(
         self,
         actor_id: UUID,
-        scope: Literal["organization", "project"],
+        scope: Literal["organization", "project", "task"],
         scope_id: UUID,
         old: datetime | None,
         new: datetime | None,
+        organization_id: UUID | None = None,
     ) -> None:
-        # deleted_at remains the storage name until TASK-035; audit uses the target term.
         if old is not None and old.tzinfo is None:
             old = old.replace(tzinfo=UTC)
-        AdministrativeAuditService(self.session).record(
+        self.lifecycle_audit.record(
             AdministrativeAuditWrite(
                 actor_id=actor_id,
                 entity_type=scope,
@@ -283,6 +299,16 @@ class DomainService:
                 changes=(AuditChange(field="archived_at", old=old, new=new),),
             )
         )
+
+        if scope != "task" and old != new:
+            record_event(
+                self.session,
+                "resource_deleted" if new is not None else "resource_restored",
+                actor_id=actor_id,
+                target_type=scope,
+                target_id=scope_id,
+                organization_id=scope_id if scope == "organization" else organization_id,
+            )
 
     async def _require_project_participant(self, project_id: UUID, member_id: UUID) -> None:
         member = await self.repository.get_project_member(project_id, member_id)
@@ -313,12 +339,72 @@ class DomainService:
         await self.session.commit()
         return organization
 
+    async def resource_page(
+        self,
+        user_id: UUID,
+        scope: str,
+        parent_id: UUID | None,
+        state: str,
+        cursor: str | None,
+        limit: int,
+    ) -> OrganizationPage | ProjectPage | TaskListPage:
+        if scope == "project":
+            assert parent_id is not None
+            await self.get_organization(user_id, parent_id)
+        if scope == "task":
+            assert parent_id is not None
+            await self.get_project_for_read(user_id, parent_id)
+        prefix = [scope, str(parent_id), state]
+        after = None
+        if cursor:
+            try:
+                values = json.loads(base64.urlsafe_b64decode(cursor))
+                if not isinstance(values, list) or len(values) != 4 or values[:3] != prefix:
+                    raise ValueError
+                after = UUID(values[3])
+            except (ValueError, TypeError, AttributeError, binascii.Error) as exc:
+                raise AdministrativeError(422, "invalid_cursor", "Invalid cursor") from exc
+        rows = await ArchiveRepository(self.session).page(
+            scope, user_id, parent_id, state, after, limit
+        )
+        next_cursor = (
+            base64.urlsafe_b64encode(
+                json.dumps([*prefix, str(rows[limit - 1].id)]).encode()
+            ).decode()
+            if len(rows) > limit
+            else None
+        )
+        rows = rows[:limit]
+        if scope == "organization":
+            return OrganizationPage(
+                items=await self.organization_responses(
+                    user_id, [row for row in rows if isinstance(row, Organization)]
+                ),
+                next_cursor=next_cursor,
+            )
+        if scope == "project":
+            return ProjectPage(
+                items=await self.project_responses(
+                    user_id, [row for row in rows if isinstance(row, Project)]
+                ),
+                next_cursor=next_cursor,
+            )
+        reasons = await self._assignee_reasons([row.id for row in rows])
+        return TaskListPage(
+            items=[
+                await self._task_response(row, reasons, user_id=user_id)
+                for row in rows
+                if isinstance(row, Task)
+            ],
+            next_cursor=next_cursor,
+        )
+
     async def list_organizations(self, user_id: UUID) -> list[Organization]:
         return await self.repository.list_organizations_for_user(user_id)
 
     async def get_organization(self, user_id: UUID, organization_id: UUID) -> Organization:
         organization = await self.repository.get_organization(organization_id)
-        if organization is None or organization.deleted_at is not None:
+        if organization is None:
             raise NotFoundError("Organization not found")
         if not await self.repository.has_organization_access(organization_id, user_id):
             raise NotFoundError("Organization not found")
@@ -367,22 +453,20 @@ class DomainService:
         return project
 
     async def get_project(self, user_id: UUID, project_id: UUID) -> Project:
-        project = await self.repository.get_project(project_id)
-        if (
-            project is None
-            or project.deleted_at is not None
-            or not await self.repository.has_project_access(project_id, user_id)
-        ):
-            raise NotFoundError("Project not found")
+        project = await self.get_project_for_read(user_id, project_id)
+        organization = await self.repository.get_organization(project.organization_id)
+        assert organization is not None
+        if organization.archived_at is not None:
+            raise AdministrativeError(409, "parent_archived", "Restore the organization first")
+        if project.archived_at is not None:
+            raise AdministrativeError(409, "object_archived", "Restore the project first")
+        if not await self.repository.has_project_access(project_id, user_id):
+            raise PermissionDeniedError("Project access required")
         return project
 
     async def get_project_for_read(self, user_id: UUID, project_id: UUID) -> Project:
         project = await self.repository.get_project(project_id)
-        if (
-            project is None
-            or project.deleted_at is not None
-            or not await self.access.can_read_project(user_id, project_id)
-        ):
+        if project is None or not await self.access.can_read_project(user_id, project_id):
             raise NotFoundError("Project not found")
         return project
 
@@ -428,96 +512,126 @@ class DomainService:
                 )
             )
 
-    async def delete_organization(
+    async def archive_organization(
         self, user_id: UUID, organization_id: UUID, data: ConfirmRequest
-    ) -> None:
+    ) -> Organization:
+        return await self.organization_lifecycle(user_id, organization_id, restore=False, data=data)
+
+    async def restore_organization(self, user_id: UUID, organization_id: UUID) -> Organization:
+        return await self.organization_lifecycle(user_id, organization_id, restore=True)
+
+    async def organization_lifecycle(
+        self,
+        user_id: UUID,
+        organization_id: UUID,
+        *,
+        restore: bool,
+        data: ConfirmRequest | None = None,
+    ) -> Organization:
+        self.lifecycle_audit = AdministrativeAuditService(self.session)
         await self._lock_active_user(user_id)
         organization = await self.get_organization(user_id, organization_id)
         await self.administration.require_manager(user_id)
-        self._require_confirmation(data)
-        deleted_at = datetime.now(UTC)
+        if data is not None:
+            self._require_confirmation(data)
+        if (organization.archived_at is None) == restore:
+            return organization
+        repository = ArchiveRepository(self.session)
+        projects = await repository.projects(organization_id)
+        project_ids = [project.id for project in projects]
+        timestamp = None if restore else datetime.now(UTC)
         self._audit_lifecycle(
-            user_id, "organization", organization_id, organization.deleted_at, deleted_at
+            user_id, "organization", organization.id, organization.archived_at, timestamp
         )
-        organization.deleted_at = deleted_at
-        record_event(
-            self.session,
-            "resource_deleted",
-            actor_id=user_id,
-            target_type="organization",
-            target_id=organization_id,
-            organization_id=organization_id,
-        )
-        projects = await self.repository.list_projects_for_organization(organization_id)
-        for project in projects:
-            self._audit_lifecycle(user_id, "project", project.id, project.deleted_at, deleted_at)
-            project.deleted_at = deleted_at
-            record_event(
-                self.session,
-                "resource_deleted",
-                actor_id=user_id,
-                target_type="project",
-                target_id=project.id,
-                organization_id=organization_id,
-            )
-        await self.session.commit()
-
-    async def restore_organization(self, user_id: UUID, organization_id: UUID) -> Organization:
-        await self._lock_active_user(user_id)
-        organization = await self._get_deleted_organization(organization_id)
-        await self.administration.require_manager(user_id)
-        self._audit_lifecycle(
-            user_id, "organization", organization_id, organization.deleted_at, None
-        )
-        organization.deleted_at = None
-        record_event(
-            self.session,
-            "resource_restored",
-            actor_id=user_id,
-            target_type="organization",
-            target_id=organization_id,
-            organization_id=organization_id,
-        )
+        organization.archived_at = timestamp
+        if not restore:
+            for project in projects:
+                if project.archived_at is None:
+                    self._audit_lifecycle(
+                        user_id, "project", project.id, None, timestamp, organization_id
+                    )
+                    project.archived_at = timestamp
+            for task in await repository.tasks(project_ids):
+                self._audit_lifecycle(user_id, "task", task.id, None, timestamp)
+                flag_modified(task, "updated_at")
+                task.archived_at = timestamp
+        await repository.memberships(organization_id, project_ids, restore=restore)
         await self.session.commit()
         return organization
 
-    async def delete_project(self, user_id: UUID, project_id: UUID, data: ConfirmRequest) -> None:
-        await self._lock_active_user(user_id)
-        project = await self.get_project(user_id, project_id)
-        await self.administration.require_manager(user_id, project.organization_id)
-        self._require_confirmation(data)
-        deleted_at = datetime.now(UTC)
-        self._audit_lifecycle(user_id, "project", project_id, project.deleted_at, deleted_at)
-        project.deleted_at = deleted_at
-        record_event(
-            self.session,
-            "resource_deleted",
-            actor_id=user_id,
-            target_type="project",
-            target_id=project_id,
-            organization_id=project.organization_id,
-        )
-        await self.session.commit()
+    async def archive_project(
+        self, user_id: UUID, project_id: UUID, data: ConfirmRequest
+    ) -> Project:
+        return await self.project_lifecycle(user_id, project_id, restore=False, data=data)
 
     async def restore_project(self, user_id: UUID, project_id: UUID) -> Project:
+        return await self.project_lifecycle(user_id, project_id, restore=True)
+
+    async def project_lifecycle(
+        self, user_id: UUID, project_id: UUID, *, restore: bool, data: ConfirmRequest | None = None
+    ) -> Project:
+        self.lifecycle_audit = AdministrativeAuditService(self.session)
         await self._lock_active_user(user_id)
-        project = await self._get_deleted_project(project_id)
+        project = await self.get_project_for_read(user_id, project_id)
         await self.administration.require_manager(user_id, project.organization_id)
         organization = await self.repository.get_organization(project.organization_id)
-        if organization is None or organization.deleted_at is not None:
-            raise ConflictError("Restore the project organization first")
-        self._audit_lifecycle(user_id, "project", project_id, project.deleted_at, None)
-        project.deleted_at = None
-        record_event(
-            self.session,
-            "resource_restored",
-            actor_id=user_id,
-            target_type="project",
-            target_id=project_id,
-            organization_id=project.organization_id,
+        assert organization is not None
+        if organization.archived_at is not None:
+            raise AdministrativeError(409, "parent_archived", "Restore the organization first")
+        if data is not None:
+            self._require_confirmation(data)
+        if (project.archived_at is None) == restore:
+            return project
+        repository = ArchiveRepository(self.session)
+        timestamp = None if restore else datetime.now(UTC)
+        self._audit_lifecycle(
+            user_id, "project", project.id, project.archived_at, timestamp, project.organization_id
         )
+        project.archived_at = timestamp
+        if not restore:
+            for task in await repository.tasks([project_id]):
+                self._audit_lifecycle(user_id, "task", task.id, None, timestamp)
+                flag_modified(task, "updated_at")
+                task.archived_at = timestamp
+        await repository.memberships(None, [project_id], restore=restore)
         await self.session.commit()
         return project
+
+    async def task_lifecycle(
+        self, user_id: UUID, task_id: UUID, *, restore: bool, data: ConfirmRequest | None = None
+    ) -> TaskResponse:
+        self.lifecycle_audit = AdministrativeAuditService(self.session)
+        await self._lock_active_user(user_id)
+        task = await self.get_task(user_id, task_id)
+        project = await self.repository.get_project(task.project_id)
+        assert project is not None
+        # Administrative scope is independent of the archived parent state.
+        manager = await self.administration.can_manage(user_id, project.organization_id, project.id)
+        if not manager and not await self.can_archive_task(user_id, task):
+            raise PermissionDeniedError("Task lifecycle permission required")
+        await self.require_active_parents(task)
+        if data is not None:
+            self._require_confirmation(data)
+        if (task.archived_at is None) != restore:
+            timestamp = None if restore else datetime.now(UTC)
+            self._audit_lifecycle(user_id, "task", task.id, task.archived_at, timestamp)
+            flag_modified(task, "updated_at")
+            task.archived_at = timestamp
+            await self.session.commit()
+        return await self._task_response(task, user_id=user_id)
+
+    async def require_active_parents(self, task: Task) -> None:
+        project = await self.repository.get_project(task.project_id)
+        assert project is not None
+        organization = await self.repository.get_organization(project.organization_id)
+        assert organization is not None
+        if project.archived_at is not None or organization.archived_at is not None:
+            raise AdministrativeError(409, "parent_archived", "Restore the parents first")
+
+    async def require_active_task(self, task: Task) -> None:
+        await self.require_active_parents(task)
+        if task.archived_at is not None:
+            raise AdministrativeError(409, "object_archived", "Restore the task first")
 
     async def create_status(
         self, user_id: UUID, project_id: UUID, data: StatusCreate
@@ -728,8 +842,7 @@ class DomainService:
         task = await self.repository.get_task(task_id)
         if task is None:
             raise NotFoundError("Task not found")
-        project = await self.get_project_for_read(user_id, task.project_id)
-        if project.deleted_at is not None:
+        if not await self.access.can_read_task(user_id, task_id):
             raise NotFoundError("Task not found")
         return task
 
@@ -739,6 +852,7 @@ class DomainService:
     async def update_task(self, user_id: UUID, task_id: UUID, data: TaskUpdate) -> Task:
         await self._lock_active_user(user_id, shared=True)
         task = await self.get_task(user_id, task_id)
+        await self.require_active_task(task)
         if not await self.repository.has_project_access(task.project_id, user_id):
             raise PermissionDeniedError("Project membership is required to update tasks")
         project = await self.repository.get_project(task.project_id)
@@ -872,14 +986,14 @@ class DomainService:
         )
 
     async def search_organization_tasks(
-        self, user_id: UUID, organization_id: UUID, slug: str, limit: int
+        self, user_id: UUID, organization_id: UUID, slug: str, limit: int, state: str = "active"
     ) -> TaskSearchResponse:
         await self.get_organization(user_id, organization_id)
         normalized = slug.strip()
         if not normalized:
             raise InvalidWorkflowError("Task slug is required")
         rows = await self.repository.search_organization_tasks(
-            organization_id, normalized, limit, user_id
+            organization_id, normalized, limit, user_id, state
         )
         return TaskSearchResponse(
             items=[
@@ -906,6 +1020,8 @@ class DomainService:
         await self._lock_active_user(user_id, shared=True)
         source = await self.get_task(user_id, task_id)
         target = await self.get_task(user_id, data.target_task_id)
+        await self.require_active_task(source)
+        await self.require_active_task(target)
         if target is None:
             raise NotFoundError("Task not found")
         source_project = await self.repository.get_project(source.project_id)
@@ -913,7 +1029,7 @@ class DomainService:
         if (
             source_project is None
             or target_project is None
-            or target_project.deleted_at is not None
+            or target_project.archived_at is not None
             or source_project.organization_id != target_project.organization_id
         ):
             raise NotFoundError("Task not found")
@@ -978,6 +1094,8 @@ class DomainService:
             raise NotFoundError("Task link not found")
         other_id = link.task_b_id if source.id == link.task_a_id else link.task_a_id
         target = await self.get_task(user_id, other_id)
+        await self.require_active_task(source)
+        await self.require_active_task(target)
         if target is None:
             raise NotFoundError("Task link not found")
         if not (
@@ -1003,6 +1121,7 @@ class DomainService:
     ) -> list[ParticipantSummary]:
         await self._lock_active_user(user_id, shared=True)
         task = await self.get_task(user_id, task_id)
+        await self.require_active_task(task)
         if not await self.repository.has_project_access(task.project_id, user_id):
             raise PermissionDeniedError("Project membership is required to manage watchers")
         project = await self.repository.get_project(task.project_id)
@@ -1034,6 +1153,7 @@ class DomainService:
     ) -> list[ParticipantSummary]:
         await self._lock_active_user(user_id, shared=True)
         task = await self.get_task(user_id, task_id)
+        await self.require_active_task(task)
         if not await self.repository.has_project_access(task.project_id, user_id):
             raise PermissionDeniedError("Project membership is required to manage watchers")
         project = await self.repository.get_project(task.project_id)
@@ -1072,17 +1192,25 @@ class DomainService:
             await self.session.commit()
         return NotificationResponse.model_validate(notification)
 
-    async def get_board(self, user_id: UUID, project_id: UUID, limit: int) -> BoardResponse:
+    async def get_board(
+        self, user_id: UUID, project_id: UUID, limit: int, state: str = "active"
+    ) -> BoardResponse:
         await self.get_project_for_read(user_id, project_id)
         columns = []
         for project_status in await self.repository.list_statuses(project_id):
             tasks = await self.repository.list_tasks_for_status(
-                project_id, project_status.id, limit
+                project_id, project_status.id, limit, state=state, user_id=user_id
             )
             next_cursor = None
             if len(tasks) > limit:
                 tasks = tasks[:limit]
-                next_cursor = encode_cursor(tasks[-1].updated_at, tasks[-1].id)
+                next_cursor = (
+                    state
+                    + ":"
+                    + str(project_status.id)
+                    + ":"
+                    + encode_cursor(tasks[-1].updated_at, tasks[-1].id)
+                )
             reasons = await self._assignee_reasons([task.id for task in tasks])
             columns.append(
                 BoardColumnResponse(
@@ -1096,19 +1224,37 @@ class DomainService:
         return BoardResponse(project_id=project_id, columns=columns)
 
     async def get_column_tasks(
-        self, user_id: UUID, project_id: UUID, status_id: UUID, limit: int, cursor: str | None
+        self,
+        user_id: UUID,
+        project_id: UUID,
+        status_id: UUID,
+        limit: int,
+        cursor: str | None,
+        state: str = "active",
     ) -> TaskPageResponse:
         await self.get_project_for_read(user_id, project_id)
         project_status = await self._get_project_status(project_id, status_id)
         if not project_status.is_active:
             raise NotFoundError("Status not found")
+        if cursor:
+            prefix = state + ":" + str(status_id) + ":"
+            if not cursor.startswith(prefix):
+                raise AdministrativeError(422, "invalid_cursor", "Cursor does not match filters")
+            cursor = cursor[len(prefix) :]
         page = await self.repository.list_tasks_for_status(
-            project_id, status_id, limit, self._decode_cursor(cursor) if cursor else None
+            project_id,
+            status_id,
+            limit,
+            self._decode_cursor(cursor) if cursor else None,
+            state=state,
+            user_id=user_id,
         )
         next_cursor = None
         if len(page) > limit:
             page = page[:limit]
-            next_cursor = encode_cursor(page[-1].updated_at, page[-1].id)
+            next_cursor = (
+                state + ":" + str(status_id) + ":" + encode_cursor(page[-1].updated_at, page[-1].id)
+            )
         reasons = await self._assignee_reasons([task.id for task in page])
         return TaskPageResponse(
             tasks=[await self._task_response(task, reasons, user_id=user_id) for task in page],
@@ -1197,6 +1343,7 @@ class DomainService:
         return TaskResponse(
             capabilities=await self.task_capabilities(user_id, task),
             id=task.id,
+            archived_at=task.archived_at,
             project_id=task.project_id,
             status_id=task.status_id,
             slug=task.slug,
@@ -1220,8 +1367,9 @@ class DomainService:
         task: Task, project: Project, status: ProjectStatus, *, can_edit: bool = False
     ) -> TaskLinkTaskSummary:
         return TaskLinkTaskSummary(
-            can_edit=can_edit,
+            can_edit=can_edit and task.archived_at is None,
             id=task.id,
+            archived_at=task.archived_at,
             slug=task.slug,
             title=task.title,
             project_id=project.id,
@@ -1250,7 +1398,9 @@ class DomainService:
             relation_type = "depends_on"
         editable = await self.editable_projects(user_id, project.organization_id)
         return TaskLinkResponse(
-            can_delete=source.project_id in editable or other.project_id in editable,
+            can_delete=source.archived_at is None
+            and other.archived_at is None
+            and (source.project_id in editable or other.project_id in editable),
             id=link.id,
             relation_type=relation_type,
             task=self._task_link_summary(
@@ -1411,22 +1561,13 @@ class DomainService:
 
     async def _lock_active_user(self, user_id: UUID, *, shared: bool = False) -> None:
         await AdministrationRepository(self.session).lock_lifecycle(shared=shared)
+        self._response_permissions.clear()
+        self._response_projects.clear()
+        self._editable_scopes.clear()
         user = await SessionRepository(self.session).lock_user(user_id)
         if user is None or not user.is_active:
             raise NotFoundError("User not found")
         await SessionService(self.session).recheck_request_session(user_id)
-
-    async def _get_deleted_organization(self, organization_id: UUID) -> Organization:
-        organization = await self.repository.get_organization(organization_id)
-        if organization is None or organization.deleted_at is None:
-            raise NotFoundError("Organization not found")
-        return organization
-
-    async def _get_deleted_project(self, project_id: UUID) -> Project:
-        project = await self.repository.get_project(project_id)
-        if project is None or project.deleted_at is None:
-            raise NotFoundError("Project not found")
-        return project
 
     @staticmethod
     def _require_confirmation(data: ConfirmRequest) -> None:

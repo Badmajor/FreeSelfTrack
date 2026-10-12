@@ -34,9 +34,10 @@ it("creates organizations and projects on separate management pages", async () =
         organizations = [organization];
         return jsonResponse(organization, 201);
       }
-      if (url.endsWith("/organizations")) return jsonResponse(organizations);
+      if (url.endsWith("/organizations/organization-1")) return jsonResponse(organization);
+      if (url.endsWith("/organizations")) return jsonResponse({ items: organizations, next_cursor: null });
       if (url.endsWith("/organizations/organization-1/projects"))
-        return jsonResponse(projects);
+        return jsonResponse({ items: projects, next_cursor: null });
       if (url === "/api/projects" && options?.method === "POST") {
         projects = [project];
         return jsonResponse(project, 201);

@@ -140,7 +140,7 @@ class OrganizationResponse(BaseModel):
     id: UUID
     name: str
     description: str | None = None
-    deleted_at: datetime | None = None
+    archived_at: datetime | None = None
 
     capabilities: dict[str, bool] = Field(default_factory=dict)
 
@@ -172,7 +172,7 @@ class ProjectResponse(BaseModel):
     organization_id: UUID
     name: str
     description: str | None = None
-    deleted_at: datetime | None = None
+    archived_at: datetime | None = None
 
     capabilities: dict[str, bool] = Field(default_factory=dict)
 
@@ -277,6 +277,7 @@ class ParticipantPage(BaseModel):
 
 
 class TaskResponse(BaseModel):
+    archived_at: datetime | None = None
     model_config = ConfigDict(from_attributes=True)
 
     capabilities: dict[str, bool] = Field(default_factory=dict)
@@ -306,6 +307,7 @@ class TaskLinkCreate(BaseModel):
 
 
 class TaskLinkTaskSummary(BaseModel):
+    archived_at: datetime | None = None
     can_edit: bool = False
     id: UUID
     slug: str
@@ -385,3 +387,18 @@ class NotificationResponse(BaseModel):
 
 class UnreadCountResponse(BaseModel):
     count: int
+
+
+class OrganizationPage(BaseModel):
+    items: list[OrganizationResponse]
+    next_cursor: str | None = None
+
+
+class ProjectPage(BaseModel):
+    items: list[ProjectResponse]
+    next_cursor: str | None = None
+
+
+class TaskListPage(BaseModel):
+    items: list[TaskResponse]
+    next_cursor: str | None = None

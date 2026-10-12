@@ -19,6 +19,7 @@ from app.schemas.domain import (
     MembershipResponse,
     NotificationResponse,
     OrganizationCreate,
+    OrganizationPage,
     OrganizationResponse,
     OrganizationUpdate,
     ParticipantPage,
@@ -26,6 +27,7 @@ from app.schemas.domain import (
     ProfileResponse,
     ProfileUpdate,
     ProjectCreate,
+    ProjectPage,
     ProjectResponse,
     ProjectUpdate,
     StatusCreate,
@@ -36,6 +38,7 @@ from app.schemas.domain import (
     TaskHistoryPageResponse,
     TaskLinkCreate,
     TaskLinkResponse,
+    TaskListPage,
     TaskPageResponse,
     TaskResponse,
     TaskSearchResponse,
@@ -123,12 +126,17 @@ async def update_organization(
     return await service(session).organization_response(user_id, result)
 
 
-@router.get("/organizations", response_model=list[OrganizationResponse])
+@router.get("/organizations", response_model=OrganizationPage)
 async def list_organizations(
-    user_id: UUID = Depends(current_user_id), session: AsyncSession = Depends(get_session)
+    state: Literal["active", "archived", "all"] = "active",
+    cursor: str | None = None,
+    limit: int = Query(default=50, ge=1, le=100),
+    user_id: UUID = Depends(current_user_id),
+    session: AsyncSession = Depends(get_session),
 ) -> Any:
-    result = await translate_errors(service(session).list_organizations)(user_id)
-    return await service(session).organization_responses(user_id, result)
+    return await translate_errors(service(session).resource_page)(
+        user_id, "organization", None, state, cursor, limit
+    )
 
 
 @router.get("/organizations/{organization_id}", response_model=OrganizationResponse)
@@ -141,14 +149,18 @@ async def get_organization(
     return await service(session).organization_response(user_id, result)
 
 
-@router.get("/organizations/{organization_id}/projects", response_model=list[ProjectResponse])
+@router.get("/organizations/{organization_id}/projects", response_model=ProjectPage)
 async def list_organization_projects(
     organization_id: UUID,
+    state: Literal["active", "archived", "all"] = "active",
+    cursor: str | None = None,
+    limit: int = Query(default=50, ge=1, le=100),
     user_id: UUID = Depends(current_user_id),
     session: AsyncSession = Depends(get_session),
 ) -> Any:
-    result = await translate_errors(service(session).list_projects)(user_id, organization_id)
-    return await service(session).project_responses(user_id, result)
+    return await translate_errors(service(session).resource_page)(
+        user_id, "project", organization_id, state, cursor, limit
+    )
 
 
 @router.post("/organizations/{organization_id}/members", include_in_schema=False)
@@ -197,15 +209,22 @@ async def remove_organization_member(
     return Response(status_code=204)
 
 
-@router.delete("/organizations/{organization_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_organization(
+@router.delete("/organizations/{organization_id}", include_in_schema=False)
+async def removed_organization_delete(organization_id: UUID) -> None:
+    raise HTTPException(status_code=404, detail="Not found")
+
+
+@router.post("/organizations/{organization_id}/archive", response_model=OrganizationResponse)
+async def archive_organization(
     organization_id: UUID,
     data: ConfirmRequest,
     user_id: UUID = Depends(current_user_id),
     session: AsyncSession = Depends(get_session),
-) -> Response:
-    await translate_errors(service(session).delete_organization)(user_id, organization_id, data)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+) -> Any:
+    result = await translate_errors(service(session).archive_organization)(
+        user_id, organization_id, data
+    )
+    return await service(session).organization_response(user_id, result)
 
 
 @router.post("/organizations/{organization_id}/restore", response_model=OrganizationResponse)
@@ -287,15 +306,20 @@ async def remove_project_member(
     return Response(status_code=204)
 
 
-@router.delete("/projects/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_project(
+@router.delete("/projects/{project_id}", include_in_schema=False)
+async def removed_project_delete(project_id: UUID) -> None:
+    raise HTTPException(status_code=404, detail="Not found")
+
+
+@router.post("/projects/{project_id}/archive", response_model=ProjectResponse)
+async def archive_project(
     project_id: UUID,
     data: ConfirmRequest,
     user_id: UUID = Depends(current_user_id),
     session: AsyncSession = Depends(get_session),
-) -> Response:
-    await translate_errors(service(session).delete_project)(user_id, project_id, data)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+) -> Any:
+    result = await translate_errors(service(session).archive_project)(user_id, project_id, data)
+    return await service(session).project_response(user_id, result)
 
 
 @router.post("/projects/{project_id}/restore", response_model=ProjectResponse)
@@ -312,10 +336,11 @@ async def restore_project(
 async def get_board(
     project_id: UUID,
     limit: int = Query(default=500, ge=1, le=500),
+    state: Literal["active", "archived", "all"] = "active",
     user_id: UUID = Depends(current_user_id),
     session: AsyncSession = Depends(get_session),
 ) -> Any:
-    return await translate_errors(service(session).get_board)(user_id, project_id, limit)
+    return await translate_errors(service(session).get_board)(user_id, project_id, limit, state)
 
 
 @router.get(
@@ -326,11 +351,12 @@ async def get_column_tasks(
     status_id: UUID,
     limit: int = Query(default=500, ge=1, le=500),
     cursor: str | None = None,
+    state: Literal["active", "archived", "all"] = "active",
     user_id: UUID = Depends(current_user_id),
     session: AsyncSession = Depends(get_session),
 ) -> Any:
     return await translate_errors(service(session).get_column_tasks)(
-        user_id, project_id, status_id, limit, cursor
+        user_id, project_id, status_id, limit, cursor, state
     )
 
 
@@ -458,11 +484,12 @@ async def search_organization_tasks(
     organization_id: UUID,
     slug: str = Query(min_length=1, max_length=80),
     limit: int = Query(default=20, ge=1, le=50),
+    state: Literal["active", "archived", "all"] = "active",
     user_id: UUID = Depends(current_user_id),
     session: AsyncSession = Depends(get_session),
 ) -> Any:
     return await translate_errors(service(session).search_organization_tasks)(
-        user_id, organization_id, slug, limit
+        user_id, organization_id, slug, limit, state
     )
 
 
@@ -574,3 +601,38 @@ async def task_participants(
     return await translate_errors(service(session).participants)(
         user_id, task_id, kind, q, cursor, limit
     )
+
+
+@router.get("/projects/{project_id}/tasks", response_model=TaskListPage)
+async def list_project_tasks(
+    project_id: UUID,
+    state: Literal["active", "archived", "all"] = "active",
+    cursor: str | None = None,
+    limit: int = Query(default=50, ge=1, le=100),
+    user_id: UUID = Depends(current_user_id),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    return await translate_errors(service(session).resource_page)(
+        user_id, "task", project_id, state, cursor, limit
+    )
+
+
+@router.post("/tasks/{task_id}/archive", response_model=TaskResponse)
+async def archive_task(
+    task_id: UUID,
+    data: ConfirmRequest,
+    user_id: UUID = Depends(current_user_id),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    return await translate_errors(service(session).task_lifecycle)(
+        user_id, task_id, restore=False, data=data
+    )
+
+
+@router.post("/tasks/{task_id}/restore", response_model=TaskResponse)
+async def restore_task(
+    task_id: UUID,
+    user_id: UUID = Depends(current_user_id),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    return await translate_errors(service(session).task_lifecycle)(user_id, task_id, restore=True)

@@ -50,23 +50,13 @@ class MembershipService:
         org_id = resource.organization_id if isinstance(resource, Project) else resource.id
         organization = await self.domain.get_organization(org_id)
         assert organization is not None
-        actor = await self.domain.get_user(actor_id)
-        assert actor is not None
-        admin = AdministrationRepository(self.session)
-        org_member = await self.domain.get_organization_member(org_id, actor_id)
-        # The full task/archive read policy is introduced in TASK-034/035.
-        can_read = actor.is_system_admin or await admin.active_manager(actor_id)
-        if not can_read and org_member is not None and org_member.state == "active":
-            if isinstance(resource, Organization):
-                can_read = True
-            else:
-                member = await self.domain.get_project_member(resource.id, actor_id)
-                can_read = (
-                    member is not None and member.state == "active"
-                ) or await admin.has_project_manager_role(actor_id, org_id)
-        if not mutate and (organization.deleted_at is not None or resource.deleted_at is not None):
-            # Retained archived-membership reads belong to the archive lifecycle stage.
-            can_read = actor.is_system_admin or await admin.active_manager(actor_id)
+        from app.repositories.task_access import TaskAccessRepository
+
+        can_read = (
+            await self.domain.has_organization_access(scope_id, actor_id)
+            if scope == "organization"
+            else await TaskAccessRepository(self.session).can_read_project(actor_id, scope_id)
+        )
         if not can_read:
             raise AdministrativeError(404, "not_found", "Resource not found")
         if mutate:
@@ -76,10 +66,10 @@ class MembershipService:
                 raise AdministrativeError(
                     403, "permission_denied", "Administrative permission required"
                 )
-            if organization.deleted_at is not None:
+            if organization.archived_at is not None:
                 code = "object_archived" if scope == "organization" else "parent_archived"
                 raise AdministrativeError(409, code, "Restore the organization first")
-            if resource.deleted_at is not None:
+            if resource.archived_at is not None:
                 raise AdministrativeError(409, "object_archived", "Restore the project first")
         return resource
 
@@ -271,7 +261,7 @@ class MembershipService:
         limit: int,
     ) -> MembershipPage:
         resource = await self.resource(actor_id, scope, scope_id)
-        state = state or ("archived" if resource.deleted_at else "active")
+        state = state or ("archived" if resource.archived_at else "active")
         prefix = [scope, str(scope_id), state]
         after = None
         if cursor:

@@ -1,5 +1,6 @@
+import { ArchivePage } from "./ArchivePage";
 import { useEffect, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Archive,
   Bell,
@@ -34,6 +35,9 @@ import {
   createProject,
   createTaskLink,
   createStatus,
+  listOrganizationPage,
+  listProjectPage,
+  getOrganization,
   deleteOrganization,
   deleteProject,
   getMyProfile,
@@ -119,6 +123,7 @@ export function AuthenticatedApp(props: Props) {
           path="projects/:projectId/kanban/tasks/:taskId"
           element={kanban}
         />
+        <Route path="archive" element={<ArchivePage />} />
         <Route path="notifications" element={<NotificationsPage />} />
         <Route
           path="profile"
@@ -506,13 +511,15 @@ function OrganizationManagementPage({ user }: { user: AuthUser }) {
   const { organizationId } = useParams();
   const navigate = useNavigate();
   const client = useQueryClient();
-  const organizations = useQuery({
-    queryKey: ["organizations"],
-    queryFn: listOrganizations,
+  const organizations = useInfiniteQuery({
+    queryKey: ["organizations", "pages"],
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) => listOrganizationPage(pageParam),
+    getNextPageParam: page => page.next_cursor ?? undefined,
   });
-  const selected = organizations.data?.find(
-    (item) => item.id === organizationId,
-  );
+  const organizationItems = organizations.data?.pages.flatMap(page => page.items) ?? [];
+  const detail = useQuery({ queryKey: ["organization", organizationId], queryFn: () => getOrganization(organizationId!), enabled: Boolean(organizationId) });
+  const selected = detail.data ?? organizationItems.find(item => item.id === organizationId);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const create = useMutation({
@@ -542,10 +549,11 @@ function OrganizationManagementPage({ user }: { user: AuthUser }) {
     );
   return (
     <Page title="Organizations" eyebrow="Management">
+      <Link to="/archive">Archived organizations</Link>
       <div className="management-grid">
         <section className="management-list">
           <h2>Available organizations</h2>
-          {organizations.data.map((organization) => (
+          {organizationItems.map((organization) => (
             <Link
               className={
                 organization.id === organizationId
@@ -558,12 +566,13 @@ function OrganizationManagementPage({ user }: { user: AuthUser }) {
               {organization.name}
             </Link>
           ))}
-          {!organizations.data.length && (
+          {!organizationItems.length && (
             <p className="muted">No organizations yet.</p>
           )}
+          {organizations.hasNextPage && <button disabled={organizations.isFetchingNextPage} onClick={() => void organizations.fetchNextPage()}>Load more organizations</button>}
         </section>
         <section className="management-detail">
-          {organizationId && !selected ? (
+          {organizationId && detail.isPending && !selected ? <p>Loading organization...</p> : organizationId && !selected ? (
             <NotFoundResource label="Organization" />
           ) : selected ? (
             <>
@@ -571,6 +580,7 @@ function OrganizationManagementPage({ user }: { user: AuthUser }) {
                 <div>
                   <div className="eyebrow">Organization</div>
                   <h2>{selected.name}</h2>
+                  {selected.archived_at && <p>Archived organization — read only.</p>}
                 </div>
               </div>
               <dl className="resource-facts">
@@ -591,13 +601,13 @@ function OrganizationManagementPage({ user }: { user: AuthUser }) {
                   onClick={() => {
                     if (
                       window.confirm(
-                        `Delete ${selected.name} and all its projects? You can restore them later.`,
+                        `Archive ${selected.name} and all its projects and tasks?`,
                       )
                     )
                       remove.mutate(selected);
                   }}
                 >
-                  Delete organization
+                  Archive organization
                 </button>
               ) : (
                 <p className="readonly-note">
@@ -657,9 +667,11 @@ function ProjectManagementPage() {
     searchParams.get("organization") ??
     organizations.data?.[0]?.id ??
     "";
-  const projects = useQuery({
-    queryKey: ["projects", organizationId],
-    queryFn: () => listProjects(organizationId),
+  const projects = useInfiniteQuery({
+    queryKey: ["projects", organizationId, "pages"],
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) => listProjectPage(organizationId, pageParam),
+    getNextPageParam: page => page.next_cursor ?? undefined,
     enabled: Boolean(organizationId),
   });
   const [name, setName] = useState("");
@@ -686,6 +698,7 @@ function ProjectManagementPage() {
   });
   return (
     <Page title="Projects" eyebrow="Management">
+      <Link to={`/archive?organization=${organizationId}`}>Archived projects</Link>
       <div className="management-toolbar">
         <label htmlFor="project-organization">Organization</label>
         <select
@@ -707,7 +720,7 @@ function ProjectManagementPage() {
           <h2>Projects</h2>
           {projects.isPending && <p>Loading projects...</p>}
           {projects.isError && <InlineError error={projects.error} />}
-          {projects.data?.map((item) => (
+          {projects.data?.pages.flatMap(page => page.items).map((item) => (
             <Link
               className={
                 item.id === projectId
@@ -720,9 +733,10 @@ function ProjectManagementPage() {
               {item.name}
             </Link>
           ))}
-          {projects.data?.length === 0 && (
+          {projects.data?.pages[0].items.length === 0 && (
             <p className="muted">No projects yet.</p>
           )}
+          {projects.hasNextPage && <button disabled={projects.isFetchingNextPage} onClick={() => void projects.fetchNextPage()}>Load more projects</button>}
         </section>
         <section className="management-detail">
           {projectId && project.isPending ? (
@@ -767,11 +781,11 @@ function ProjectManagementPage() {
                   className="button danger compact"
                   disabled={remove.isPending}
                   onClick={() => {
-                    if (window.confirm(`Delete project ${project.data!.name}?`))
+                    if (window.confirm(`Archive project ${project.data!.name}?`))
                       remove.mutate();
                   }}
                 >
-                  Delete project
+                  Archive project
                 </button>
               ) : (
                 <p className="readonly-note">
@@ -1156,10 +1170,16 @@ function KanbanPage({
     },
   });
   if (project.isPending) return <PageState>Loading Kanban...</PageState>;
-  if (project.isError || !project.data)
+  if (project.isError || !project.data) {
+    if (taskId) return <NotificationTaskPanel taskId={taskId} currentUser={user}
+      onOpenLinkedTask={(linkedProjectId, id) => navigate(`/projects/${linkedProjectId}/kanban/tasks/${id}?tab=links`)}
+      onStartLinkSelection={onLinkSelection} onClose={() => navigate("/archive")} />;
     return <NotFoundResource label="Project" />;
+  }
   return (
     <Page title={project.data.name} eyebrow="Kanban">
+      <Link to={`/archive?project=${projectId}`}>Archived tasks</Link>
+      {project.data.archived_at && <p>Archived project — read only. Restore the organization and project before restoring tasks.</p>}
       {createLink.isError && (
         <p className="error" role="alert">
           {createLink.error instanceof Error

@@ -63,9 +63,10 @@ function mount(currentUser = user, currentProject = project) {
       const url = String(input);
       if (url.includes("/participants")) return jsonResponse({ items: [], next_cursor: null });
       if (url.includes("/organizations/") && url.includes("/members")) return Promise.resolve(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
-      if (url.endsWith("/organizations")) return jsonResponse([organization]);
+      if (url.endsWith("/organizations/organization-1")) return jsonResponse(organization);
+      if (url.endsWith("/organizations")) return jsonResponse({ items: [organization], next_cursor: null });
       if (url.endsWith("/organizations/organization-1/projects"))
-        return jsonResponse([currentProject]);
+        return jsonResponse({ items: [currentProject], next_cursor: null });
       if (url.endsWith("/projects/project-1/statuses/archive"))
         return jsonResponse([]);
       if (
@@ -172,7 +173,8 @@ it("opens a notification on the addressable task route", async () => {
       const url = String(input);
       if (url.includes("/participants")) return jsonResponse({ items: [], next_cursor: null });
       if (url.includes("/organizations/") && url.includes("/members")) return Promise.resolve(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
-      if (url.endsWith("/organizations")) return jsonResponse([organization]);
+      if (url.endsWith("/organizations/organization-1")) return jsonResponse(organization);
+      if (url.endsWith("/organizations")) return jsonResponse({ items: [organization], next_cursor: null });
       if (url.endsWith("/notifications/unread-count"))
         return jsonResponse({ count: 1 });
       if (url.endsWith("/notifications/notification-1/open"))

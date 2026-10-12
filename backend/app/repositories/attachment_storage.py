@@ -5,7 +5,7 @@ from uuid import UUID
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Attachment, Comment, Project, Task
+from app.models import Attachment, Comment, Organization, Project, Task
 
 
 class AttachmentStorageRepository:
@@ -29,7 +29,7 @@ class AttachmentStorageRepository:
             .where(Attachment.object_key.is_(None))
             .order_by(Attachment.id)
             .limit(1)
-            .with_for_update(skip_locked=True)
+            .with_for_update(skip_locked=True, of=Attachment)
         )
 
     async def legacy_chunk(self, attachment_id: UUID, offset: int, length: int) -> bytes:
@@ -59,11 +59,40 @@ class AttachmentStorageRepository:
         )
 
     async def next_pending(self, after: UUID | None = None) -> Attachment | None:
-        query = select(Attachment).where(
-            Attachment.state == "pending", Attachment.object_key.is_not(None)
+        query = (
+            select(Attachment)
+            .join(Comment)
+            .join(Task)
+            .join(Project)
+            .join(Organization)
+            .where(
+                Attachment.state == "pending",
+                Attachment.object_key.is_not(None),
+                Task.archived_at.is_(None),
+                Project.archived_at.is_(None),
+                Organization.archived_at.is_(None),
+            )
         )
         if after is not None:
             query = query.where(Attachment.id > after)
         return await self.session.scalar(
-            query.order_by(Attachment.id).limit(1).with_for_update(skip_locked=True)
+            query.order_by(Attachment.id).limit(1).with_for_update(skip_locked=True, of=Attachment)
+        )
+
+    async def active(self, attachment_id: UUID) -> bool:
+        return (
+            await self.session.scalar(
+                select(Attachment.id)
+                .join(Comment)
+                .join(Task)
+                .join(Project)
+                .join(Organization)
+                .where(
+                    Attachment.id == attachment_id,
+                    Task.archived_at.is_(None),
+                    Project.archived_at.is_(None),
+                    Organization.archived_at.is_(None),
+                )
+            )
+            is not None
         )

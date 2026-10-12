@@ -12,6 +12,7 @@ from sqlalchemy import (
     literal,
     or_,
     select,
+    true,
     type_coerce,
     update,
 )
@@ -38,6 +39,7 @@ from app.repositories.task_access import (
     organization_visibility,
     project_editability,
     project_visibility,
+    task_visibility,
 )
 
 
@@ -56,10 +58,14 @@ class DomainRepository:
         )
 
     async def get_organization(self, organization_id: UUID) -> Organization | None:
-        return await self.session.get(Organization, organization_id)
+        return await self.session.get(Organization, organization_id, populate_existing=True)
+
+    async def organizations_by_ids(self, ids: set[UUID]) -> dict[UUID, Organization]:
+        rows = await self.session.scalars(select(Organization).where(Organization.id.in_(ids)))
+        return {row.id: row for row in rows}
 
     async def get_project(self, project_id: UUID) -> Project | None:
-        return await self.session.get(Project, project_id)
+        return await self.session.get(Project, project_id, populate_existing=True)
 
     async def get_status(self, status_id: UUID) -> ProjectStatus | None:
         return await self.session.get(ProjectStatus, status_id)
@@ -69,6 +75,7 @@ class DomainRepository:
             select(Task)
             .options(selectinload(Task.assignee).selectinload(User.profile))
             .where(Task.id == task_id)
+            .execution_options(populate_existing=True)
         )
 
     async def list_due_tasks(self, current_date: date, limit: int) -> list[Task]:
@@ -84,12 +91,13 @@ class DomainRepository:
             .join(Organization, Organization.id == Project.organization_id)
             .join(User, User.id == Task.assignee_id)
             .where(
+                Task.archived_at.is_(None),
                 Task.due_date.is_not(None),
                 Task.due_date <= current_date,
                 Task.assignee_id.is_not(None),
                 ProjectStatus.is_completed.is_(False),
-                Project.deleted_at.is_(None),
-                Organization.deleted_at.is_(None),
+                Project.archived_at.is_(None),
+                Organization.archived_at.is_(None),
                 User.is_active.is_(True),
                 project_visibility(Task.assignee_id),
                 ~delivered,
@@ -121,7 +129,7 @@ class DomainRepository:
             select(Project)
             .where(
                 Project.organization_id == organization_id,
-                Project.deleted_at.is_(None),
+                Project.archived_at.is_(None),
             )
             .order_by(Project.name)
         )
@@ -253,8 +261,20 @@ class DomainRepository:
         status_id: UUID,
         limit: int,
         cursor: tuple[object, UUID] | None = None,
+        *,
+        state: str = "active",
+        user_id: UUID,
     ) -> list[Task]:
-        query = select(Task).where(Task.project_id == project_id, Task.status_id == status_id)
+        query = (
+            select(Task)
+            .join(Project)
+            .where(Task.project_id == project_id, Task.status_id == status_id)
+        )
+        query = query.where(task_visibility(user_id))
+        if state != "all":
+            query = query.where(
+                Task.archived_at.is_(None) if state == "active" else Task.archived_at.is_not(None)
+            )
         if cursor is not None:
             timestamp, item_id = cursor
             query = query.where(
@@ -296,7 +316,7 @@ class DomainRepository:
         )
 
     async def list_task_links(self, task_id: UUID, user_id: UUID) -> list[TaskLink]:
-        visible_tasks = select(Task.id).join(Project).where(project_visibility(user_id))
+        visible_tasks = select(Task.id).join(Project).where(task_visibility(user_id))
         result = await self.session.scalars(
             select(TaskLink)
             .options(selectinload(TaskLink.creator).selectinload(User.profile))
@@ -310,7 +330,7 @@ class DomainRepository:
         return list(result)
 
     async def search_organization_tasks(
-        self, organization_id: UUID, slug: str, limit: int, user_id: UUID
+        self, organization_id: UUID, slug: str, limit: int, user_id: UUID, state: str = "active"
     ) -> list[tuple[Task, Project, ProjectStatus]]:
         rows = await self.session.execute(
             select(Task, Project, ProjectStatus)
@@ -319,9 +339,12 @@ class DomainRepository:
             .join(ProjectStatus, ProjectStatus.id == Task.status_id)
             .where(
                 Project.organization_id == organization_id,
-                Project.deleted_at.is_(None),
-                Organization.deleted_at.is_(None),
-                project_visibility(user_id),
+                task_visibility(user_id),
+                true()
+                if state == "all"
+                else Task.archived_at.is_(None)
+                if state == "active"
+                else Task.archived_at.is_not(None),
                 func.lower(Task.slug).startswith(slug.casefold(), autoescape=True),
             )
             .order_by(Project.name, Task.id)
@@ -366,8 +389,12 @@ class DomainRepository:
         visible = or_(
             TaskHistory.event_type.not_in(("task_link_added", "task_link_removed")),
             and_(
-                match.where(project_visibility(user_id)).exists(),
-                ~match.where(~project_visibility(user_id)).exists(),
+                match.where(
+                    project_visibility(user_id, archived=linked.archived_at.is_not(None))
+                ).exists(),
+                ~match.where(
+                    ~project_visibility(user_id, archived=linked.archived_at.is_not(None))
+                ).exists(),
             ),
         )
         query = (
@@ -447,13 +474,13 @@ class DomainRepository:
             .join(Project, Project.id == linked.project_id)
             .where(
                 func.replace(cast(linked.id, String), "-", "") == func.replace(linked_id, "-", ""),
-                project_visibility(user_id),
+                project_visibility(user_id, archived=linked.archived_at.is_not(None)),
             )
             .correlate(Notification)
             .exists()
         )
         return and_(
-            project_visibility(user_id),
+            task_visibility(user_id),
             or_(
                 Notification.event_type.not_in(("task_link_added", "task_link_removed")),
                 linked_visible,

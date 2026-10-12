@@ -34,7 +34,7 @@ it("restores a cookie session and removes legacy credentials from localStorage",
     if (String(input).endsWith("/auth/refresh")) return jsonResponse(auth());
     if (String(input).includes("unread-count"))
       return jsonResponse({ count: 0 });
-    return jsonResponse([]);
+    return jsonResponse({ items: [], next_cursor: null });
   });
   vi.stubGlobal("fetch", fetchMock);
   renderWithQueryClient(<App />);
@@ -98,7 +98,7 @@ it("rejects a revoked refresh and clears the authenticated UI", async () => {
       if (url.includes("unread-count")) return jsonResponse({ count: 0 });
       return revoked
         ? jsonResponse({ detail: "Authentication required" }, 401)
-        : jsonResponse([]);
+        : jsonResponse({ items: [], next_cursor: null });
     }),
   );
   renderWithQueryClient(<App />);
@@ -120,7 +120,7 @@ it("waits for logout success and shows a recoverable logout failure", async () =
         ? jsonResponse({ detail: "Unavailable" }, 503)
         : Promise.resolve(new Response(null, { status: 204 }));
     if (url.includes("unread-count")) return jsonResponse({ count: 0 });
-    return jsonResponse([]);
+    return jsonResponse({ items: [], next_cursor: null });
   });
   vi.stubGlobal("fetch", fetchMock);
   renderWithQueryClient(<App />);
@@ -261,7 +261,7 @@ it("explains rejected restoration while keeping sign-in available", async () => 
         return jsonResponse({ detail: "Invalid request origin" }, 403);
       if (url.endsWith("/auth/login")) return jsonResponse(auth());
       if (url.includes("unread-count")) return jsonResponse({ count: 0 });
-      return jsonResponse([]);
+      return jsonResponse({ items: [], next_cursor: null });
     }),
   );
   renderWithQueryClient(<App />);

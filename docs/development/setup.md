@@ -135,3 +135,6 @@ Downgrade cannot reconstruct ownership; use a coordinated pre-transition backup 
 
 This is an intermediate development stage. Membership UI, complete read matrix, archive lifecycle and audit views remain TASK-033–037. Registration and email recovery are disabled by TASK-032. Do not deploy this intermediate stage over a shared existing
 installation: follow the [coordinated migration plan](../architecture/administration-migration.md).
+
+
+Archive deployment, migration 0024, restore order and membership revocation: [archive lifecycle](archive-lifecycle.md).

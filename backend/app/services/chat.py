@@ -33,8 +33,6 @@ class ChatService:
 
     async def authorize(self, user_id: UUID, task_id: UUID) -> Task:
         task = await self.domain.get_task(user_id, task_id)
-        project = await self.domain.get_project_for_read(user_id, task.project_id)
-        await self.domain.get_organization(user_id, project.organization_id)
         return task
 
     @staticmethod
@@ -85,6 +83,7 @@ class ChatService:
     ) -> CommentResponse:
         await self.domain._lock_active_user(user_id, shared=True)
         task = await self.authorize(user_id, task_id)
+        await self.domain.require_active_task(task)
         if (not data.text.strip() and not files) or len(files) > MAX_FILES:
             raise InvalidWorkflowError("Write a message or attach up to 5 files")
         if any(item.size > MAX_FILE_SIZE for item in files):

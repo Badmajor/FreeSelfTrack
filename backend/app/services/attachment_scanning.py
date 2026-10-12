@@ -7,6 +7,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.core.malware_scanner import MalwareScanner, ScanUnavailable
 from app.core.object_storage import ObjectStorage, StorageUnavailable
+from app.repositories.administration import AdministrationRepository
 from app.repositories.attachment_storage import AttachmentStorageRepository
 from app.services.attachment_files import inspect_file
 from app.services.audit import record_event
@@ -21,6 +22,7 @@ class AttachmentScanning:
         self.repository = AttachmentStorageRepository(session)
 
     async def scan_next(self, after: UUID | None = None) -> UUID | None:
+        await AdministrationRepository(self.session).lock_lifecycle(shared=True)
         row = await self.repository.next_pending(after)
         if row is None:
             await self.session.rollback()

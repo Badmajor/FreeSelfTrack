@@ -361,15 +361,21 @@ async def test_membership_authorization_ownership_and_soft_delete_lifecycle(
     assert removed_owner_view.status_code == 200
 
     missing_confirmation = await client.request(
-        "DELETE", f"/api/projects/{project_id}", json={"confirm": False}, headers=member_headers
+        "POST",
+        f"/api/projects/{project_id}/archive",
+        json={"confirm": False},
+        headers=member_headers,
     )
     assert missing_confirmation.status_code == 422
     deleted_project = await client.request(
-        "DELETE", f"/api/projects/{project_id}", json={"confirm": True}, headers=member_headers
+        "POST",
+        f"/api/projects/{project_id}/archive",
+        json={"confirm": True},
+        headers=member_headers,
     )
-    assert deleted_project.status_code == 204
+    assert deleted_project.status_code == 200
     hidden_project = await client.get(f"/api/projects/{project_id}", headers=member_headers)
-    assert hidden_project.status_code == 404
+    assert hidden_project.status_code == 200
 
     restored_project = await client.post(
         f"/api/projects/{project_id}/restore", headers=member_headers
@@ -377,27 +383,30 @@ async def test_membership_authorization_ownership_and_soft_delete_lifecycle(
     assert restored_project.status_code == 200
 
     deleted_organization = await client.request(
-        "DELETE",
-        f"/api/organizations/{organization_id}",
+        "POST",
+        f"/api/organizations/{organization_id}/archive",
         json={"confirm": True},
         headers=member_headers,
     )
-    assert deleted_organization.status_code == 204
+    assert deleted_organization.status_code == 200
     hidden_organization = await client.get(
         f"/api/organizations/{organization_id}", headers=member_headers
     )
-    assert hidden_organization.status_code == 404
+    assert hidden_organization.status_code == 200
     restore_organization = await client.post(
         f"/api/organizations/{organization_id}/restore", headers=member_headers
     )
     assert restore_organization.status_code == 200
 
     await client.request(
-        "DELETE", f"/api/projects/{project_id}", json={"confirm": True}, headers=member_headers
+        "POST",
+        f"/api/projects/{project_id}/archive",
+        json={"confirm": True},
+        headers=member_headers,
     )
     await client.request(
-        "DELETE",
-        f"/api/organizations/{organization_id}",
+        "POST",
+        f"/api/organizations/{organization_id}/archive",
         json={"confirm": True},
         headers=member_headers,
     )
@@ -926,7 +935,7 @@ async def test_project_list_matches_membership_and_board_access(
     member_id = added.json()["user"]["id"]
     response = await client.get(listing, headers=member)
     assert response.status_code == 200
-    assert response.json() == []
+    assert response.json()["items"] == []
     assert (await client.get(board_url, headers=member)).status_code == 404
     added = await put_member(
         client,
@@ -935,33 +944,33 @@ async def test_project_list_matches_membership_and_board_access(
         json={"email": f"{user_ids[1]}@example.com"},
     )
     assert added.status_code == 200
-    assert [item["id"] for item in (await client.get(listing, headers=member)).json()] == [
+    assert [item["id"] for item in (await client.get(listing, headers=member)).json()["items"]] == [
         project_id
     ]
     assert (await client.get(board_url, headers=member)).status_code == 200
     member_project = await create_project(client, owner, org_id, "Member project")
-    assert {item["id"] for item in (await client.get(listing, headers=owner)).json()} == {
+    assert {item["id"] for item in (await client.get(listing, headers=owner)).json()["items"]} == {
         project_id,
         member_project["id"],
     }
     removed = await client.delete(f"/api/projects/{project_id}/members/{member_id}", headers=owner)
     assert removed.status_code == 204
-    assert (await client.get(listing, headers=member)).json() == []
+    assert (await client.get(listing, headers=member)).json()["items"] == []
     assert (await client.get(board_url, headers=member)).status_code == 404
     other_org = await create_organization(client, member, "Another organization")
     await create_project(client, member, other_org["id"], "Other project")
-    assert len((await client.get(listing, headers=member)).json()) == 2
+    assert len((await client.get(listing, headers=member)).json()["items"]) == 2
     await set_system_admin(owner)
     # Organization deletion must still include projects hidden from the owner's list.
     deleted = await client.request(
-        "DELETE", f"/api/organizations/{org_id}", headers=owner, json={"confirm": True}
+        "POST", f"/api/organizations/{org_id}/archive", headers=owner, json={"confirm": True}
     )
-    assert deleted.status_code == 204
-    assert (await client.get(listing, headers=member)).status_code == 404
+    assert deleted.status_code == 200
+    assert (await client.get(listing, headers=member)).status_code == 200
     restored = await client.post(f"/api/organizations/{org_id}/restore", headers=owner)
     assert restored.status_code == 200
-    assert (await client.get(listing, headers=owner)).json() == []
-    assert (await client.get(listing, headers=member)).json() == []
+    assert (await client.get(listing, headers=owner)).json()["items"] == []
+    assert (await client.get(listing, headers=member)).json()["items"] == []
 
 
 async def test_task_links_and_organization_read_only_access(
@@ -1196,12 +1205,12 @@ async def test_task_link_relative_types_cycles_and_ambiguous_search(
     )
     assert preserved_link.status_code == 201
     deleted = await client.request(
-        "DELETE",
-        f"/api/projects/{twin_projects[0]['id']}",
+        "POST",
+        f"/api/projects/{twin_projects[0]['id']}/archive",
         headers=owner,
         json={"confirm": True},
     )
-    assert deleted.status_code == 204
+    assert deleted.status_code == 200
     visible = await client.get(
         search_url,
         headers=owner,
@@ -1211,4 +1220,4 @@ async def test_task_link_relative_types_cycles_and_ambiguous_search(
     # Existing links must not reveal a task after its project is soft-deleted.
     source_links = await client.get(f"/api/tasks/{tasks[0]['id']}/links", headers=owner)
     assert source_links.status_code == 200
-    assert twin_tasks[0]["id"] not in {item["task"]["id"] for item in source_links.json()}
+    assert twin_tasks[0]["id"] in {item["task"]["id"] for item in source_links.json()}

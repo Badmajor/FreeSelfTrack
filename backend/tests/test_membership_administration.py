@@ -241,7 +241,7 @@ async def test_pages_validation_archive_and_removed_email_api(client, db_session
     ).status_code == 422
     assert (await client.delete(f"{url}/{uuid4()}", headers=admin)).status_code == 204
     parent = await db_session.get(Project, UUID(project["id"]))
-    parent.deleted_at = datetime.now(UTC)
+    parent.archived_at = datetime.now(UTC)
     await db_session.commit()
     assert (await put(client, admin, "project", project["id"], employee)).status_code == 409
 
@@ -296,7 +296,7 @@ async def test_project_manager_peers_elsewhere_and_workflow_guards(client, db_se
         await client.post(
             f"/api/projects/{other['id']}/statuses", headers=pm, json={"name": "Forbidden"}
         )
-    ).status_code == 404
+    ).status_code == 403
     await put(client, admin, "project", other["id"], employee)
     assert (
         await client.post(
