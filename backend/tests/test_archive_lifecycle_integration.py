@@ -190,3 +190,62 @@ async def test_archive_serializes_writers_and_rolls_back_on_audit_failure(
             assert (await session.get(Task, ids["task"])).archived_at is not None
     finally:
         await engine.dispose()
+
+
+async def test_restore_serializes_new_membership_without_revoking_it(roles_database, monkeypatch):  # noqa: F811
+    """A membership requested during restore is applied after the old grants are revoked."""
+    from app.models import OrganizationMember, ProjectMember
+    from app.services.memberships import MembershipService
+
+    url, migrate = roles_database
+    engine = create_async_engine(url)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    entered, release = asyncio.Event(), asyncio.Event()
+    try:
+        async with engine.begin() as connection:
+            ids = await seed_legacy_audit(connection)
+        migrate("head")
+        async with factory() as session:
+            admin = await session.get(User, ids["user"])
+            admin.is_system_admin = True
+            await session.commit()
+            await DomainService(session).archive_organization(
+                ids["user"], ids["org"], ConfirmRequest(confirm=True)
+            )
+        original = ArchiveRepository.memberships
+
+        async def pause(self, organization_id, project_ids, *, restore):
+            await original(self, organization_id, project_ids, restore=restore)
+            if restore:
+                entered.set()
+                await release.wait()
+
+        monkeypatch.setattr(ArchiveRepository, "memberships", pause)
+        async with factory() as restorer, factory() as adder:
+            restoration = asyncio.create_task(
+                DomainService(restorer).restore_organization(ids["user"], ids["org"])
+            )
+            try:
+                await asyncio.wait_for(entered.wait(), 10)
+                addition = asyncio.create_task(
+                    MembershipService(adder).put(
+                        ids["user"], "organization", ids["org"], ids["user"], "manager"
+                    )
+                )
+                await asyncio.sleep(0.1)
+                assert not addition.done()
+            finally:
+                release.set()
+            await asyncio.wait_for(asyncio.gather(restoration, addition), 10)
+        async with factory() as session:
+            membership = await session.get(OrganizationMember, (ids["org"], ids["user"]))
+            assert (membership.role, membership.state) == ("manager", "active")
+            project_membership = await session.get(ProjectMember, (ids["project"], ids["user"]))
+            assert project_membership.state == "revoked"
+            # An idempotent second restore must not erase the new membership.
+            await DomainService(session).restore_organization(ids["user"], ids["org"])
+            await session.refresh(membership)
+            assert membership.state == "active" and membership.role == "manager"
+    finally:
+        release.set()
+        await engine.dispose()

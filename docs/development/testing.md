@@ -123,7 +123,7 @@ migrates or cleans the shared stack. Without the flag this test explicitly skips
 The target behavior is specified in [ADR-014](../architecture/decisions/014-administration-membership-and-archive.md),
 [access matrix and paper scenarios](../architecture/administration-access.md),
 [API contracts](../architecture/api.md#administration-target) and
-[migration plan](../architecture/administration-migration.md). It is **not implemented**.
+[migration plan](../architecture/administration-migration.md). This section records the historical design stage; TASK-031–037 are now implemented.
 TASK-029 validation: local Markdown links/anchors introduced by the change, task dependency
 DAG (029–038), requirement-to-stage mapping, role/state scenarios and `git diff --check`.
 Application tests are not required for this documentation-only stage. Architectural/product/task
@@ -170,8 +170,7 @@ numbers are selected from actual head; TASK-029 has no runnable new migration to
 ## Administrative audit foundation (TASK-030)
 
 Implemented producer contract and rollback/immutability limits:
-[administrative-audit.md](administrative-audit.md). TASK-031–036 producers and TASK-037
-HTTP/UI remain pending; the target-model scenarios above are not all implemented.
+[administrative-audit.md](administrative-audit.md). TASK-031–036 producers and TASK-037 HTTP/UI are implemented. Release evidence is recorded below.
 
 ```sh
 # backend/
@@ -408,3 +407,55 @@ loading/error/retry/empty states, previous/next/refresh and entity-switch pagina
 Run `npm test`, `npm run lint`, `npm run typecheck`, `npm run build` for regression.
 If the repository's environment is unusable, use a temporary UV_PROJECT_ENVIRONMENT;
 `uv run --no-sync` is appropriate for an already provisioned matching environment.
+
+## TASK-038 complete release acceptance
+
+Use the [requirement-to-test record](administration-validation.md) for all 60 parent criteria
+and the [deployment runbook](administration-release.md) for backup, cutover and runtime roles.
+The current implementation includes TASK-031–037; earlier sections above are stage history.
+
+```sh
+# backend/: PostgreSQL suites create/remove disposable containers, never the shared DB.
+RUN_ROLES_INTEGRATION=1 RUN_USER_LIFECYCLE_INTEGRATION=1 RUN_MEMBERSHIP_INTEGRATION=1 \
+RUN_TASK_ACCESS_INTEGRATION=1 RUN_ARCHIVE_INTEGRATION=1 RUN_USER_CARDS_INTEGRATION=1 \
+RUN_ADMINISTRATIVE_AUDIT_INTEGRATION=1 RUN_AUDIT_INTEGRATION=1 uv run pytest -q -rs
+# Optional TEST_POSTGRES_URL enables the remaining session races; use only a disposable head DB.
+# Full release: two isolated Compose projects, clean and synthetic 0018 upgrade.
+RUN_ADMINISTRATION_RELEASE=1 uv run pytest -q tests/test_administration_release.py
+RUN_ATTACHMENT_INTEGRATION=1 RUN_ATTACHMENT_SCAN_INTEGRATION=1 \
+  uv run pytest -q tests/test_attachment_integration.py tests/test_attachment_scan_integration.py
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy app
+# frontend/: npm test; npm run lint; npm run typecheck; npm run build
+```
+
+The release test requires Docker Compose, current backend/frontend build dependencies/images,
+PostgreSQL 16, pinned MinIO/ClamAV, Redis, `mailhog/mailhog:v1.0.1` (test-only SMTP sink), and
+Chrome at `/opt/google/chrome/chrome` or `BROWSER_SECURITY_CHROME`. Its fixture uses the real
+`deploy/compose.runtime.yml`. It verifies maintenance SQL, old tokens, legacy object hashes,
+owner backfill/archive normalization, real HTTP lifecycle and automatic scanning/email delivery,
+runtime DDL/journal denial, and Chrome temporary-password/change/relogin plus audit pagination.
+Screenshots/logs stay in pytest's temporary directory and contain synthetic data only.
+It publishes random loopback test ports and removes its own containers/volumes even after failure.
+No existing Compose project or external SMTP is used. Without the flag the two cases skip.
+
+`test_archive_lifecycle_integration.py` additionally races restore with explicit new membership:
+restore revokes old grants first, the waiting add survives, and repeated restore preserves it.
+`test_membership_administration_integration.py` pins the 0023 migration round trip before head;
+it must not attempt to downgrade through intentionally irreversible 0024.
+
+On hosts without buildx, prefix Docker test commands with
+`DOCKER_BUILDKIT=0 COMPOSE_DOCKER_CLI_BUILD=0` if legacy builds are supported.
+Use a writable `UV_PROJECT_ENVIRONMENT` and `UV_CACHE_DIR` under `/tmp` where needed.
+Run the existing nginx/Chrome/TLS regression with `RUN_BROWSER_SECURITY=1` and
+`BROWSER_SECURITY_DIST` pointing to the current production SPA build, as described above.
+Report passed and skipped suites separately; the existence of a test is not proof it ran.
+
+
+TASK-038 final results (2026-10-13): full backend with administrative PostgreSQL flags,
+disposable TEST_POSTGRES_URL and browser transport enabled: 247 passed / 7 opt-in skips.
+The seven also passed separately: clean/upgrade release 2; storage/scanner 4 (1 full-stack skip),
+then full attachment stack 3, including that skipped HTTP/scanner case. Frontend 88 passed;
+Ruff/format/mypy/lint/typecheck/build and links/diff passed. The older attachment smoke now
+explicitly adds its reporter to org/project through HTTP instead of assuming creator autojoin.

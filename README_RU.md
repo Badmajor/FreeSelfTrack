@@ -557,42 +557,18 @@ docker compose down -v
 
 # Обновление
 
-Перед обновлением сохраните согласованную копию PostgreSQL и MinIO. Если вложения ещё
-хранятся в PostgreSQL (версия до TASK-024), сначала выполните перенос по
-[инструкции](docs/development/attachments.md#existing-installations-explicit-cutover).
-Обычный запуск с `alembic upgrade head` не переносит старые файлы автоматически.
+Административный релиз требует окна обслуживания и согласованной копии PostgreSQL/MinIO.
+Используйте [инструкцию выпуска и восстановления](docs/development/administration-release.md)
+и [результаты приёмки](docs/development/administration-validation.md). Остановите все старые
+API/workers, выполните миграции доверенной ролью БД, отзовите старые сессии, затем запустите
+согласованные API/SPA/workers под runtime-ролью с `deploy/compose.runtime.yml`.
+Автоматические миграции стандартного Compose удобны локально, но не обеспечивают разделение
+migration/runtime ролей для общей установки.
 
-Чтобы обновить FreeSelfTrack до последней версии:
-
-```bash
-cd /opt/freeselftrack
-```
-
-Получите изменения:
-
-```bash
-git pull
-```
-
-Пересоберите контейнеры:
-
-```bash
-docker compose up -d --build
-```
-
-Проверить состояние:
-
-```bash
-docker compose ps
-```
-
-При запуске backend автоматически выполняет миграции базы данных:
-
-```text
-alembic upgrade head
-```
-
-Поэтому при обновлении версии приложения новые миграции применяются автоматически.
+Перенос owner и архивных состояний нельзя безопасно отменить одной downgrade. Для возврата
+нужны прежние образы/конфигурация и согласованный backup БД **и** MinIO; изменения после backup
+автоматически не восстанавливаются. Для вложений до 0016 сначала нужен
+[перенос bytea](docs/development/attachments.md#existing-installations-explicit-cutover).
 
 ---
 
@@ -801,44 +777,12 @@ Redis также не публикуется наружу.
 
 # Резервное копирование
 
-Метаданные FreeSelfTrack находятся в PostgreSQL, файлы вложений — в `minio_data`.
-SQL-дамп не содержит вложений: сохраняйте и восстанавливайте PostgreSQL и MinIO из одной
-согласованной точки. Перед копированием остановите backend и все worker командой ниже,
-затем сохраните дамп и снимок/копию `minio_data`. Возобновляйте работу после завершения обоих
-действий. Подробности — в [инструкции](docs/development/attachments.md#cleanup-and-recovery).
-
-Узнать имя контейнера:
-
-```bash
-docker compose ps
-```
-
-Перед резервным копированием или восстановлением остановите запись:
-
-```bash
-docker compose stop backend deadline-worker registration-mail-worker attachment-scan-worker attachment-cleanup-worker
-```
-
-Создать SQL-дамп:
-
-```bash
-docker compose exec -T db \
-  pg_dump -U tracker tracker > freeselftrack-backup.sql
-```
-
-Для восстановления базы данных:
-
-```bash
-cat freeselftrack-backup.sql | \
-  docker compose exec -T db \
-  psql -U tracker tracker
-```
-
-После восстановления PostgreSQL и MinIO из согласованной копии:
-
-```bash
-docker compose start backend deadline-worker registration-mail-worker attachment-scan-worker attachment-cleanup-worker
-```
+Сохраняйте PostgreSQL и MinIO из одной точки при остановленных API и всех workers.
+SQL-дамп не содержит файлов. Для копирования volume остановите MinIO; отдельно сохраните
+конфигурацию, digest образов и защищённые секреты. Восстанавливайте в новые ресурсы БД/хранилища,
+проверяйте журналы, ключи, размеры и SHA-256 до запуска cleanup и открытия записи.
+Не импортируйте дамп поверх заполненных append-only журналов. Команды приведены в
+[инструкции backup/restore](docs/development/administration-release.md#maintenance-and-coordinated-backup).
 
 ---
 
@@ -1305,9 +1249,9 @@ email-reset и самодеактивация этого не обходят. С
 Workflow доступен SA/OM/PM в своей области. Передача owner удалена; UI использует capabilities.
 Обратный перенос в единственного owner неоднозначен: необходим согласованный backup.
 
-Это промежуточный этап разработки. Членское администрирование, новая матрица чтения,
-полный архивный lifecycle и страницы аудита — TASK-033–037. Регистрация и email-восстановление отключены в TASK-032. Общий выпуск выполняется только по
-[плану миграции](docs/architecture/administration-migration.md); рабочая БД этой задачей не менялась.
+Членское администрирование, новая матрица чтения, архивный lifecycle и страницы аудита
+реализованы. Регистрация и email-восстановление отключены. Выпуск выполняется по
+[инструкции перехода](docs/development/administration-release.md) после прохождения приёмки.
 
 
 ## Управление пользователями (TASK-032)
@@ -1330,7 +1274,7 @@ Workflow доступен SA/OM/PM в своей области. Передач�
 существующих пользователей, пароли и аудит. Обновляйте API, SPA и worker согласованно при
 остановленных writers по [плану выпуска](docs/architecture/administration-migration.md).
 Список, lifecycle, карточки пользователей, управление профилем/email и членствами реализованы.
-Просмотр административного аудита остаётся TASK-037.
+Аудит доступен в карточках сущностей, по 20 записей; аудит пользователя — только ему самому и SA.
 
 
 ## Карточки пользователей и смена email (TASK-036)

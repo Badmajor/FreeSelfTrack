@@ -34,6 +34,13 @@ unavailable storage produces 503 for file operations; it never falls back to Pos
 
 ## Existing installations: explicit cutover
 
+For the administration release, use the [full maintenance runbook](administration-release.md)
+for separate migration/runtime identities, coordinated backup/restore and old-session revocation.
+The commands below describe the legacy bytea transfer phase; do not reopen traffic until the
+administration checks finish. Supply the trusted migration identity for Alembic/transfer commands.
+Archive membership revocation preserves attachment keys/bytes; restore must not run cleanup
+against an unmatched DB/bucket pair.
+
 Use a maintenance window. Stop API writes and all workers before backup/transfer. Do not run
 old and new API binaries together: the old version writes bytea without the storage lock.
 Save a coordinated PostgreSQL backup and snapshot/copy of `minio_data` first. Build the new
@@ -176,7 +183,7 @@ members no longer have access; scoped managers can read/comment according to the
 Revoked project access cannot be recovered through a saved assignment, watcher or attachment URL.
 Mention targets are rechecked under the shared administrative lifecycle lock before publishing
 metadata/objects. The quarantine, checksum, image inspection, limits and scanner contracts above
-are unchanged. Archived retained reading and scanner archive lifecycle are TASK-035.
+are unchanged. Archived retained reading and scanner pause/resume are implemented by TASK-035.
 
 
 TASK-035: archived tasks and parents pause pending scans and reject manual review. Ready files

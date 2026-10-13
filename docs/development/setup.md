@@ -1,8 +1,9 @@
 # Development Setup
 
-> TASK-031 implements roles and required ADMIN_* bootstrap. This is an intermediate stage;
-> TASK-032 removes registration/reset; the full administrative release remains TASK-033–038.
-> Existing installations require the [coordinated migration plan](../architecture/administration-migration.md).
+> TASK-031–037 implement administration, archive and entity audit. Required ADMIN_* bootstrap
+> runs at API startup. Existing installations require the [release runbook](administration-release.md)
+> and [acceptance gates](administration-validation.md), including maintenance and backup restore.
+> Shared installations use separate migration/runtime database identities and the runtime override.
 
 ## Docker Compose
 
@@ -47,8 +48,9 @@ create accounts globally or in an organization; OM creates in their managed orga
 Creation returns a temporary password once, without mail. The user signs in, sets a permanent
 password, then signs in again. Only SA issues replacement temporary passwords (except config admin).
 Public register/verify-email/reset-request/reset/deactivate routes return 404, including old links.
-Migration 0022 clears pending registration/reset requests. The legacy mail-worker service now
-performs expired-session cleanup only; replace old worker images during the coordinated upgrade.
+Migration 0022 clears pending registration/reset requests. The historically named
+registration-mail-worker now delivers email-change confirmations and cleans expired sessions;
+replace old worker images during the coordinated upgrade.
 Block/unblock is global for SA/OM; block revokes sessions and memberships but retains task IDs.
 Unblock never restores memberships. Do not apply migrations to a shared database during testing.
 
@@ -133,8 +135,9 @@ scopes do not acquire active grants. Zero or multiple managers are valid; creati
 OM or scoped PM. Transfer-ownership endpoints are removed; clients use backend capabilities.
 Downgrade cannot reconstruct ownership; use a coordinated pre-transition backup if needed.
 
-This is an intermediate development stage. Membership UI, complete read matrix, archive lifecycle and audit views remain TASK-033–037. Registration and email recovery are disabled by TASK-032. Do not deploy this intermediate stage over a shared existing
-installation: follow the [coordinated migration plan](../architecture/administration-migration.md).
+Membership UI, complete read matrix, archive lifecycle and audit views are implemented.
+Registration and email recovery are disabled. Follow the [release runbook](administration-release.md)
+for shared installations; default Compose runs migrations with the configured database credential.
 
 
 Archive deployment, migration 0024, restore order and membership revocation: [archive lifecycle](archive-lifecycle.md).

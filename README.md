@@ -557,42 +557,18 @@ Do not use this command if you want to preserve your data.
 
 # Updating FreeSelfTrack
 
-Before updating, take a coordinated PostgreSQL and MinIO backup. If attachments still live
-in PostgreSQL (before TASK-024), first follow the
-[cutover procedure](docs/development/attachments.md#existing-installations-explicit-cutover).
-Normal startup with `alembic upgrade head` does not transfer legacy files automatically.
+The administration release requires a maintenance window and a coordinated PostgreSQL/MinIO
+backup. Follow the [deployment and recovery runbook](docs/development/administration-release.md)
+and check the [acceptance results](docs/development/administration-validation.md) before deployment.
+Stop every old API/worker, migrate separately under the trusted database role, revoke old sessions,
+then start matching API/SPA/workers under the runtime role using `deploy/compose.runtime.yml`.
+Default Compose automatically migrates using its configured DB credential; that is a local
+convenience, not the shared-installation runtime security boundary.
 
-To update to the latest version:
-
-```bash
-cd /opt/freeselftrack
-```
-
-Pull the latest changes:
-
-```bash
-git pull
-```
-
-Rebuild and restart the containers:
-
-```bash
-docker compose up -d --build
-```
-
-Check the status:
-
-```bash
-docker compose ps
-```
-
-When the backend starts, it automatically applies database migrations:
-
-```text
-alembic upgrade head
-```
-
-Therefore, database migrations are applied automatically when updating the application.
+Owner backfill and archive normalization are not safely reversed by downgrade. Returning to old
+code requires the old application/configuration and the matching pre-cutover database **and**
+MinIO backup; changes after that checkpoint are not recovered automatically. Pre-0016 attachments
+also require the explicit [bytea transfer](docs/development/attachments.md#existing-installations-explicit-cutover).
 
 ---
 
@@ -804,44 +780,12 @@ Browser protection is enabled in the backend and production nginx:
 
 # Backups
 
-Metadata lives in PostgreSQL; attachment bytes live in `minio_data`. A SQL dump does not
-contain attachments. Back up and restore both stores from the same checkpoint. Before backup,
-stop the backend and all workers using the command below, then save the database dump and a
-snapshot/copy of `minio_data`. Resume only after both operations finish. See the
-[recovery instructions](docs/development/attachments.md#cleanup-and-recovery).
-
-Find the database container:
-
-```bash
-docker compose ps
-```
-
-Before backup or restore, stop application writes:
-
-```bash
-docker compose stop backend deadline-worker registration-mail-worker attachment-scan-worker attachment-cleanup-worker
-```
-
-Create a SQL backup:
-
-```bash
-docker compose exec -T db \
-  pg_dump -U tracker tracker > freeselftrack-backup.sql
-```
-
-To restore the database:
-
-```bash
-cat freeselftrack-backup.sql | \
-  docker compose exec -T db \
-  psql -U tracker tracker
-```
-
-Restore PostgreSQL and MinIO from the coordinated backup, then start the services:
-
-```bash
-docker compose start backend deadline-worker registration-mail-worker attachment-scan-worker attachment-cleanup-worker
-```
+Back up PostgreSQL and MinIO at the same checkpoint with API and all workers stopped.
+A database dump does not contain attachment bytes. Stop MinIO for an offline volume copy;
+retain configuration, pinned image digests and protected credentials separately. Restore into
+fresh database/storage resources and verify journals, object keys, sizes and SHA-256 before
+starting cleanup or accepting writes. Never import a dump into a populated append-only journal.
+See the [backup and restore procedure](docs/development/administration-release.md#maintenance-and-coordinated-backup).
 
 ---
 
@@ -1310,10 +1254,9 @@ scopes do not acquire active grants. Zero or multiple managers are valid; creati
 OM or scoped PM. Transfer-ownership endpoints are removed; clients use backend capabilities.
 Downgrade cannot reconstruct ownership; use a coordinated pre-transition backup if needed.
 
-This is an intermediate development stage. Membership UI, complete read matrix, archive
-lifecycle and audit views remain TASK-033–037. User lifecycle is implemented; registration
-and email recovery are disabled by TASK-032. Do not deploy this intermediate stage over a shared existing
-installation: follow the [coordinated migration plan](docs/architecture/administration-migration.md).
+Membership administration, the read matrix, archive lifecycle and entity audit views are
+implemented. Registration and email recovery are disabled. Deployment requires the
+[release runbook](docs/development/administration-release.md) and completed acceptance gates.
 
 
 ## Administrative user lifecycle (TASK-032)
@@ -1336,7 +1279,7 @@ Migration `0022_disable_public_auth` invalidates old registration/reset outboxes
 existing users, passwords and audit records. Deploy API, SPA and cleanup worker together with
 writers stopped; use the [release plan](docs/architecture/administration-migration.md).
 User lifecycle, cards, profile/email and membership administration are implemented.
-Administrative audit views remain TASK-037.
+Administrative audit is available in entity cards, with fixed 20-entry pages; user audit is self/SA only.
 
 
 ## User cards and email changes (TASK-036)

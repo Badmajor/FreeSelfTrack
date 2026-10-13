@@ -30,9 +30,10 @@ async def test_description_migration_and_concurrent_membership(roles_database): 
             await connection.execute(
                 text("INSERT INTO organizations(id,name) VALUES (gen_random_uuid(),'Legacy')")
             )
-        migrate("head")
+        # Verify 0023's round trip before the irreversible 0024 archive contract.
+        migrate("0023_resource_descriptions")
         async with factory() as session:
-            assert (await session.scalar(select(Organization))).description is None
+            assert await session.scalar(text("SELECT description FROM organizations")) is None
         migrate("0022_disable_public_auth", action="downgrade")
         migrate("head")
         async with factory() as session:

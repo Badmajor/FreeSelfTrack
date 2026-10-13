@@ -290,7 +290,7 @@ async def test_compose_http_upload_review_and_download(deployment):
     from httpx import AsyncClient
     from pwdlib import PasswordHash
 
-    from app.models import OrganizationMember, User, UserProfile
+    from app.models import User, UserProfile
 
     compose, _, url, _ = deployment
     migrate(url, "head")
@@ -333,11 +333,6 @@ async def test_compose_http_upload_review_and_download(deployment):
                     "/api/organizations", headers=headers, json={"name": "Storage smoke"}
                 )
             ).json()
-            async with factory() as session:
-                session.add(
-                    OrganizationMember(organization_id=UUID(organization["id"]), user_id=user.id)
-                )
-                await session.commit()
             project = (
                 await http.post(
                     "/api/projects",
@@ -345,16 +340,25 @@ async def test_compose_http_upload_review_and_download(deployment):
                     json={"organization_id": organization["id"], "name": "Files"},
                 )
             ).json()
+            # Administrative creation no longer adds the creator to either scope.
+            # The task's default reporter must explicitly belong to both.
+            for scope in (f"organizations/{organization['id']}", f"projects/{project['id']}"):
+                membership = await http.put(
+                    f"/api/{scope}/members/{user.id}",
+                    headers=headers,
+                    json={"role": "member"},
+                )
+                assert membership.status_code == 200, membership.text
             statuses = (
                 await http.get(f"/api/projects/{project['id']}/statuses", headers=headers)
             ).json()
-            task = (
-                await http.post(
-                    f"/api/projects/{project['id']}/tasks",
-                    headers=headers,
-                    json={"title": "Attachment smoke", "status_id": statuses[0]["id"]},
-                )
-            ).json()
+            created = await http.post(
+                f"/api/projects/{project['id']}/tasks",
+                headers=headers,
+                json={"title": "Attachment smoke", "status_id": statuses[0]["id"]},
+            )
+            assert created.status_code == 201, created.text
+            task = created.json()
             payload = b"container upload bytes" * 100000
             response = await post(http, task, headers, files=[("files", ("smoke.txt", payload))])
             assert response.status_code == 201, response.text
