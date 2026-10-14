@@ -338,7 +338,7 @@ The bundled frontend listens on HTTP internally; do not use remote plain HTTP fo
 Open FreeSelfTrack in your browser.
 
 1. Sign in with the deployment's ADMIN_EMAIL and ADMIN_PASSWORD.
-2. Open **Users** and create an account; share its one-time displayed temporary password securely.
+2. Open **Users** → **Create user** and create an account; share its one-time displayed temporary password securely.
 3. The new user signs in, sets a permanent password, and signs in again.
 
 The temporary password has no expiry, but cannot grant workspace access before password change.
@@ -1261,7 +1261,12 @@ implemented. Registration and email recovery are disabled. Deployment requires t
 
 ## Administrative user lifecycle (TASK-032)
 
-Open **Users** in the sidebar. The system administrator creates users without membership or
+Open **Users** in the sidebar for the searchable, paginated directory at `/management/users`.
+Authorized administrators can open **Create user** (`/management/users/new`) for a compact form
+with an explicit **Back to users** link. Creation keeps the temporary password open until dismissed.
+Directory icon buttons offer password reset, block and unblock according to backend capabilities;
+their tooltips name the action and target user. Blocking still requires confirmation.
+The system administrator creates users without membership or
 in an organization; an organization manager selects an organization they manage. Creation and
 initial membership commit together. The temporary password is displayed once, is not emailed,
 and is stored only as an Argon2 hash. Share it securely; after closing the result, only the

@@ -1,6 +1,7 @@
 import { cleanup, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
+import { CreateUserPage } from "../CreateUserPage";
 import { UsersPage } from "../UsersPage";
 import { AssigneeName } from "../KanbanView";
 import { jsonResponse, renderWithQueryClient } from "./test-utils";
@@ -15,7 +16,8 @@ it("shows the generated password once without caching it", async () => {
   const secret = "generated-test-secret";
   const fetchMock = vi.fn(
     (input: string | URL | Request, options?: RequestInit) => {
-      if (String(input).endsWith("/organizations")) return jsonResponse([]);
+      if (String(input).endsWith("/organizations"))
+        return jsonResponse({ items: [], next_cursor: null });
       if (options?.method === "POST")
         return jsonResponse(
           { user: { id: "new" }, temporary_password: secret },
@@ -26,7 +28,7 @@ it("shows the generated password once without caching it", async () => {
   );
   vi.stubGlobal("fetch", fetchMock);
   const view = renderWithQueryClient(
-    <UsersPage
+    <CreateUserPage
       user={{
         id: "admin",
         email: "config",
@@ -49,7 +51,7 @@ it("shows the generated password once without caching it", async () => {
   expect(screen.queryByText(secret)).not.toBeInTheDocument();
   view.unmount();
   renderWithQueryClient(
-    <UsersPage
+    <CreateUserPage
       user={{
         id: "admin",
         email: "config",
@@ -63,7 +65,8 @@ it("shows the generated password once without caching it", async () => {
 
 it("requires confirmation before global blocking and follows backend capabilities", async () => {
   const fetchMock = vi.fn((input: string | URL | Request) => {
-    if (String(input).endsWith("/organizations")) return jsonResponse([]);
+    if (String(input).endsWith("/organizations"))
+      return jsonResponse({ items: [], next_cursor: null });
     return jsonResponse({
       items: [
         {

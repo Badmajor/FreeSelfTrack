@@ -65,6 +65,7 @@ import {
 } from "./api";
 import { KanbanView, NotificationTaskPanel } from "./KanbanView";
 import { MembersRoutePage } from "./MembersPage";
+import { CreateUserPage } from "./CreateUserPage";
 import { UsersPage } from "./UsersPage";
 import { AccountSecurity } from "./AccountSecurity";
 import type { LinkSelection } from "./TaskLinks";
@@ -89,6 +90,7 @@ export function AuthenticatedApp(props: Props) {
       <Route element={<AuthenticatedLayout {...props} />}>
         <Route index element={<RootRedirect />} />
         <Route path="users/:userId" element={<UserCardPage user={props.user} onSaved={props.onUserSaved} />} />
+        <Route path="management/users/new" element={<CreateUserPage user={props.user} />} />
         <Route path="management/users" element={<UsersPage user={props.user} />} />
         <Route
           path="management/organizations"

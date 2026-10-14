@@ -1636,3 +1636,98 @@ select {
 .entity-audit li + li { margin-top: 1rem; }
 .entity-audit dd { white-space: pre-wrap; }
 .entity-audit nav { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+
+/* User administration: compact creation and independent directory actions. */
+.user-create-link {
+  display: inline-flex;
+  width: fit-content;
+  text-decoration: none;
+  align-items: center;
+  margin: 0 0 16px;
+}
+.user-create-form {
+  width: 100%;
+}
+.user-name-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.user-name-fields > div {
+  display: grid;
+  gap: 10px;
+}
+.user-list-filters {
+  display: grid;
+  gap: 10px;
+  max-width: 620px;
+}
+.user-directory {
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid #d9e2ec;
+}
+.user-directory-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid #d9e2ec;
+}
+.user-directory-identity {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.user-directory-identity span {
+  display: inline-block;
+  color: #627d98;
+}
+.user-directory-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+}
+.user-directory-actions .icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+}
+.user-directory-actions .danger {
+  color: #a12b2b;
+  border-color: #c98080;
+}
+.user-directory-actions .icon-button:hover:not(:disabled) {
+  background: #e8f0f4;
+}
+.user-directory-actions .icon-button:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+.user-directory-actions .icon-button:focus-visible,
+.user-create-link:focus-visible {
+  outline: 3px solid #2c7a7b;
+  outline-offset: 3px;
+}
+@media (max-width: 600px) {
+  .app-layout:not(.sidebar-collapsed):has(.user-management-page) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .app-layout:not(.sidebar-collapsed):has(.user-management-page) .app-sidebar {
+    position: static;
+    width: 100%;
+    height: auto;
+  }
+  .user-management-page {
+    padding: 20px 16px 40px;
+  }
+  .user-name-fields {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+  .user-directory-row {
+    gap: 8px;
+  }
+}
