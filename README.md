@@ -1259,6 +1259,19 @@ implemented. Registration and email recovery are disabled. Deployment requires t
 [release runbook](docs/development/administration-release.md) and completed acceptance gates.
 
 
+## Organization management
+
+Open **Organizations** (`/management/organizations`) and select an organization to view its
+details and members. On narrow screens, **Choose organization** expands the paginated directory.
+Use **Save changes** or **Cancel changes**; leaving with unsaved edits asks for confirmation.
+**Administrative audit** loads only when expanded; the identifier is under **Technical details**.
+Archiving is a separate action with confirmation of its cascading effects and membership changes.
+
+System administrators use **Create organization** (`/management/organizations/new`) for a separate
+Name/Description form, with **Back to organizations** navigation. Successful creation opens the new
+card and refreshes the directory and sidebar. Editing, member actions, audit and archiving follow
+backend permissions; readers retain a **View members** link.
+
 ## Administrative user lifecycle (TASK-032)
 
 Open **Users** in the sidebar for the searchable, paginated directory at `/management/users`.

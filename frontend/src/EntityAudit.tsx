@@ -19,11 +19,13 @@ function valueText(value: AdministrativeAuditEntry["changes"][number]["old"]): s
   return String(value);
 }
 
-export function EntityAudit({ scope, id }: { scope: AuditScope; id: string }) {
-  return <AuditPages key={`${scope}-${id}`} scope={scope} id={id} />;
+type Props = { scope: AuditScope; id: string; presentation?: "organization" };
+
+export function EntityAudit({ scope, id, presentation }: Props) {
+  return <AuditPages key={`${scope}-${id}`} scope={scope} id={id} presentation={presentation} />;
 }
 
-function AuditPages({ scope, id }: { scope: AuditScope; id: string }) {
+function AuditPages({ scope, id, presentation }: Props) {
   const [cursors, setCursors] = useState<(string | undefined)[]>([undefined]);
   const [page, setPage] = useState(0);
   const audit = useQuery({
@@ -33,7 +35,7 @@ function AuditPages({ scope, id }: { scope: AuditScope; id: string }) {
   });
   return (
     <section aria-label="Administrative audit" className="entity-audit">
-      <h3>Administrative audit</h3>
+      {!presentation && <h3>Administrative audit</h3>}
       <button type="button" disabled={audit.isFetching} onClick={() => {
         setCursors([undefined]); setPage(0);
         if (page === 0) void audit.refetch();
@@ -46,14 +48,14 @@ function AuditPages({ scope, id }: { scope: AuditScope; id: string }) {
         {audit.data.items.length === 0 && <p>No audit entries.</p>}
         <ol>
           {audit.data.items.map(entry => <li key={entry.id}>
-            <p><strong>{entry.actor.display_name}</strong>{" · "}
+            <p>{presentation && <strong>{labels[entry.action] ?? entry.action}<br /></strong>}<span className={presentation ? "audit-meta" : undefined}><strong>{entry.actor.display_name}</strong>{" · "}
               <time dateTime={entry.occurred_at}>{new Date(entry.occurred_at).toLocaleString()}</time>
-              {" · "}{labels[entry.action] ?? entry.action}
+              {!presentation && <>{" · "}{labels[entry.action] ?? entry.action}</>}</span>
             </p>
             {entry.subject_user_id && <p>Member: {entry.subject_user_id}</p>}
             <dl>{entry.changes.map(change => <div key={change.field}>
               <dt>{change.field.replaceAll("_", " ")}</dt>
-              <dd>Old: {valueText(change.old)} → New: {valueText(change.new)}</dd>
+              <dd>{presentation ? <div className="organization-audit-values"><div><span>Old</span>{valueText(change.old)}</div><div><span>New</span>{valueText(change.new)}</div></div> : <>Old: {valueText(change.old)} → New: {valueText(change.new)}</>}</dd>
             </div>)}</dl>
             <details><summary>Operation</summary>{entry.operation_id}</details>
           </li>)}

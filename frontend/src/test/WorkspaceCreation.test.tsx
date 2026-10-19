@@ -1,8 +1,9 @@
+import { transferableAbortController } from "node:util";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
-import { afterEach, expect, it, vi } from "vitest";
+import { createMemoryRouter, RouterProvider } from "react-router-dom";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { App } from "../App";
 import { createTestQueryClient, jsonResponse } from "./test-utils";
@@ -16,9 +17,15 @@ const project = {
   name: "Tracker",
 };
 
+// Keep the controller compatible with Node’s Request used by the data router.
+beforeEach(() => {
+  vi.stubGlobal("AbortController", function () { return transferableAbortController(); });
+});
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   window.localStorage.clear();
 });
 
@@ -52,18 +59,17 @@ it("creates organizations and projects on separate management pages", async () =
 
 
   render(
-    <MemoryRouter initialEntries={["/management/organizations"]}>
-      <QueryClientProvider client={createTestQueryClient()}>
-        <App />
-      </QueryClientProvider>
-    </MemoryRouter>,
+    <QueryClientProvider client={createTestQueryClient()}>
+      <RouterProvider router={createMemoryRouter([{ path: "*", element: <App /> }], { initialEntries: ["/management/organizations"] })} />
+    </QueryClientProvider>,
   );
   const actor = userEvent.setup();
 
   expect(
     await screen.findByRole("heading", { name: "Organizations" }),
   ).toBeInTheDocument();
-  await actor.type(screen.getByLabelText("Name"), "Acme");
+  await actor.click(screen.getByRole("link", { name: "Create organization" }));
+  await actor.type(await screen.findByLabelText("Name"), "Acme");
   await actor.type(screen.getByLabelText("Description"), "Organization details");
   await actor.click(
     screen.getByRole("button", { name: /Create organization/ }),
@@ -95,4 +101,13 @@ it("creates organizations and projects on separate management pages", async () =
       }),
     }),
   );
+  // The shared project editor keeps its existing labels and API contract.
+  await actor.clear(screen.getByLabelText("Edit name"));
+  await actor.type(screen.getByLabelText("Edit name"), "Renamed project");
+  await actor.click(screen.getByRole("button", { name: "Save details" }));
+  expect(await screen.findByText("Details saved.")).toBeInTheDocument();
+  expect(fetchMock).toHaveBeenCalledWith("/api/projects/project-1", expect.objectContaining({
+    method: "PATCH", body: JSON.stringify({ name: "Renamed project", description: null }),
+  }));
+
 });

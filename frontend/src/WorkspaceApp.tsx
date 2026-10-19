@@ -1,3 +1,4 @@
+import { OrganizationManagementPage, CreateOrganizationPage } from "./OrganizationManagementPage";
 import { EntityAudit } from "./EntityAudit";
 import { UserCardPage, EmailChangeForm } from "./UserCardPage";
 import { ArchivePage } from "./ArchivePage";
@@ -33,14 +34,10 @@ import {
 
 import {
   archiveStatus,
-  createOrganization,
   createProject,
   createTaskLink,
   createStatus,
-  listOrganizationPage,
   listProjectPage,
-  getOrganization,
-  deleteOrganization,
   deleteProject,
   getMyProfile,
   getProject,
@@ -96,6 +93,7 @@ export function AuthenticatedApp(props: Props) {
           path="management/organizations"
           element={<OrganizationManagementPage user={props.user} />}
         />
+        <Route path="management/organizations/new" element={<CreateOrganizationPage user={props.user} />} />
         <Route
           path="management/organizations/:organizationId"
           element={<OrganizationManagementPage user={props.user} />}
@@ -143,6 +141,7 @@ export function AuthenticatedApp(props: Props) {
 }
 
 function AuthenticatedLayout({ user, onSignOut }: Props) {
+  const [unsaved, setUnsaved] = useState(false);
   const [collapsed, setCollapsed] = useState(
     () => localStorage.getItem("freeselftrack.sidebar.collapsed") === "true",
   );
@@ -155,10 +154,12 @@ function AuthenticatedLayout({ user, onSignOut }: Props) {
         user={user}
         collapsed={collapsed}
         onCollapse={() => setCollapsed((value) => !value)}
-        onSignOut={onSignOut}
+        onSignOut={() => {
+          if (!unsaved || window.confirm("Discard unsaved changes and sign out?")) onSignOut();
+        }}
       />
       <main className="app-main">
-        <Outlet />
+        <Outlet context={{ onDirtyChange: setUnsaved }} />
       </main>
     </div>
   );
@@ -186,7 +187,7 @@ function AppSidebar({
     retry: false,
   });
   const activeOrganizationId =
-    organizationMatch?.[1] ?? project.data?.organization_id ?? "";
+    (organizationMatch?.[1] === "new" ? undefined : organizationMatch?.[1]) ?? project.data?.organization_id ?? "";
   const organizations = useQuery({
     queryKey: ["organizations"],
     queryFn: listOrganizations,
@@ -509,147 +510,6 @@ function RootRedirect() {
           : "/management/organizations"
       }
     />
-  );
-}
-
-function OrganizationManagementPage({ user }: { user: AuthUser }) {
-  const { organizationId } = useParams();
-  const navigate = useNavigate();
-  const client = useQueryClient();
-  const organizations = useInfiniteQuery({
-    queryKey: ["organizations", "pages"],
-    initialPageParam: undefined as string | undefined,
-    queryFn: ({ pageParam }) => listOrganizationPage(pageParam),
-    getNextPageParam: page => page.next_cursor ?? undefined,
-  });
-  const organizationItems = organizations.data?.pages.flatMap(page => page.items) ?? [];
-  const detail = useQuery({ queryKey: ["organization", organizationId], queryFn: () => getOrganization(organizationId!), enabled: Boolean(organizationId) });
-  const selected = detail.data ?? organizationItems.find(item => item.id === organizationId);
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const create = useMutation({
-    mutationFn: () => createOrganization(name.trim(), description || null),
-    onSuccess: async (organization) => {
-      setName("");
-      await client.invalidateQueries({ queryKey: ["organizations"] });
-      navigate(`/management/organizations/${organization.id}`);
-    },
-  });
-  const remove = useMutation({
-    mutationFn: (organization: Organization) =>
-      deleteOrganization(organization.id),
-    onSuccess: async () => {
-      await client.invalidateQueries({ queryKey: ["organizations"] });
-      navigate("/management/organizations");
-    },
-  });
-  if (organizations.isPending)
-    return <PageState>Loading organizations...</PageState>;
-  if (organizations.isError)
-    return (
-      <PageError
-        error={organizations.error}
-        retry={() => void organizations.refetch()}
-      />
-    );
-  return (
-    <Page title="Organizations" eyebrow="Management">
-      <Link to="/archive">Archived organizations</Link>
-      <div className="management-grid">
-        <section className="management-list">
-          <h2>Available organizations</h2>
-          {organizationItems.map((organization) => (
-            <Link
-              className={
-                organization.id === organizationId
-                  ? "management-item active"
-                  : "management-item"
-              }
-              key={organization.id}
-              to={`/management/organizations/${organization.id}`}
-            >
-              {organization.name}
-            </Link>
-          ))}
-          {!organizationItems.length && (
-            <p className="muted">No organizations yet.</p>
-          )}
-          {organizations.hasNextPage && <button disabled={organizations.isFetchingNextPage} onClick={() => void organizations.fetchNextPage()}>Load more organizations</button>}
-        </section>
-        <section className="management-detail">
-          {organizationId && detail.isPending && !selected ? <p>Loading organization...</p> : organizationId && !selected ? (
-            <NotFoundResource label="Organization" />
-          ) : selected ? (
-            <>
-              <div className="content-heading">
-                <div>
-                  <div className="eyebrow">Organization</div>
-                  <h2>{selected.name}</h2>
-                  {selected.archived_at && <p>Archived organization — read only.</p>}
-                </div>
-              </div>
-              <dl className="resource-facts">
-                <dt>Identifier</dt>
-                <dd>{selected.id}</dd>
-              </dl>
-              {selected.capabilities?.view_audit && <EntityAudit scope="organizations" id={selected.id} />}
-              <ResourceEditor key={selected.id} scope="organization" resource={selected} />
-              <Link
-                className="text-link"
-                to={`/organizations/${selected.id}/members`}
-              >
-                Manage members
-              </Link>
-              {selected.capabilities?.archive ? (
-                <button
-                  className="button danger compact"
-                  disabled={remove.isPending}
-                  onClick={() => {
-                    if (
-                      window.confirm(
-                        `Archive ${selected.name} and all its projects and tasks?`,
-                      )
-                    )
-                      remove.mutate(selected);
-                  }}
-                >
-                  Archive organization
-                </button>
-              ) : (
-                <p className="readonly-note">
-                  Organization administration requires the appropriate permissions.
-                </p>
-              )}
-              {remove.isError && <InlineError error={remove.error} />}
-            </>
-          ) : (
-            <p className="muted">Select an organization to view details.</p>
-          )}
-        </section>
-      </div>
-      {user.is_system_admin && <form
-        className="management-form"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (name.trim()) create.mutate();
-        }}
-      >
-        <h2>Create organization</h2>
-        <label htmlFor="organization-name">Name</label>
-        <input
-          id="organization-name"
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-          required
-        />
-        <label htmlFor="organization-description">Description</label>
-        <textarea id="organization-description" value={description} onChange={event => setDescription(event.target.value)} />
-        <button className="button compact" disabled={create.isPending}>
-          <Plus size={16} /> Create organization
-        </button>
-        {create.isError && <InlineError error={create.error} />}
-      </form>}
-    </Page>
   );
 }
 
