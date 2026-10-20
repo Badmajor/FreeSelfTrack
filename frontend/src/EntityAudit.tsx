@@ -19,7 +19,7 @@ function valueText(value: AdministrativeAuditEntry["changes"][number]["old"]): s
   return String(value);
 }
 
-type Props = { scope: AuditScope; id: string; presentation?: "organization" };
+type Props = { scope: AuditScope; id: string; presentation?: "organization" | "project" };
 
 export function EntityAudit({ scope, id, presentation }: Props) {
   return <AuditPages key={`${scope}-${id}`} scope={scope} id={id} presentation={presentation} />;
@@ -48,16 +48,12 @@ function AuditPages({ scope, id, presentation }: Props) {
         {audit.data.items.length === 0 && <p>No audit entries.</p>}
         <ol>
           {audit.data.items.map(entry => <li key={entry.id}>
-            <p>{presentation && <strong>{labels[entry.action] ?? entry.action}<br /></strong>}<span className={presentation ? "audit-meta" : undefined}><strong>{entry.actor.display_name}</strong>{" · "}
+            <p>{presentation && <strong>{labels[entry.action] ?? (presentation === "project" ? entry.action.replaceAll("_", " ") : entry.action)}<br /></strong>}<span className={presentation ? "audit-meta" : undefined}><strong>{entry.actor.display_name}</strong>{" · "}
               <time dateTime={entry.occurred_at}>{new Date(entry.occurred_at).toLocaleString()}</time>
               {!presentation && <>{" · "}{labels[entry.action] ?? entry.action}</>}</span>
             </p>
-            {entry.subject_user_id && <p>Member: {entry.subject_user_id}</p>}
-            <dl>{entry.changes.map(change => <div key={change.field}>
-              <dt>{change.field.replaceAll("_", " ")}</dt>
-              <dd>{presentation ? <div className="organization-audit-values"><div><span>Old</span>{valueText(change.old)}</div><div><span>New</span>{valueText(change.new)}</div></div> : <>Old: {valueText(change.old)} → New: {valueText(change.new)}</>}</dd>
-            </div>)}</dl>
-            <details><summary>Operation</summary>{entry.operation_id}</details>
+            {presentation === "project" ? <details><summary>Details</summary><AuditDetails entry={entry} presentation={presentation} /></details> : <AuditDetails entry={entry} presentation={presentation} />}
+
           </li>)}
         </ol>
       </>}
@@ -71,4 +67,15 @@ function AuditPages({ scope, id, presentation }: Props) {
       </nav>
     </section>
   );
+}
+
+function AuditDetails({ entry, presentation }: { entry: AdministrativeAuditEntry; presentation?: Props["presentation"] }) {
+  return <>
+    {entry.subject_user_id && <p>Member: {entry.subject_user_id}</p>}
+    <dl>{entry.changes.map(change => <div key={change.field}>
+      <dt>{change.field.replaceAll("_", " ")}</dt>
+      <dd>{presentation ? <div className={presentation === "project" ? "project-audit-values" : "organization-audit-values"}><div><span>Old</span>{valueText(change.old)}</div><div><span>New</span>{valueText(change.new)}</div></div> : <>Old: {valueText(change.old)} → New: {valueText(change.new)}</>}</dd>
+    </div>)}</dl>
+    {presentation === "project" ? <dl><dt>Operation</dt><dd>{entry.operation_id}</dd></dl> : <details><summary>Operation</summary>{entry.operation_id}</details>}
+  </>;
 }

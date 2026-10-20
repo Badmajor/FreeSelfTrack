@@ -20,7 +20,7 @@ function RequestError({ error, retry }: { error: Error; retry?: () => void }) {
     <button className="button secondary" onClick={retry}>Retry</button>}</div>;
 }
 
-function UnsavedChanges({ dirty }: { dirty: boolean }) {
+export function UnsavedChanges({ dirty }: { dirty: boolean }) {
   const { onDirtyChange } = useOutletContext<{ onDirtyChange: (dirty: boolean) => void }>();
   useEffect(() => {
     onDirtyChange(dirty);

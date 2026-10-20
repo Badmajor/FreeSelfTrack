@@ -1272,6 +1272,24 @@ Name/Description form, with **Back to organizations** navigation. Successful cre
 card and refreshes the directory and sidebar. Editing, member actions, audit and archiving follow
 backend permissions; readers retain a **View members** link.
 
+## Project management
+
+Open **Project management** (`/management/projects`), select an organization, then a project.
+On narrow screens, **Choose project** expands the directory. The card puts **Open Kanban**,
+**Workflow**, **Members** and **Project details** first. Use **Save changes** or **Cancel changes**;
+unsaved edits are protected when switching projects/organizations or leaving the page.
+
+**Change history** loads administrative audit only when expanded. Each event has **Details** for
+old/new values, member and operation identifiers. Closing history stops its active observation;
+reopening starts at page one. **Technical details** contains the project identifier.
+
+Authorized users open **Create project** (`/management/projects/new?organization=<id>`) for a
+separate Name/Description form and optional, paginated manager selection. **Cancel** returns to
+the originating context; changing the organization clears selected managers after confirming any
+unsaved changes. Creation opens the new card and refreshes the directory/sidebar. **Archive project**
+is a separate confirmed action explaining the task cascade and membership changes. All actions
+follow backend capabilities; archived projects are read-only and reading links remain available.
+
 ## Administrative user lifecycle (TASK-032)
 
 Open **Users** in the sidebar for the searchable, paginated directory at `/management/users`.

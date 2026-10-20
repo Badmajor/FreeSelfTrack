@@ -82,7 +82,8 @@ it("creates organizations and projects on separate management pages", async () =
   expect(
     await screen.findByRole("heading", { name: "Projects", level: 1 }),
   ).toBeInTheDocument();
-  await actor.type(screen.getByLabelText("Name"), "Tracker");
+  await actor.click(await screen.findByRole("link", { name: "Create project" }));
+  await actor.type(await screen.findByLabelText("Name"), "Tracker");
   await actor.type(screen.getByLabelText("Description"), "Project details");
   await actor.click(await screen.findByRole("checkbox", { name: "Alex Jones" }));
   await actor.click(screen.getByRole("button", { name: /Create project/ }));
@@ -101,11 +102,11 @@ it("creates organizations and projects on separate management pages", async () =
       }),
     }),
   );
-  // The shared project editor keeps its existing labels and API contract.
-  await actor.clear(screen.getByLabelText("Edit name"));
-  await actor.type(screen.getByLabelText("Edit name"), "Renamed project");
-  await actor.click(screen.getByRole("button", { name: "Save details" }));
-  expect(await screen.findByText("Details saved.")).toBeInTheDocument();
+  // The separate project card preserves the API contract.
+  await actor.clear(screen.getByLabelText("Name"));
+  await actor.type(screen.getByLabelText("Name"), "Renamed project");
+  await actor.click(screen.getByRole("button", { name: "Save changes" }));
+  expect(await screen.findByText("Changes saved.")).toBeInTheDocument();
   expect(fetchMock).toHaveBeenCalledWith("/api/projects/project-1", expect.objectContaining({
     method: "PATCH", body: JSON.stringify({ name: "Renamed project", description: null }),
   }));
